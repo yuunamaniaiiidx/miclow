@@ -1,0 +1,25 @@
+[[tasks]]
+name = "json-generator"
+command = "bash"
+args = ["-c", "echo '{\"name\": \"Alice\", \"age\": 30, \"city\": \"Tokyo\"}';"]
+auto_start = true
+allow_duplicate_start = false
+initial_topics = ["json-data", "user-info"]
+
+[[tasks]]
+name = "python-script"
+command = "python3"
+args = ["main.py"]
+working_directory = "./"
+auto_start = true
+environment_vars = { PYTHONUNBUFFERED = "1" }
+initial_topics = ["key3"]
+
+[[tasks]]
+name = "stdout"
+command = "python3"
+args = ["stdout.py"]
+working_directory = "./"
+auto_start = true
+environment_vars = { PYTHONUNBUFFERED = "1" }
+initial_topics = ["stdout"]
