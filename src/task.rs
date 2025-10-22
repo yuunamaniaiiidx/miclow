@@ -542,6 +542,13 @@ impl TopicSubscriber {
         subscribers.get(topic).map(|arc_vec| arc_vec.as_ref().clone())
     }
 
+    pub async fn get_topics_info(&self) -> Vec<(String, usize)> {
+        let subscribers = self.subscribers.read().await;
+        subscribers.iter()
+            .map(|(topic, subscriber_list)| (topic.clone(), subscriber_list.len()))
+            .collect()
+    }
+
     pub async fn broadcast_message(&self, topic: &str, event: ExecutorEvent) -> Result<usize, String> {
         let subscribers = self.get_subscribers(topic).await;
         
@@ -748,6 +755,121 @@ impl SystemCommandWorker {
                                                 );
                                                 let _ = message.response_channel.send(error_event);
                                             }
+                                        }
+                                    },
+                                    SystemCommand::KillServer => {
+                                        log::info!("Processing KillServer command for task {} - initiating graceful server shutdown", task_id);
+                                        
+                                        // シャットダウン開始の応答を即座に送信（チャンネルが閉じる前に確実に送信）
+                                        let shutdown_msg = "Server graceful shutdown initiated";
+                                        let shutdown_event = ExecutorEvent::new_system_response(
+                                            message.request_id.clone(),
+                                            shutdown_msg.to_string(),
+                                            task_id.clone()
+                                        );
+                                        let _ = message.response_channel.send(shutdown_event);
+                                        
+                                        log::info!("Starting graceful shutdown process...");
+                                        
+                                        // グレースフルシャットダウンを実行
+                                        // 1. 全実行中タスクを停止
+                                        let running_tasks = task_registry.running_tasks.read().await;
+                                        let task_names: Vec<String> = running_tasks.keys().cloned().collect();
+                                        drop(running_tasks);
+                                        
+                                        for task_name in task_names {
+                                            if let Err(e) = task_registry.stop_task(&task_name).await {
+                                                log::warn!("Failed to stop task '{}': {}", task_name, e);
+                                            }
+                                        }
+                                        
+                                        // 2. シャットダウントークンをキャンセル
+                                        log::info!("Cancelling shutdown token to stop all workers");
+                                        shutdown_token.cancel();
+                                        
+                                        // 3. チャンネルのクリーンアップ（ループ終了後に自動的にdropされる）
+                                        log::info!("Graceful shutdown process completed, exiting worker");
+                                        
+                                        // プロセスを正常終了
+                                        log::info!("Exiting server process with code 0");
+                                        std::process::exit(0);
+                                    },
+                                    SystemCommand::AddTaskFromToml { toml_data } => {
+                                        log::info!("Processing AddTaskFromToml command for task {} with TOML data", task_id);
+                                        
+                                        // TOMLデータからタスクをTaskRegistryに追加（auto_start設定に従う）
+                                        match task_registry.add_task_from_toml(
+                                            &toml_data,
+                                            topic_request_sender.clone(),
+                                            topic_subscriber.clone(),
+                                            SystemCommandSender::new(mpsc::unbounded_channel().0), // 新しいチャンネルを作成
+                                            shutdown_token.clone(),
+                                        ).await {
+                                            Ok(_) => {
+                                                let success_msg = format!("Successfully added task to registry from TOML");
+                                                log::info!("{}", success_msg);
+                                                
+                                                let success_event = ExecutorEvent::new_system_response(
+                                                    message.request_id.clone(),
+                                                    success_msg,
+                                                    task_id.clone()
+                                                );
+                                                let _ = message.response_channel.send(success_event);
+                                            },
+                                            Err(e) => {
+                                                let error_msg = format!("Failed to add task from TOML: {}", e);
+                                                log::error!("{}", error_msg);
+                                                
+                                                let error_event = ExecutorEvent::new_system_error(
+                                                    message.request_id.clone(),
+                                                    error_msg,
+                                                    task_id.clone()
+                                                );
+                                                let _ = message.response_channel.send(error_event);
+                                            }
+                                        }
+                                    },
+                                    SystemCommand::Status => {
+                                        log::info!("Processing Status command for task {}", task_id);
+                                        
+                                        // タスク情報を取得
+                                        let tasks_info = task_registry.get_running_tasks_info().await;
+                                        let topics_info = topic_subscriber.get_topics_info().await;
+                                        
+                                        // JSON形式でレスポンスを生成
+                                        let mut json_response = String::from("{\n");
+                                        json_response.push_str("  \"tasks\": [\n");
+                                        
+                                        for (i, (task_name, task_id)) in tasks_info.iter().enumerate() {
+                                            if i > 0 {
+                                                json_response.push_str(",\n");
+                                            }
+                                            json_response.push_str(&format!("    {{\"name\": \"{}\", \"id\": \"{}\"}}", task_name, task_id));
+                                        }
+                                        
+                                        json_response.push_str("\n  ],\n");
+                                        json_response.push_str("  \"topics\": [\n");
+                                        
+                                        for (i, (topic_name, subscriber_count)) in topics_info.iter().enumerate() {
+                                            if i > 0 {
+                                                json_response.push_str(",\n");
+                                            }
+                                            json_response.push_str(&format!("    {{\"name\": \"{}\", \"subscribers\": {}}}", topic_name, subscriber_count));
+                                        }
+                                        
+                                        json_response.push_str("\n  ]\n");
+                                        json_response.push_str("}");
+                                        
+                                        let status_event = ExecutorEvent::new_system_response(
+                                            message.request_id.clone(),
+                                            json_response,
+                                            task_id.clone()
+                                        );
+                                        
+                                        if let Err(e) = message.response_channel.send(status_event) {
+                                            log::warn!("Failed to send status response to task {}: {}", task_id, e);
+                                        } else {
+                                            log::info!("Sent status response to task {}", task_id);
                                         }
                                     },
                                     SystemCommand::Unknown { command, data } => {
@@ -1123,11 +1245,22 @@ impl TaskSpawner {
                                 if let Some(data) = topic_data.data() {
                                     let lines: Vec<&str> = data.lines().collect();
                                     
+                                    // 新しいプロトコル: topicname受け取り、行数受け取り、内容受け取り
+                                    // 1. トピック名を送信
+                                    if let Some(topic_name) = topic_data.topic() {
+                                        if let Err(e) = executor_handle.input_channel.sender.send(topic_name.clone()) {
+                                            log::warn!("Failed to send topic name to executor for task {}: {}", task_id, e);
+                                            continue;
+                                        }
+                                    }
+                                    
+                                    // 2. 行数を送信
                                     if let Err(e) = executor_handle.input_channel.sender.send(lines.len().to_string()) {
                                         log::warn!("Failed to send line count to executor for task {}: {}", task_id, e);
                                         continue;
                                     }
                                     
+                                    // 3. 内容を送信
                                     for line in lines {
                                         if let Err(e) = executor_handle.input_channel.sender.send(line.to_string()) {
                                             log::warn!("Failed to send line to executor for task {}: {}", task_id, e);
@@ -1173,10 +1306,25 @@ pub enum SystemCommand {
     TaskCount,
     StartTask { task_name: String },
     StopTask { task_name: String },
+    KillServer,
+    AddTaskFromToml { toml_data: String },
+    Status,
     Unknown { command: String, data: String },
 }
 
 impl SystemCommand {
+    /// system.add-task-from-tomlのTOMLデータをパースする
+    fn parse_add_task_from_toml(data: &str) -> Option<Self> {
+        if data.trim().is_empty() {
+            return None;
+        }
+
+        // TOMLデータをそのまま渡す
+        Some(SystemCommand::AddTaskFromToml { 
+            toml_data: data.trim().to_string() 
+        })
+    }
+
     pub fn parse_from_plaintext(key: &str, data: &str) -> Option<Self> {
         let key_lower: String = key.to_lowercase();
         let data_trimmed: &str = data.trim();
@@ -1231,6 +1379,15 @@ impl SystemCommand {
                     None
                 }
             },
+            "system.killserver" => {
+                Some(SystemCommand::KillServer)
+            },
+            "system.add-task-from-toml" => {
+                Self::parse_add_task_from_toml(data)
+            },
+            "system.status" => {
+                Some(SystemCommand::Status)
+            },
             _ if key_lower.starts_with("system.") => {
                 Some(SystemCommand::Unknown { 
                     command: key_lower, 
@@ -1270,6 +1427,20 @@ impl SystemCommand {
             SystemCommand::StopTask { task_name } => {
                 log::info!("Executing system.stop-task with task: '{}'", task_name);
                 let _ = event_tx.send_system_command(SystemCommand::StopTask { task_name: task_name.clone() }, task_id.clone());
+            },
+            SystemCommand::KillServer => {
+                log::info!("Executing system.killserver - initiating server shutdown");
+                let _ = event_tx.send_system_command(SystemCommand::KillServer, task_id.clone());
+            },
+            SystemCommand::AddTaskFromToml { toml_data } => {
+                log::info!("Executing system.add-task-from-toml with TOML data");
+                let _ = event_tx.send_system_command(SystemCommand::AddTaskFromToml {
+                    toml_data: toml_data.clone(),
+                }, task_id.clone());
+            },
+            SystemCommand::Status => {
+                log::info!("Executing system.status");
+                let _ = event_tx.send_system_command(SystemCommand::Status, task_id.clone());
             },
             SystemCommand::Unknown { command, data } => {
                 log::warn!("Unknown system command: '{}' with data: '{}'", command, data);
@@ -1506,6 +1677,7 @@ where
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct TaskConfig {
+    #[serde(rename = "task_name")]
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
@@ -1516,19 +1688,33 @@ pub struct TaskConfig {
     pub initial_topics: Option<Vec<String>>,
 }
 
+impl TaskConfig {
+    /// TOML文字列からTaskConfigを作成
+    pub fn from_toml(toml_str: &str) -> Result<Self> {
+        toml::from_str(toml_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse TOML: {}", e))
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ServerConfig {
     #[serde(skip)]
-    pub config_file: String,
+    pub config_file: Option<String>,
     pub tasks: Vec<TaskConfig>,
 }
 
 impl ServerConfig {
+    pub fn from_toml(toml_content: &str) -> Result<Self> {
+        let mut config: ServerConfig = toml::from_str(toml_content)?;
+        config.config_file = None; // ファイルパスなしで初期化
+        config.validate()?;
+        Ok(config)
+    }
+    
     pub fn from_file(config_file: String) -> Result<Self> {
         let config_content: String = std::fs::read_to_string(&config_file)?;
-        let mut config: ServerConfig = toml::from_str(&config_content)?;
-        config.config_file = config_file;
-        config.validate()?;
+        let mut config = Self::from_toml(&config_content)?;
+        config.config_file = Some(config_file);
         Ok(config)
     }
     
@@ -1697,6 +1883,86 @@ impl TaskRegistry {
         running_tasks.len()
     }
 
+    pub async fn get_running_tasks_info(&self) -> Vec<(String, TaskId)> {
+        let running_tasks = self.running_tasks.read().await;
+        running_tasks.iter()
+            .map(|(name, task)| (name.clone(), task.task_id.clone()))
+            .collect()
+    }
+
+    /// TaskConfigから直接タスクを起動する統一メソッド
+    pub async fn start_task_from_config(
+        &self,
+        task_config: &TaskConfig,
+        topic_request_sender: TopicRequestSender,
+        topic_subscriber: TopicSubscriber,
+        system_command_sender: SystemCommandSender,
+        shutdown_token: CancellationToken,
+    ) -> Result<()> {
+        log::info!("Starting task '{}'", task_config.name);
+        
+        // 重複起動チェック
+        let allow_duplicate = task_config.allow_duplicate_start.unwrap_or(false);
+        
+        // コマンドの存在確認
+        if !std::path::Path::new(&task_config.command).exists() && !which::which(&task_config.command).is_ok() {
+            return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", task_config.command));
+        }
+
+        // 作業ディレクトリの存在確認
+        if let Some(working_dir) = &task_config.working_directory {
+            if !std::path::Path::new(working_dir).exists() {
+                return Err(anyhow::anyhow!("Working directory '{}' does not exist", working_dir));
+            }
+        }
+        
+        // タスクを起動
+        let task_id_new = TaskId::new();
+        let shutdown_channel = ShutdownChannel::new();
+        
+        let command_config = CommandConfig {
+            command: task_config.command.clone(),
+            args: task_config.args.clone(),
+            working_directory: task_config.working_directory.clone(),
+            environment_vars: task_config.environment_vars.clone(),
+        };
+        
+        let executor = CommandExecutor;
+        let initial_topics = task_config.initial_topics.clone();
+        
+        // TaskSpawnerを作成してタスクを起動
+        let task_spawner = TaskSpawner::new(
+            task_id_new.clone(),
+            topic_request_sender,
+            topic_subscriber,
+            system_command_sender,
+            self.clone(),
+            task_config.name.clone(),
+        );
+        
+        let task_handle = task_spawner.spawn_executor(
+            executor,
+            command_config,
+            shutdown_token,
+            initial_topics,
+        ).await;
+        
+        let running_task = RunningTask {
+            task_id: task_id_new.clone(),
+            task_name: task_config.name.clone(),
+            shutdown_sender: shutdown_channel.sender,
+            task_handle,
+        };
+        
+        // 重複起動チェック付きでタスクを登録
+        if let Err(e) = self.try_register_task_with_duplicate_check(task_config.name.clone(), running_task, allow_duplicate).await {
+            return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
+        }
+        
+        log::info!("Successfully started task '{}' (ID: {})", task_config.name, task_id_new);
+        Ok(())
+    }
+
     /// 単一タスクを起動する共通メソッド
     pub async fn start_single_task(
         &self,
@@ -1707,76 +1973,52 @@ impl TaskRegistry {
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
-        log::info!("Starting task '{}'", task_name);
-        
         // 設定からタスクを検索
         let task_config = config.tasks.iter().find(|t| t.name == task_name);
         match task_config {
             Some(task_config) => {
-                // 重複起動チェック
-                let allow_duplicate = task_config.allow_duplicate_start.unwrap_or(false);
-                
-                // コマンドの存在確認
-                if !std::path::Path::new(&task_config.command).exists() && !which::which(&task_config.command).is_ok() {
-                    return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", task_config.command));
-                }
-
-                // 作業ディレクトリの存在確認
-                if let Some(working_dir) = &task_config.working_directory {
-                    if !std::path::Path::new(working_dir).exists() {
-                        return Err(anyhow::anyhow!("Working directory '{}' does not exist", working_dir));
-                    }
-                }
-                
-                // タスクを起動
-                let task_id_new = TaskId::new();
-                let shutdown_channel = ShutdownChannel::new();
-                
-                let command_config = CommandConfig {
-                    command: task_config.command.clone(),
-                    args: task_config.args.clone(),
-                    working_directory: task_config.working_directory.clone(),
-                    environment_vars: task_config.environment_vars.clone(),
-                };
-                
-                let executor = CommandExecutor;
-                let initial_topics = task_config.initial_topics.clone();
-                
-                // TaskSpawnerを作成してタスクを起動
-                let task_spawner = TaskSpawner::new(
-                    task_id_new.clone(),
+                self.start_task_from_config(
+                    task_config,
                     topic_request_sender,
                     topic_subscriber,
                     system_command_sender,
-                    self.clone(),
-                    task_name.to_string(),
-                );
-                
-                let task_handle = task_spawner.spawn_executor(
-                    executor,
-                    command_config,
                     shutdown_token,
-                    initial_topics,
-                ).await;
-                
-                let running_task = RunningTask {
-                    task_id: task_id_new.clone(),
-                    task_name: task_name.to_string(),
-                    shutdown_sender: shutdown_channel.sender,
-                    task_handle,
-                };
-                
-                // 重複起動チェック付きでタスクを登録
-                if let Err(e) = self.try_register_task_with_duplicate_check(task_name.to_string(), running_task, allow_duplicate).await {
-                    return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_name, e));
-                }
-                
-                log::info!("Successfully started task '{}' (ID: {})", task_name, task_id_new);
-                Ok(())
+                ).await
             },
             None => Err(anyhow::anyhow!("Task '{}' not found in configuration", task_name))
         }
     }
+
+    /// TOMLデータからタスクをTaskRegistryに追加する（起動はauto_start設定に従う）
+    pub async fn add_task_from_toml(
+        &self,
+        toml_data: &str,
+        topic_request_sender: TopicRequestSender,
+        topic_subscriber: TopicSubscriber,
+        system_command_sender: SystemCommandSender,
+        shutdown_token: CancellationToken,
+    ) -> Result<()> {
+        // TOMLからTaskConfigを作成
+        let task_config = TaskConfig::from_toml(toml_data)?;
+        
+        // auto_startがtrueの場合は即座に起動、falseの場合は登録のみ
+        if task_config.auto_start.unwrap_or(false) {
+            log::info!("Auto-starting task '{}' from TOML", task_config.name);
+            self.start_task_from_config(
+                &task_config,
+                topic_request_sender,
+                topic_subscriber,
+                system_command_sender,
+                shutdown_token,
+            ).await
+        } else {
+            log::info!("Task '{}' added to registry from TOML (auto_start=false, waiting for start command)", task_config.name);
+            // auto_start=falseの場合は登録のみ（起動はしない）
+            // 将来的には動的タスクを設定に永続化し、startコマンドで起動できるようにする
+            Ok(())
+        }
+    }
+
 }
 
 pub struct CotoServer {
@@ -1913,6 +2155,15 @@ impl CotoServer {
         println!("Graceful shutdown completed");
         
         Ok(())
+    }
+
+    /// タスクからのKillServerコマンド用の公開シャットダウンメソッド
+    pub async fn trigger_graceful_shutdown(
+        topic_request_sender: TopicRequestSender,
+        task_registry: TaskRegistry,
+        shutdown_token: CancellationToken,
+    ) {
+        Self::shutdown_workers(topic_request_sender, task_registry, shutdown_token).await;
     }
 
     async fn shutdown_workers(
