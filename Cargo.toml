@@ -1,13 +1,13 @@
 [package]
-name = "coto"
+name = "miclow"
 version = "0.1.0"
 edition = "2021"
 authors = ["sugipamo <sugipamo@gmail.com>"]
-description = "Coding Todo - An automated coding tool"
-repository = "https://github.com/sugipamo/coto"
+description = "Miclow - A lightweight orchestration system for asynchronous task execution"
+repository = "https://github.com/sugipamo/miclow"
 license = "MIT OR Apache-2.0"
-keywords = ["automation", "coding", "todo", "tool"]
-categories = ["development-tools"]
+keywords = ["orchestration", "async", "task", "execution", "lightweight"]
+categories = ["asynchronous", "command-line-utilities"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
