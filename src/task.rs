@@ -13,7 +13,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::sync::CancellationToken;
 use async_trait::async_trait;
 use std::process::Stdio;
-use crate::buffer::{TopicInputBuffer, consume_stream_line, StreamOutcome};
+use crate::buffer::{InputBufferManager, StreamOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId(Uuid);
@@ -1624,16 +1624,40 @@ where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
 {
     task::spawn(async move {
-        let mut buffer = TopicInputBuffer::new();
+        let mut buffer_manager = InputBufferManager::new();
         let mut line = String::new();
+        let task_id_str = task_id.to_string();
+        
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => { break; }
+                _ = cancel_token.cancelled() => { 
+                    // キャンセル時に未完了のバッファをフラッシュ
+                    let unfinished = buffer_manager.flush_all_unfinished();
+                    for (_, key, data) in unfinished {
+                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
+                            let _ = event_tx.send_system_command(system_cmd, task_id.clone());
+                        } else {
+                            let _ = event_tx.send_message(key, data, task_id.clone());
+                        }
+                    }
+                    break; 
+                }
                 result = reader.read_line(&mut line) => {
                     match result {
-                        Ok(0) => break,
+                        Ok(0) => {
+                            // EOF時に未完了のバッファをフラッシュ
+                            let unfinished = buffer_manager.flush_all_unfinished();
+                            for (_, key, data) in unfinished {
+                                if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
+                                    let _ = event_tx.send_system_command(system_cmd, task_id.clone());
+                                } else {
+                                    let _ = event_tx.send_message(key, data, task_id.clone());
+                                }
+                            }
+                            break;
+                        }
                         Ok(_) => {
-                            match consume_stream_line(&mut buffer, &line) {
+                            match buffer_manager.consume_stream_line(&task_id_str, &line) {
                                 Ok(StreamOutcome::Emit { key, data }) => {
                                     if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
                                         let _ = event_tx.send_system_command(system_cmd, task_id.clone());
@@ -1678,10 +1702,7 @@ pub struct TaskConfig {
 }
 
 impl TaskConfig {
-    pub fn from_toml(toml_str: &str) -> Result<Self> {
-        toml::from_str(toml_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse TOML: {}", e))
-    }
+    // TaskConfig::from_toml は削除（ServerConfig::from_toml を使用）
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1954,21 +1975,33 @@ impl TaskRegistry {
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
-        let task_config = TaskConfig::from_toml(toml_data)?;
+        // ServerConfig形式でTOMLを解析（config.tomlと同じ形式）
+        let server_config = ServerConfig::from_toml(toml_data)?;
         
-        if task_config.auto_start.unwrap_or(false) {
-            log::info!("Auto-starting task '{}' from TOML", task_config.name);
-            self.start_task_from_config(
-                &task_config,
-                topic_request_sender,
-                topic_subscriber,
-                system_command_sender,
-                shutdown_token,
-            ).await
-        } else {
-            log::info!("Task '{}' added to registry from TOML (auto_start=false, waiting for start command)", task_config.name);
-            Ok(())
+        if server_config.tasks.is_empty() {
+            return Err(anyhow::anyhow!("No tasks found in TOML data"));
         }
+        
+        // すべてのタスクを処理
+        for task_config in &server_config.tasks {
+            if task_config.auto_start.unwrap_or(false) {
+                log::info!("Auto-starting task '{}' from TOML", task_config.name);
+                if let Err(e) = self.start_task_from_config(
+                    task_config,
+                    topic_request_sender.clone(),
+                    topic_subscriber.clone(),
+                    system_command_sender.clone(),
+                    shutdown_token.clone(),
+                ).await {
+                    log::error!("Failed to start task '{}': {}", task_config.name, e);
+                    // エラーが発生しても他のタスクの処理は続行
+                }
+            } else {
+                log::info!("Task '{}' added to registry from TOML (auto_start=false, waiting for start command)", task_config.name);
+            }
+        }
+        
+        Ok(())
     }
 
 }

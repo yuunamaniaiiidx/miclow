@@ -5,6 +5,11 @@ pub struct TopicInputBuffer {
     buffered_lines: Vec<String>,
 }
 
+#[derive(Debug, Default)]
+pub struct InputBufferManager {
+    buffers: std::collections::HashMap<String, TopicInputBuffer>,
+}
+
 impl TopicInputBuffer {
     pub fn new() -> Self {
         Self { active_key: None, buffered_lines: Vec::new() }
@@ -46,6 +51,41 @@ impl TopicInputBuffer {
     }
 }
 
+impl InputBufferManager {
+    pub fn new() -> Self {
+        Self {
+            buffers: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn get_or_create_buffer(&mut self, task_id: &str) -> &mut TopicInputBuffer {
+        self.buffers.entry(task_id.to_string()).or_insert_with(TopicInputBuffer::new)
+    }
+
+    pub fn consume_stream_line(&mut self, task_id: &str, line: &str) -> Result<StreamOutcome, String> {
+        let buffer = self.get_or_create_buffer(task_id);
+        consume_stream_line(buffer, line)
+    }
+
+    pub fn flush_all_unfinished(&mut self) -> Vec<(String, String, String)> {
+        let mut results = Vec::new();
+        for (task_id, buffer) in self.buffers.iter_mut() {
+            if let Some((key, data)) = buffer.flush_unfinished() {
+                results.push((task_id.clone(), key, data));
+            }
+        }
+        results
+    }
+
+    pub fn remove_task(&mut self, task_id: &str) -> Option<TopicInputBuffer> {
+        self.buffers.remove(task_id)
+    }
+
+    pub fn has_active_buffers(&self) -> bool {
+        self.buffers.values().any(|buffer| buffer.is_active())
+    }
+}
+
 fn view_without_crlf(s: &str) -> &str {
     let bytes = s.as_bytes();
     if bytes.ends_with(b"\r\n") { &s[..s.len()-2] }
@@ -56,18 +96,23 @@ fn view_without_crlf(s: &str) -> &str {
 fn parse_quoted_key(input: &str) -> Result<(String, usize), String> {
     let mut escaped = false;
     let mut key = String::new();
-    let mut i = 1;
-    let chars: Vec<char> = input.chars().collect();
-    while i < chars.len() {
-        let c = chars[i];
-        if escaped { key.push(c); escaped = false; i += 1; continue; }
-        if c == '\\' { escaped = true; i += 1; continue; }
+    
+    // 文字境界を追跡しながら処理
+    for (i, c) in input.char_indices().skip(1) { // 最初の"をスキップ
+        if escaped { 
+            key.push(c); 
+            escaped = false; 
+            continue; 
+        }
+        if c == '\\' { 
+            escaped = true; 
+            continue; 
+        }
         if c == '"' {
             if key.is_empty() { return Err("empty key is not allowed".to_string()); }
-            return Ok((key, i+1));
+            return Ok((key, i + c.len_utf8())); // バイトインデックスを返す
         }
         key.push(c);
-        i += 1;
     }
     Err("unterminated quoted key".to_string())
 }
@@ -103,7 +148,8 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
     }
 
     if input.starts_with("::\"") {
-        let after = &input[2..];
+        // "::"の後の文字列を取得（文字境界を考慮）
+        let after = &input["::".len()..];
         let (key, idx) = parse_quoted_key(after)?;
         if idx == after.len() {
             return Ok(LineParseResult::MultilineEnd { key });
@@ -112,7 +158,8 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
         }
     }
     if input.starts_with("::") {
-        let after = &input[2..];
+        // "::"の後の文字列を取得（文字境界を考慮）
+        let after = &input["::".len()..];
         if after.starts_with(' ') || after.starts_with('\t') {
             return Ok(LineParseResult::NotSpecial);
         }
@@ -163,11 +210,11 @@ pub fn consume_stream_line(buffer: &mut TopicInputBuffer, line: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::TopicInputBuffer;
-    use super::{consume_stream_line, StreamOutcome, strip_crlf};
+    use super::{consume_stream_line, StreamOutcome, strip_crlf, InputBufferManager};
 
     #[test]
     fn single_line_parsing() {
-        let mut buf = TopicInputBuffer::new();
+        let buf = TopicInputBuffer::new();
         match super::parse_line("\"msg\"  :   hello") {
             Ok(super::LineParseResult::SingleLine { key, value }) => {
                 assert_eq!(key, "msg");
@@ -374,6 +421,100 @@ mod tests {
         let err = consume_stream_line(&mut buf, "\"unterminated").err();
         assert!(err.is_some());
         assert!(!buf.is_active());
+    }
+
+    #[test]
+    fn input_buffer_manager_basic_operations() {
+        let mut manager = InputBufferManager::new();
+        
+        // 新しいタスクのバッファを作成
+        let buffer = manager.get_or_create_buffer("task1");
+        assert!(!buffer.is_active());
+        
+        // 複数行の処理
+        let result = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
+        assert!(matches!(result, StreamOutcome::None));
+        
+        let result = manager.consume_stream_line("task1", "line1\n").unwrap();
+        assert!(matches!(result, StreamOutcome::None));
+        
+        let result = manager.consume_stream_line("task1", "line2").unwrap();
+        assert!(matches!(result, StreamOutcome::None));
+        
+        let result = manager.consume_stream_line("task1", "::\"msg\"").unwrap();
+        match result {
+            StreamOutcome::Emit { key, data } => {
+                assert_eq!(key, "msg");
+                assert_eq!(data, "line1\nline2");
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn input_buffer_manager_multiple_tasks() {
+        let mut manager = InputBufferManager::new();
+        
+        // タスク1の複数行処理
+        let _ = manager.consume_stream_line("task1", "\"stdout\"::").unwrap();
+        let _ = manager.consume_stream_line("task1", "task1_data").unwrap();
+        
+        // タスク2の複数行処理（同時実行）
+        let _ = manager.consume_stream_line("task2", "\"stdout\"::").unwrap();
+        let _ = manager.consume_stream_line("task2", "task2_data").unwrap();
+        
+        // タスク1を完了
+        let result1 = manager.consume_stream_line("task1", "::\"stdout\"").unwrap();
+        match result1 {
+            StreamOutcome::Emit { key, data } => {
+                assert_eq!(key, "stdout");
+                assert_eq!(data, "task1_data");
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+        
+        // タスク2を完了
+        let result2 = manager.consume_stream_line("task2", "::\"stdout\"").unwrap();
+        match result2 {
+            StreamOutcome::Emit { key, data } => {
+                assert_eq!(key, "stdout");
+                assert_eq!(data, "task2_data");
+            }
+            other => panic!("unexpected outcome: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn input_buffer_manager_flush_unfinished() {
+        let mut manager = InputBufferManager::new();
+        
+        // 未完了のバッファを作成
+        let _ = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
+        let _ = manager.consume_stream_line("task1", "unfinished_data").unwrap();
+        
+        // フラッシュ
+        let unfinished = manager.flush_all_unfinished();
+        assert_eq!(unfinished.len(), 1);
+        assert_eq!(unfinished[0].0, "task1");
+        assert_eq!(unfinished[0].1, "msg");
+        assert_eq!(unfinished[0].2, "unfinished_data");
+    }
+
+    #[test]
+    fn input_buffer_manager_remove_task() {
+        let mut manager = InputBufferManager::new();
+        
+        // タスクを作成
+        let _ = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
+        let _ = manager.consume_stream_line("task1", "data").unwrap();
+        
+        // タスクを削除
+        let removed = manager.remove_task("task1");
+        assert!(removed.is_some());
+        
+        // 削除されたタスクのバッファは存在しない
+        let buffer = manager.get_or_create_buffer("task1");
+        assert!(!buffer.is_active());
     }
 }
 
