@@ -3,7 +3,6 @@ task_name = "json-generator"
 command = "bash"
 args = ["-c", "echo '{\"name\": \"Alice\", \"age\": 30, \"city\": \"Tokyo\"}';"]
 auto_start = true
-allow_duplicate_start = false
 initial_topics = ["json-data", "user-info"]
 
 [[tasks]]
@@ -13,7 +12,7 @@ args = ["main.py"]
 working_directory = "./"
 auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = ["key1", "key2"]
+initial_topics = []
 
 [[tasks]]
 task_name = "stdout"

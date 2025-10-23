@@ -589,7 +589,7 @@ impl TopicSubscriber {
             log::info!("Broadcasted message to {} subscribers on topic '{}'", success_count, topic);
             Ok(success_count)
         } else {
-            log::warn!("No subscribers found for topic '{}'", topic);
+            log::info!("No subscribers found for topic '{}'", topic);
             Ok(0)
         }
     }
@@ -620,6 +620,7 @@ impl SystemCommandWorker {
         topic_subscriber: TopicSubscriber,
         task_registry: TaskRegistry,
         config: ServerConfig,
+        system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) {
         task::spawn(async move {
@@ -640,6 +641,7 @@ impl SystemCommandWorker {
                                 
                                 log::info!("Processing SystemCommand for task {}: {:?}", task_id, command);
                                 
+                                let command_clone = command.clone();
                                 match command {
                                     SystemCommand::SubscribeTopic { topic } => {
                                         log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
@@ -676,12 +678,13 @@ impl SystemCommandWorker {
                                     SystemCommand::StartTask { task_name } => {
                                         log::info!("Processing StartTask command for task {}: '{}'", task_id, task_name);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         match task_registry.start_single_task(
                                             &task_name,
                                             &config,
                                             topic_request_sender.clone(),
                                             topic_subscriber.clone(),
-                                            SystemCommandSender::new(mpsc::unbounded_channel().0), // 新しいチャンネルを作成
+                                            system_command_sender.clone(),
                                             shutdown_token.clone(),
                                         ).await {
                                             Ok(_) => {
@@ -690,6 +693,7 @@ impl SystemCommandWorker {
                                                 
                                                 let success_event = ExecutorEvent::new_system_response(
                                                     message.request_id.clone(),
+                                                    topic_name,
                                                     success_msg,
                                                     task_id.clone()
                                                 );
@@ -711,6 +715,7 @@ impl SystemCommandWorker {
                                     SystemCommand::StopTask { task_name } => {
                                         log::info!("Processing StopTask command for task {}: '{}'", task_id, task_name);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         match task_registry.stop_task(&task_name).await {
                                             Ok(_) => {
                                                 let success_msg = format!("Successfully stopped task '{}'", task_name);
@@ -718,6 +723,7 @@ impl SystemCommandWorker {
                                                 
                                                 let success_event = ExecutorEvent::new_system_response(
                                                     message.request_id.clone(),
+                                                    topic_name,
                                                     success_msg,
                                                     task_id.clone()
                                                 );
@@ -739,9 +745,11 @@ impl SystemCommandWorker {
                                     SystemCommand::KillServer => {
                                         log::info!("Processing KillServer command for task {} - initiating graceful server shutdown", task_id);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         let shutdown_msg = "Server graceful shutdown initiated";
                                         let shutdown_event = ExecutorEvent::new_system_response(
                                             message.request_id.clone(),
+                                            topic_name,
                                             shutdown_msg.to_string(),
                                             task_id.clone()
                                         );
@@ -770,11 +778,12 @@ impl SystemCommandWorker {
                                     SystemCommand::AddTaskFromToml { toml_data } => {
                                         log::info!("Processing AddTaskFromToml command for task {} with TOML data", task_id);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         match task_registry.add_task_from_toml(
                                             &toml_data,
                                             topic_request_sender.clone(),
                                             topic_subscriber.clone(),
-                                            SystemCommandSender::new(mpsc::unbounded_channel().0), // 新しいチャンネルを作成
+                                            system_command_sender.clone(),
                                             shutdown_token.clone(),
                                         ).await {
                                             Ok(_) => {
@@ -783,6 +792,7 @@ impl SystemCommandWorker {
                                                 
                                                 let success_event = ExecutorEvent::new_system_response(
                                                     message.request_id.clone(),
+                                                    topic_name,
                                                     success_msg,
                                                     task_id.clone()
                                                 );
@@ -804,6 +814,7 @@ impl SystemCommandWorker {
                                     SystemCommand::Status => {
                                         log::info!("Processing Status command for task {}", task_id);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         let tasks_info = task_registry.get_running_tasks_info().await;
                                         let topics_info = topic_subscriber.get_topics_info().await;
                                         
@@ -832,6 +843,7 @@ impl SystemCommandWorker {
                                         
                                         let status_event = ExecutorEvent::new_system_response(
                                             message.request_id.clone(),
+                                            topic_name,
                                             json_response,
                                             task_id.clone()
                                         );
@@ -934,6 +946,7 @@ pub enum ExecutorEventKind {
     },
     SystemResponse {
         request_id: MessageId,
+        topic: String,
         data: TaskMessageData,
     },
     SystemError {
@@ -997,10 +1010,11 @@ impl ExecutorEvent {
         }
     }
 
-    pub fn new_system_response(request_id: MessageId, data: TaskMessageData, task_id: TaskId) -> Self {
+    pub fn new_system_response(request_id: MessageId, topic: String, data: TaskMessageData, task_id: TaskId) -> Self {
         Self {
             kind: ExecutorEventKind::SystemResponse { 
                 request_id, 
+                topic,
                 data 
             },
             timestamp: chrono::Utc::now(),
@@ -1040,6 +1054,7 @@ impl ExecutorEvent {
     pub fn topic(&self) -> Option<&String> {
         match &self.kind {
             ExecutorEventKind::Message { topic, .. } => Some(topic),
+            ExecutorEventKind::SystemResponse { topic, .. } => Some(topic),
             ExecutorEventKind::SystemCommand { command } => {
                 match command {
                     SystemCommand::SubscribeTopic { topic } | 
@@ -1164,7 +1179,7 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorEventKind::SystemResponse { request_id, data } => {
+                                    ExecutorEventKind::SystemResponse { request_id, data, topic: _ } => {
                                         log::info!("SystemResponse event {} for task {}: '{}'", request_id, task_id, data);
                                     },
                                     ExecutorEventKind::SystemError { request_id, error } => {
@@ -1214,11 +1229,15 @@ impl TaskSpawner {
                                 if let Some(data) = topic_data.data() {
                                     let lines: Vec<&str> = data.lines().collect();
                                     
+                                    // トピック名は必須
                                     if let Some(topic_name) = topic_data.topic() {
                                         if let Err(e) = executor_handle.input_channel.sender.send(topic_name.clone()) {
                                             log::warn!("Failed to send topic name to executor for task {}: {}", task_id, e);
                                             continue;
                                         }
+                                    } else {
+                                        log::warn!("Topic data received without topic name for task {}, skipping", task_id);
+                                        continue;
                                     }
                                     
                                     if let Err(e) = executor_handle.input_channel.sender.send(lines.len().to_string()) {
@@ -1277,6 +1296,21 @@ pub enum SystemCommand {
 }
 
 impl SystemCommand {
+    fn get_topic_name(&self) -> String {
+        match self {
+            SystemCommand::SubscribeTopic { topic } => format!("system.subscribe-topic.{}", topic),
+            SystemCommand::UnsubscribeTopic { topic } => format!("system.unsubscribe-topic.{}", topic),
+            SystemCommand::Stdout { .. } => "system.stdout".to_string(),
+            SystemCommand::Stderr { .. } => "system.stderr".to_string(),
+            SystemCommand::StartTask { task_name } => format!("system.start-task.{}", task_name),
+            SystemCommand::StopTask { task_name } => format!("system.stop-task.{}", task_name),
+            SystemCommand::KillServer => "system.killserver".to_string(),
+            SystemCommand::AddTaskFromToml { .. } => "system.add-task-from-toml".to_string(),
+            SystemCommand::Status => "system.status".to_string(),
+            SystemCommand::Unknown { command, .. } => command.clone(),
+        }
+    }
+
     fn parse_add_task_from_toml(data: &str) -> Option<Self> {
         if data.trim().is_empty() {
             return None;
@@ -1480,6 +1514,7 @@ impl Executor for CommandExecutor {
             let stderr: tokio::process::ChildStderr = child.stderr.take().unwrap();
             let mut stdin_writer = child.stdin.take().unwrap();
 
+
             let cancel_token: CancellationToken = CancellationToken::new();
 
             let stdout_handle = spawn_stream_reader(
@@ -1639,7 +1674,6 @@ pub struct TaskConfig {
     pub working_directory: Option<String>,
     pub environment_vars: Option<HashMap<String, String>>,
     pub auto_start: Option<bool>,
-    pub allow_duplicate_start: Option<bool>,
     pub initial_topics: Option<Vec<String>>,
 }
 
@@ -1739,34 +1773,15 @@ impl TaskRegistry {
         running_tasks.insert(task_name, task);
     }
 
+
     pub async fn try_register_task(&self, task_name: String, task: RunningTask) -> Result<(), String> {
         let mut running_tasks = self.running_tasks.write().await;
-        if running_tasks.contains_key(&task_name) {
-            Err(format!("Task '{}' is already running", task_name))
-        } else {
-            running_tasks.insert(task_name, task);
-            Ok(())
-        }
-    }
-
-    pub async fn try_register_task_with_duplicate_check(&self, task_name: String, task: RunningTask, allow_duplicate: bool) -> Result<(), String> {
-        let mut running_tasks = self.running_tasks.write().await;
         let is_running = running_tasks.contains_key(&task_name);
-        log::info!("Task '{}' is_running={}, allow_duplicate={}", task_name, is_running, allow_duplicate);
+        log::info!("Task '{}' is_running={}", task_name, is_running);
         
         if is_running {
-            if allow_duplicate {
-                if let Some(existing_task) = running_tasks.remove(&task_name) {
-                    log::info!("Stopping existing task '{}' to allow duplicate start", task_name);
-                    existing_task.task_handle.abort();
-                }
-                running_tasks.insert(task_name.clone(), task);
-                log::info!("Registered duplicate task '{}'", task_name);
-                Ok(())
-            } else {
-                log::warn!("Task '{}' is already running and duplicate start is not allowed - cancelling new task start", task_name);
-                Err(format!("Task '{}' is already running", task_name))
-            }
+            log::warn!("Task '{}' is already running - cancelling new task start", task_name);
+            Err(format!("Task '{}' is already running", task_name))
         } else {
             running_tasks.insert(task_name.clone(), task);
             log::info!("Registered new task '{}'", task_name);
@@ -1852,7 +1867,6 @@ impl TaskRegistry {
     ) -> Result<()> {
         log::info!("Starting task '{}'", task_config.name);
         
-        let allow_duplicate = task_config.allow_duplicate_start.unwrap_or(false);
         
         if !std::path::Path::new(&task_config.command).exists() && !which::which(&task_config.command).is_ok() {
             return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", task_config.command));
@@ -1900,7 +1914,7 @@ impl TaskRegistry {
             task_handle,
         };
         
-        if let Err(e) = self.try_register_task_with_duplicate_check(task_config.name.clone(), running_task, allow_duplicate).await {
+        if let Err(e) = self.try_register_task(task_config.name.clone(), running_task).await {
             return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
         }
         
@@ -2001,10 +2015,11 @@ impl MiclowServer {
         topic_subscriber: TopicSubscriber,
         task_registry: TaskRegistry,
         config: ServerConfig,
+        system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) {
         log::info!("Starting system command worker");
-        SystemCommandWorker::start_worker(system_command_receiver, topic_request_sender, topic_subscriber, task_registry, config, shutdown_token);
+        SystemCommandWorker::start_worker(system_command_receiver, topic_request_sender, topic_subscriber, task_registry, config, system_command_sender, shutdown_token);
     }
 
 
@@ -2059,7 +2074,7 @@ impl MiclowServer {
         let system_command_sender: SystemCommandSender = self.system_command_channel.sender;
 
         Self::start_topic_request_worker(topic_req_receiver, topic_subscriber.clone(), self.shutdown_token.clone());
-        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), self.shutdown_token.clone());
+        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
 
         Self::start_user_tasks(
             &self.config,

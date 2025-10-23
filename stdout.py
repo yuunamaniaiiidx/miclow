@@ -5,6 +5,6 @@ while True:
         s = input()
         print("\"system.stdout\": ", s)
     cnt += 1
-    if cnt > 3:
+    if cnt > 100:
         print("\"system.killserver\": ")
         break
