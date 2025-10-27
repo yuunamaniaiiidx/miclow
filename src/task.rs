@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::process::Command as TokioCommand;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader, stdin};
 use log::info;
 use tokio::task;
 use chrono;
@@ -549,7 +549,14 @@ impl TopicSubscriber {
             .collect()
     }
 
-    pub async fn broadcast_message(&self, topic: &str, event: ExecutorEvent) -> Result<usize, String> {
+    pub async fn broadcast_message(&self, event: ExecutorEvent) -> Result<usize, String> {
+        let topic = match event.topic() {
+            Some(topic) => topic,
+            None => {
+                return Err("Event does not contain a topic".to_string());
+            }
+        };
+        
         let subscribers = self.get_subscribers(topic).await;
         
         if let Some(subscriber_list) = subscribers {
@@ -595,45 +602,26 @@ impl TopicSubscriber {
     }
 }
 
-pub struct SystemCommandWorker {
-    pub system_command_channel: SystemCommandChannel,
-    pub topic_request_sender: TopicRequestSender,
-    pub topic_subscriber: TopicSubscriber,
-    pub task_registry: TaskRegistry,
-    pub config: ServerConfig,
-}
-
-impl SystemCommandWorker {
-    pub fn new(system_command_channel: SystemCommandChannel, topic_request_sender: TopicRequestSender, topic_subscriber: TopicSubscriber, task_registry: TaskRegistry, config: ServerConfig) -> Self {
-        Self {
-            system_command_channel,
-            topic_request_sender,
-            topic_subscriber,
-            task_registry,
-            config,
-        }
-    }
-
-    pub fn start_worker(
-        mut system_command_receiver: SystemCommandReceiver,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        task_registry: TaskRegistry,
-        config: ServerConfig,
-        system_command_sender: SystemCommandSender,
-        shutdown_token: CancellationToken,
-    ) {
-        task::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    
-                    _ = shutdown_token.cancelled() => {
-                        log::info!("SystemCommand worker received shutdown signal");
-                        break;
-                    }
-                    
-                    maybe = async { system_command_receiver.recv().await } => {
+pub fn start_system_command_worker(
+    mut system_command_receiver: SystemCommandReceiver,
+    topic_request_sender: TopicRequestSender,
+    topic_subscriber: TopicSubscriber,
+    task_registry: TaskRegistry,
+    config: ServerConfig,
+    system_command_sender: SystemCommandSender,
+    shutdown_token: CancellationToken,
+) {
+    task::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                
+                _ = shutdown_token.cancelled() => {
+                    log::info!("SystemCommand worker received shutdown signal");
+                    break;
+                }
+                
+                maybe = async { system_command_receiver.recv().await } => {
                         match maybe {
                             Some(message) => {
                                 let task_id: TaskId = message.task_id.clone();
@@ -905,70 +893,55 @@ impl SystemCommandWorker {
             }
             log::info!("SystemCommand worker stopped");
         });
-    }
 }
 
-pub struct TopicRequestWorker {
-    pub topic_channel: TopicChannel,
-    pub topic_subscriber: TopicSubscriber,
-}
-
-impl TopicRequestWorker {
-    pub fn new(topic_channel: TopicChannel, topic_subscriber: TopicSubscriber) -> Self {
-        Self {
-            topic_channel,
-            topic_subscriber,
-        }
-    }
-
-    pub fn start_worker(
-        mut topic_request_receiver: TopicRequestReceiver,
-        subscriber_manager: TopicSubscriber,
-        shutdown_token: CancellationToken,
-    ) {
-        task::spawn(async move {
-            loop {
-                tokio::select! {
-                    biased;
-                    
-                    _ = shutdown_token.cancelled() => {
-                        log::info!("Topic request worker received shutdown signal");
-                        break;
-                    }
-                    
-                    maybe = async { topic_request_receiver.recv().await } => {
-                        match maybe {
-                            Some(request) => {
-                                let task_id: TaskId = request.task_id.clone();
-                                let topic: String = request.topic.clone();
-                                
-                                match request.request_type {
-                                    TopicRequestType::Subscribe => {
-                                        log::info!("New subscribe request for '{}' from task {}", topic, task_id);
-                                        subscriber_manager.add_subscriber(topic.clone(), task_id.clone(), request.response_channel).await;
-                                    },
-                                    TopicRequestType::Unsubscribe => {
-                                        log::info!("New unsubscribe request for '{}' from task {}", topic, task_id);
-                                        let removed: bool = subscriber_manager.remove_subscriber_by_task(topic.clone(), task_id.clone()).await;
-                                        if removed {
-                                            log::info!("Successfully removed subscriber for task {} from topic '{}'", task_id, topic);
-                                        } else {
-                                            log::warn!("Failed to remove subscriber for task {} from topic '{}'", task_id, topic);
-                                        }
+pub fn start_topic_request_worker(
+    mut topic_request_receiver: TopicRequestReceiver,
+    subscriber_manager: TopicSubscriber,
+    shutdown_token: CancellationToken,
+) {
+    task::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                
+                _ = shutdown_token.cancelled() => {
+                    log::info!("Topic request worker received shutdown signal");
+                    break;
+                }
+                
+                maybe = async { topic_request_receiver.recv().await } => {
+                    match maybe {
+                        Some(request) => {
+                            let task_id: TaskId = request.task_id.clone();
+                            let topic: String = request.topic.clone();
+                            
+                            match request.request_type {
+                                TopicRequestType::Subscribe => {
+                                    log::info!("New subscribe request for '{}' from task {}", topic, task_id);
+                                    subscriber_manager.add_subscriber(topic.clone(), task_id.clone(), request.response_channel).await;
+                                },
+                                TopicRequestType::Unsubscribe => {
+                                    log::info!("New unsubscribe request for '{}' from task {}", topic, task_id);
+                                    let removed: bool = subscriber_manager.remove_subscriber_by_task(topic.clone(), task_id.clone()).await;
+                                    if removed {
+                                        log::info!("Successfully removed subscriber for task {} from topic '{}'", task_id, topic);
+                                    } else {
+                                        log::warn!("Failed to remove subscriber for task {} from topic '{}'", task_id, topic);
                                     }
                                 }
                             }
-                            None => {
-                                log::info!("Topic request receiver closed");
-                                break;
-                            }
+                        }
+                        None => {
+                            log::info!("Topic request receiver closed");
+                            break;
                         }
                     }
                 }
             }
-            log::info!("Topic request worker stopped");
-        });
-    }
+        }
+        log::info!("Topic request worker stopped");
+    });
 }
 
 pub type TaskMessageData = String;
@@ -1206,7 +1179,7 @@ impl TaskSpawner {
                                 match &event.kind {
                                     ExecutorEventKind::Message { message_id, topic, data } => {
                                         log::info!("Message event {} for task {} on topic '{}': '{}'", message_id, task_id, topic, data);
-                                        match topic_subscriber.broadcast_message(&topic, event.clone()).await {
+                                        match topic_subscriber.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
                                                 log::info!("Broadcasted message from task {} to {} subscribers on topic '{}'", task_id, success_count, topic);
                                             },
@@ -2162,7 +2135,7 @@ impl MiclowServer {
         shutdown_token: CancellationToken,
     ) {
         log::info!("Starting topic request worker");
-        TopicRequestWorker::start_worker(topic_request_receiver, subscriber_manager, shutdown_token);
+        start_topic_request_worker(topic_request_receiver, subscriber_manager, shutdown_token);
     }
 
     fn start_system_command_worker(
@@ -2175,7 +2148,7 @@ impl MiclowServer {
         shutdown_token: CancellationToken,
     ) {
         log::info!("Starting system command worker");
-        SystemCommandWorker::start_worker(system_command_receiver, topic_request_sender, topic_subscriber, task_registry, config, system_command_sender, shutdown_token);
+        start_system_command_worker(system_command_receiver, topic_request_sender, topic_subscriber, task_registry, config, system_command_sender, shutdown_token);
     }
 
 
@@ -2218,6 +2191,54 @@ impl MiclowServer {
         } else {
             info!("Started {} user tasks from configuration", auto_start_tasks.len());
         }
+    }
+
+    pub async fn start_server_with_interactive(
+        self,
+    ) -> Result<()> {
+        let topic_req_receiver: TopicRequestReceiver = self.topic_channel.receiver;
+        let topic_sender: TopicRequestSender = self.topic_channel.sender;
+        let topic_subscriber: TopicSubscriber = self.topic_subscriber.clone();
+        let system_command_receiver: SystemCommandReceiver = self.system_command_channel.receiver;
+        let system_command_sender: SystemCommandSender = self.system_command_channel.sender;
+
+        Self::start_topic_request_worker(topic_req_receiver, topic_subscriber.clone(), self.shutdown_token.clone());
+        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
+
+        Self::start_user_tasks(
+            &self.config,
+            &self.task_registry,
+            topic_sender.clone(),
+            topic_subscriber.clone(),
+            system_command_sender.clone(),
+            self.shutdown_token.clone(),
+        ).await;
+
+        info!("All workers and user tasks started successfully");
+        
+        let topic_request_sender: TopicRequestSender = topic_sender.clone();
+        
+        log::info!("Server running. Press Ctrl+C to stop.");
+        println!("Server running. Press Ctrl+C to stop.");
+        
+        Self::start_interactive_mode(
+            system_command_sender.clone(), 
+            topic_subscriber.clone(),
+            self.shutdown_token.clone()
+        ).await;
+        
+        log::info!("Received shutdown signal, stopping all workers...");
+        
+        Self::shutdown_workers(
+            topic_request_sender,
+            self.task_registry,
+            self.shutdown_token,
+        ).await;
+        
+        log::info!("Server shutdown completed");
+        println!("Graceful shutdown completed");
+        
+        Ok(())
     }
 
     pub async fn start_server(
@@ -2263,6 +2284,83 @@ impl MiclowServer {
         println!("Graceful shutdown completed");
         
         Ok(())
+    }
+
+    async fn start_interactive_mode(
+        system_command_sender: SystemCommandSender,
+        topic_subscriber: TopicSubscriber,
+        shutdown_token: CancellationToken
+    ) {
+        let stdin = stdin();
+        let reader = TokioBufReader::new(stdin);
+        let mut lines = reader.lines();
+        
+        let interactive_task_id = TaskId::new();
+        
+        let interactive_event_channel = ExecutorEventChannel::new();
+        let interactive_event_sender = interactive_event_channel.sender;
+        
+        loop {
+            if shutdown_token.is_cancelled() {
+                log::info!("Interactive mode received shutdown signal");
+                break;
+            }
+            
+            print!("> ");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap();
+            
+            tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    log::info!("Interactive mode received shutdown signal");
+                    break;
+                }
+                line_result = lines.next_line() => {
+                    if let Some(line) = line_result.unwrap_or_default() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        
+                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext("", trimmed) {
+                            log::info!("Sending system command from interactive mode: {:?}", system_cmd);
+                            
+                            let system_command_message = SystemCommandMessage::new(
+                                system_cmd,
+                                interactive_task_id.clone(),
+                                interactive_event_sender.clone()
+                            );
+                            
+                            if let Err(e) = system_command_sender.send(system_command_message) {
+                                log::error!("Failed to send system command: {}", e);
+                                eprintln!("Failed to send system command: {}", e);
+                            } else {
+                                log::info!("Successfully sent system command from interactive mode");
+                            }
+                        } else {
+                            log::info!("Sending message to stdout topic: '{}'", trimmed);
+                            
+                            let executor_event = ExecutorEvent::new_message(
+                                "stdout".to_string(),
+                                trimmed.to_string(),
+                                interactive_task_id.clone()
+                            );
+                            
+                            match topic_subscriber.broadcast_message(executor_event).await {
+                                Ok(success_count) => {
+                                    log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to broadcast message to stdout topic: {}", e);
+                                    eprintln!("Failed to broadcast message to stdout topic: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     pub async fn trigger_graceful_shutdown(
