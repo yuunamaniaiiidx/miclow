@@ -76,53 +76,6 @@ impl SystemCommandMessage {
 }
 
 
-#[derive(Clone)]
-pub struct TopicDataSender {
-    sender: mpsc::UnboundedSender<ExecutorEvent>,
-}
-
-impl TopicDataSender {
-    pub fn new(sender: mpsc::UnboundedSender<ExecutorEvent>) -> Self {
-        Self { sender }
-    }
-
-    pub fn send(&self, event: ExecutorEvent) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.sender.send(event)
-    }
-}
-
-pub struct TopicDataReceiver {
-    receiver: mpsc::UnboundedReceiver<ExecutorEvent>,
-}
-
-impl TopicDataReceiver {
-    pub fn new(receiver: mpsc::UnboundedReceiver<ExecutorEvent>) -> Self {
-        Self { receiver }
-    }
-
-    pub async fn recv(&mut self) -> Option<ExecutorEvent> {
-        self.receiver.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<ExecutorEvent, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
-}
-
-pub struct TopicDataChannel {
-    pub sender: TopicDataSender,
-    pub receiver: TopicDataReceiver,
-}
-
-impl TopicDataChannel {
-    pub fn new() -> Self {
-        let (tx, receiver) = mpsc::unbounded_channel::<ExecutorEvent>();
-        Self {
-            sender: TopicDataSender::new(tx),
-            receiver: TopicDataReceiver::new(receiver),
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct ExecutorEventSender {
