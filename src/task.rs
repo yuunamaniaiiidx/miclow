@@ -1748,6 +1748,8 @@ pub struct ServerConfig {
     #[serde(skip)]
     pub config_file: Option<String>,
     pub tasks: Vec<TaskConfig>,
+    #[serde(default)]
+    pub include_paths: Vec<String>,
 }
 
 impl ServerConfig {
@@ -1761,7 +1763,11 @@ impl ServerConfig {
     pub fn from_file(config_file: String) -> Result<Self> {
         let config_content: String = std::fs::read_to_string(&config_file)?;
         let mut config = Self::from_toml(&config_content)?;
-        config.config_file = Some(config_file);
+        config.config_file = Some(config_file.clone());
+        
+        // includeファイルを読み込む
+        config.load_includes(&config_file)?;
+        
         Ok(config)
     }
     
@@ -1799,6 +1805,85 @@ impl ServerConfig {
                     if topic.contains(' ') {
                         return Err(anyhow::anyhow!("Task '{}' initial topic '{}' contains spaces (not allowed)", task.name, topic));
                     }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// includeファイルを再帰的に読み込む（循環参照を防止）
+    fn load_includes(&mut self, base_config_path: &str) -> Result<()> {
+        let mut loaded_files = std::collections::HashSet::new();
+        let base_dir = std::path::Path::new(base_config_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        
+        // include_pathsをクローンして借用の問題を回避
+        let include_paths = self.include_paths.clone();
+        self.load_includes_recursive(&mut loaded_files, base_dir, &include_paths)?;
+        Ok(())
+    }
+    
+    /// 再帰的にincludeファイルを読み込む内部メソッド
+    fn load_includes_recursive(
+        &mut self,
+        loaded_files: &mut std::collections::HashSet<String>,
+        base_dir: &std::path::Path,
+        include_paths: &[String],
+    ) -> Result<()> {
+        for include_path in include_paths {
+            // 相対パスを絶対パスに変換
+            let full_path = if std::path::Path::new(include_path).is_absolute() {
+                include_path.clone()
+            } else {
+                base_dir.join(include_path).to_string_lossy().to_string()
+            };
+            
+            // 循環参照をチェック
+            if loaded_files.contains(&full_path) {
+                log::warn!("Circular include detected for file: {}", full_path);
+                continue;
+            }
+            
+            // ファイルが存在するかチェック
+            if !std::path::Path::new(&full_path).exists() {
+                log::warn!("Include file not found: {}", full_path);
+                continue;
+            }
+            
+            // ファイルを読み込む
+            match std::fs::read_to_string(&full_path) {
+                Ok(content) => {
+                    loaded_files.insert(full_path.clone());
+                    log::info!("Loading include file: {}", full_path);
+                    
+                    // TOMLを解析
+                    match Self::from_toml(&content) {
+                        Ok(included_config) => {
+                            // タスクをマージ
+                            self.tasks.extend(included_config.tasks);
+                            
+                            // 再帰的にincludeファイルを読み込む
+                            if !included_config.include_paths.is_empty() {
+                                let include_dir = std::path::Path::new(&full_path)
+                                    .parent()
+                                    .unwrap_or(std::path::Path::new("."));
+                                
+                                self.load_includes_recursive(
+                                    loaded_files,
+                                    include_dir,
+                                    &included_config.include_paths,
+                                )?;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to parse include file {}: {}", full_path, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to read include file {}: {}", full_path, e);
                 }
             }
         }
