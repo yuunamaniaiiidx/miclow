@@ -978,7 +978,7 @@ impl TaskSpawner {
                                     
                                     // トピック名は必須
                                     if let Some(topic_name) = topic_data.topic() {
-                                        if let Err(e) = executor_handle.input_channel.sender.send(topic_name.clone()) {
+                                        if let Err(e) = executor_handle.input_sender.send(topic_name.clone()) {
                                             log::warn!("Failed to send topic name to executor for task {}: {}", task_id, e);
                                             continue;
                                         }
@@ -987,13 +987,13 @@ impl TaskSpawner {
                                         continue;
                                     }
                                     
-                                    if let Err(e) = executor_handle.input_channel.sender.send(lines.len().to_string()) {
+                                    if let Err(e) = executor_handle.input_sender.send(lines.len().to_string()) {
                                         log::warn!("Failed to send line count to executor for task {}: {}", task_id, e);
                                         continue;
                                     }
                                     
                                     for line in lines {
-                                        if let Err(e) = executor_handle.input_channel.sender.send(line.to_string()) {
+                                        if let Err(e) = executor_handle.input_sender.send(line.to_string()) {
                                             log::warn!("Failed to send line to executor for task {}: {}", task_id, e);
                                             break;
                                         }
@@ -1016,7 +1016,7 @@ impl TaskSpawner {
 
 pub struct ExecutorHandle {
     pub event_receiver: ExecutorEventReceiver,
-    pub input_channel: InputChannel,
+    pub input_sender: InputSender,
     pub shutdown_sender: ShutdownSender,
 }
 
@@ -1154,11 +1154,7 @@ impl Executor for CommandExecutor {
         let mut shutdown_channel = ShutdownChannel::new();
         
         let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
-        let input_sender: InputSender = input_channel.sender;
-        let input_receiver_task = input_channel.receiver;
-
-        let _input_sender_clone: InputSender = input_sender.clone();
-        let mut input_receiver_task_clone = input_receiver_task;
+        let mut input_receiver = input_channel.receiver;
 
         task::spawn(async move {
             let mut command_builder = TokioCommand::new(&config.command);
@@ -1226,7 +1222,7 @@ impl Executor for CommandExecutor {
                 loop {
                     tokio::select! {
                         _ = cancel_input.cancelled() => { break; }
-                        input_data = input_receiver_task_clone.recv() => {
+                        input_data = input_receiver.recv() => {
                             match input_data {
                                 Some(input_data) => {
                                     let bytes: Vec<u8> = if input_data.ends_with('\n') { input_data.into_bytes() } else { format!("{}\n", input_data).into_bytes() };
@@ -1289,10 +1285,7 @@ impl Executor for CommandExecutor {
         
         Ok(ExecutorHandle {
             event_receiver: event_channel.receiver,
-            input_channel: InputChannel {
-                sender: input_sender,
-                receiver: InputReceiver::new(mpsc::unbounded_channel::<String>().1),
-            },
+            input_sender: input_channel.sender,
             shutdown_sender: shutdown_channel.sender,
         })
     }
