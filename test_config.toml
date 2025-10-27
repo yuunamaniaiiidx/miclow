@@ -1,0 +1,18 @@
+# Test configuration for miclow Python client
+[[tasks]]
+task_name = "python-client-test"
+command = "python3"
+args = ["simple_test.py"]
+working_directory = "./"
+auto_start = true
+environment_vars = { PYTHONUNBUFFERED = "1", PYTHONPATH = "./python" }
+initial_topics = ["test_topic", "context_test"]
+
+[[tasks]]
+task_name = "echo-server"
+command = "python3"
+args = ["-c", "import sys; [print(f'echo:{line.strip()}') for line in sys.stdin]"]
+working_directory = "./"
+auto_start = true
+environment_vars = { PYTHONUNBUFFERED = "1" }
+initial_topics = ["echo"]

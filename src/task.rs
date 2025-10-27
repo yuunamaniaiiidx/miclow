@@ -646,27 +646,63 @@ impl SystemCommandWorker {
                                     SystemCommand::SubscribeTopic { topic } => {
                                         log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         if let Err(e) = topic_request_sender.send_subscribe_request(
                                             topic.clone(),
                                             task_id.clone(), 
                                             message.response_channel.clone()
                                         ) {
                                             log::warn!("Failed to send topic request (task {}): {}", task_id, e);
+                                            
+                                            let error_msg = format!("Failed to subscribe to topic '{}': {}", topic, e);
+                                            let error_event = ExecutorEvent::new_system_error(
+                                                message.request_id.clone(),
+                                                error_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(error_event);
                                         } else {
                                             log::info!("Sent topic request for '{}' from task {}", topic, task_id);
+                                            
+                                            let success_msg = format!("Successfully subscribed to topic '{}'", topic);
+                                            let success_event = ExecutorEvent::new_system_response(
+                                                message.request_id.clone(),
+                                                topic_name,
+                                                success_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(success_event);
                                         }
                                     },
                                     SystemCommand::UnsubscribeTopic { topic } => {
                                         log::info!("Processing UnsubscribeTopic command for task {}: '{}'", task_id, topic);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         if let Err(e) = topic_request_sender.send_unsubscribe_request(
                                             topic.clone(),
                                             task_id.clone(), 
                                             message.response_channel.clone()
                                         ) {
                                             log::warn!("Failed to send unsubscribe request (task {}): {}", task_id, e);
+                                            
+                                            let error_msg = format!("Failed to unsubscribe from topic '{}': {}", topic, e);
+                                            let error_event = ExecutorEvent::new_system_error(
+                                                message.request_id.clone(),
+                                                error_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(error_event);
                                         } else {
                                             log::info!("Sent unsubscribe request for '{}' from task {}", topic, task_id);
+                                            
+                                            let success_msg = format!("Successfully unsubscribed from topic '{}'", topic);
+                                            let success_event = ExecutorEvent::new_system_response(
+                                                message.request_id.clone(),
+                                                topic_name,
+                                                success_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(success_event);
                                         }
                                     },
                                     SystemCommand::Stdout { data } => {
@@ -1493,6 +1529,8 @@ impl Executor for CommandExecutor {
                     command_builder.env(key, value);
                 }
             }
+
+            command_builder.env("MICLOW_TASK_ID", task_id.to_string());
             
             let mut child = match command_builder
                 .stdout(Stdio::piped())
