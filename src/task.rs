@@ -53,45 +53,6 @@ impl std::fmt::Display for MessageId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum TopicRequestType {
-    Subscribe,
-    Unsubscribe,
-}
-
-#[derive(Debug, Clone)]
-pub struct TopicRequestMessage {
-    pub message_id: MessageId,
-    pub topic: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub task_id: TaskId,
-    pub request_type: TopicRequestType,
-    pub response_channel: ExecutorEventSender,
-}
-
-impl TopicRequestMessage {
-    pub fn new_subscribe(topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
-        Self {
-            message_id: MessageId::new(),
-            topic,
-            timestamp: chrono::Utc::now(),
-            task_id,
-            request_type: TopicRequestType::Subscribe,
-            response_channel,
-        }
-    }
-
-    pub fn new_unsubscribe(topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
-        Self {
-            message_id: MessageId::new(),
-            topic,
-            timestamp: chrono::Utc::now(),
-            task_id,
-            request_type: TopicRequestType::Unsubscribe,
-            response_channel,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct SystemCommandMessage {
@@ -114,61 +75,6 @@ impl SystemCommandMessage {
     }
 }
 
-#[derive(Clone)]
-pub struct TopicRequestSender {
-    sender: Arc<mpsc::UnboundedSender<TopicRequestMessage>>,
-}
-
-impl TopicRequestSender {
-    pub fn new(sender: Arc<mpsc::UnboundedSender<TopicRequestMessage>>) -> Self {
-        Self { sender }
-    }
-
-    pub fn send(&self, message: TopicRequestMessage) -> Result<(), mpsc::error::SendError<TopicRequestMessage>> {
-        self.sender.send(message)
-    }
-
-    pub fn send_subscribe_request(&self, topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), mpsc::error::SendError<TopicRequestMessage>> {
-        self.send(TopicRequestMessage::new_subscribe(topic, task_id, response_channel))
-    }
-
-    pub fn send_unsubscribe_request(&self, topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), mpsc::error::SendError<TopicRequestMessage>> {
-        self.send(TopicRequestMessage::new_unsubscribe(topic, task_id, response_channel))
-    }
-}
-
-pub struct TopicRequestReceiver {
-    receiver: mpsc::UnboundedReceiver<TopicRequestMessage>,
-}
-
-impl TopicRequestReceiver {
-    pub fn new(receiver: mpsc::UnboundedReceiver<TopicRequestMessage>) -> Self {
-        Self { receiver }
-    }
-
-    pub async fn recv(&mut self) -> Option<TopicRequestMessage> {
-        self.receiver.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<TopicRequestMessage, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
-}
-
-pub struct TopicChannel {
-    pub sender: TopicRequestSender,
-    pub receiver: TopicRequestReceiver,
-}
-
-impl TopicChannel {
-    pub fn new() -> Self {
-        let (tx, receiver) = mpsc::unbounded_channel::<TopicRequestMessage>();
-        Self {
-            sender: TopicRequestSender::new(Arc::new(tx)),
-            receiver: TopicRequestReceiver::new(receiver),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct TopicDataSender {
@@ -413,12 +319,12 @@ impl SystemCommandChannel {
 }
 
 #[derive(Clone)]
-pub struct TopicSubscriber {
+pub struct TopicManager {
     subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorEventSender>>>>>>,
     task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorEventSender>>>>,
 }
 
-impl TopicSubscriber {
+impl TopicManager {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
@@ -604,8 +510,7 @@ impl TopicSubscriber {
 
 pub fn start_system_command_worker(
     mut system_command_receiver: SystemCommandReceiver,
-    topic_request_sender: TopicRequestSender,
-    topic_subscriber: TopicSubscriber,
+    topic_manager: TopicManager,
     task_registry: TaskRegistry,
     config: ServerConfig,
     system_command_sender: SystemCommandSender,
@@ -635,53 +540,34 @@ pub fn start_system_command_worker(
                                         log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
                                         
                                         let topic_name = command_clone.get_topic_name();
-                                        if let Err(e) = topic_request_sender.send_subscribe_request(
+                                        topic_manager.add_subscriber(
                                             topic.clone(),
                                             task_id.clone(), 
                                             message.response_channel.clone()
-                                        ) {
-                                            log::warn!("Failed to send topic request (task {}): {}", task_id, e);
-                                            
-                                            let error_msg = format!("Failed to subscribe to topic '{}': {}", topic, e);
-                                            let error_event = ExecutorEvent::new_system_error(
-                                                message.request_id.clone(),
-                                                error_msg,
-                                                task_id.clone()
-                                            );
-                                            let _ = message.response_channel.send(error_event);
-                                        } else {
-                                            log::info!("Sent topic request for '{}' from task {}", topic, task_id);
-                                            
-                                            let success_msg = format!("Successfully subscribed to topic '{}'", topic);
-                                            let success_event = ExecutorEvent::new_system_response(
-                                                message.request_id.clone(),
-                                                topic_name,
-                                                success_msg,
-                                                task_id.clone()
-                                            );
-                                            let _ = message.response_channel.send(success_event);
-                                        }
+                                        ).await;
+                                        
+                                        log::info!("Successfully subscribed to topic '{}'", topic);
+                                        
+                                        let success_msg = format!("Successfully subscribed to topic '{}'", topic);
+                                        let success_event = ExecutorEvent::new_system_response(
+                                            message.request_id.clone(),
+                                            topic_name,
+                                            success_msg,
+                                            task_id.clone()
+                                        );
+                                        let _ = message.response_channel.send(success_event);
                                     },
                                     SystemCommand::UnsubscribeTopic { topic } => {
                                         log::info!("Processing UnsubscribeTopic command for task {}: '{}'", task_id, topic);
                                         
                                         let topic_name = command_clone.get_topic_name();
-                                        if let Err(e) = topic_request_sender.send_unsubscribe_request(
+                                        let removed = topic_manager.remove_subscriber_by_task(
                                             topic.clone(),
-                                            task_id.clone(), 
-                                            message.response_channel.clone()
-                                        ) {
-                                            log::warn!("Failed to send unsubscribe request (task {}): {}", task_id, e);
-                                            
-                                            let error_msg = format!("Failed to unsubscribe from topic '{}': {}", topic, e);
-                                            let error_event = ExecutorEvent::new_system_error(
-                                                message.request_id.clone(),
-                                                error_msg,
-                                                task_id.clone()
-                                            );
-                                            let _ = message.response_channel.send(error_event);
-                                        } else {
-                                            log::info!("Sent unsubscribe request for '{}' from task {}", topic, task_id);
+                                            task_id.clone()
+                                        ).await;
+                                        
+                                        if removed {
+                                            log::info!("Successfully unsubscribed from topic '{}'", topic);
                                             
                                             let success_msg = format!("Successfully unsubscribed from topic '{}'", topic);
                                             let success_event = ExecutorEvent::new_system_response(
@@ -691,6 +577,16 @@ pub fn start_system_command_worker(
                                                 task_id.clone()
                                             );
                                             let _ = message.response_channel.send(success_event);
+                                        } else {
+                                            log::warn!("Failed to unsubscribe from topic '{}'", topic);
+                                            
+                                            let error_msg = format!("Failed to unsubscribe from topic '{}'", topic);
+                                            let error_event = ExecutorEvent::new_system_error(
+                                                message.request_id.clone(),
+                                                error_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(error_event);
                                         }
                                     },
                                     SystemCommand::Stdout { data } => {
@@ -706,8 +602,7 @@ pub fn start_system_command_worker(
                                         match task_registry.start_single_task(
                                             &task_name,
                                             &config,
-                                            topic_request_sender.clone(),
-                                            topic_subscriber.clone(),
+                                            topic_manager.clone(),
                                             system_command_sender.clone(),
                                             shutdown_token.clone(),
                                         ).await {
@@ -805,8 +700,7 @@ pub fn start_system_command_worker(
                                         let topic_name = command_clone.get_topic_name();
                                         match task_registry.add_task_from_toml(
                                             &toml_data,
-                                            topic_request_sender.clone(),
-                                            topic_subscriber.clone(),
+                                            topic_manager.clone(),
                                             system_command_sender.clone(),
                                             shutdown_token.clone(),
                                         ).await {
@@ -840,7 +734,7 @@ pub fn start_system_command_worker(
                                         
                                         let topic_name = command_clone.get_topic_name();
                                         let tasks_info = task_registry.get_running_tasks_info().await;
-                                        let topics_info = topic_subscriber.get_topics_info().await;
+                                        let topics_info = topic_manager.get_topics_info().await;
                                         
                                         let mut json_response = String::from("{\n");
                                         json_response.push_str("  \"tasks\": [\n");
@@ -895,54 +789,6 @@ pub fn start_system_command_worker(
         });
 }
 
-pub fn start_topic_request_worker(
-    mut topic_request_receiver: TopicRequestReceiver,
-    subscriber_manager: TopicSubscriber,
-    shutdown_token: CancellationToken,
-) {
-    task::spawn(async move {
-        loop {
-            tokio::select! {
-                biased;
-                
-                _ = shutdown_token.cancelled() => {
-                    log::info!("Topic request worker received shutdown signal");
-                    break;
-                }
-                
-                maybe = async { topic_request_receiver.recv().await } => {
-                    match maybe {
-                        Some(request) => {
-                            let task_id: TaskId = request.task_id.clone();
-                            let topic: String = request.topic.clone();
-                            
-                            match request.request_type {
-                                TopicRequestType::Subscribe => {
-                                    log::info!("New subscribe request for '{}' from task {}", topic, task_id);
-                                    subscriber_manager.add_subscriber(topic.clone(), task_id.clone(), request.response_channel).await;
-                                },
-                                TopicRequestType::Unsubscribe => {
-                                    log::info!("New unsubscribe request for '{}' from task {}", topic, task_id);
-                                    let removed: bool = subscriber_manager.remove_subscriber_by_task(topic.clone(), task_id.clone()).await;
-                                    if removed {
-                                        log::info!("Successfully removed subscriber for task {} from topic '{}'", task_id, topic);
-                                    } else {
-                                        log::warn!("Failed to remove subscriber for task {} from topic '{}'", task_id, topic);
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            log::info!("Topic request receiver closed");
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        log::info!("Topic request worker stopped");
-    });
-}
 
 pub type TaskMessageData = String;
 
@@ -1088,8 +934,7 @@ impl ExecutorEvent {
 
 pub struct TaskSpawner {
     pub task_id: TaskId,
-    pub topic_request_sender: TopicRequestSender,
-    pub topic_subscriber: TopicSubscriber,
+    pub topic_manager: TopicManager,
     pub system_command_sender: SystemCommandSender,
     pub task_registry: TaskRegistry,
     pub task_name: String,
@@ -1098,16 +943,14 @@ pub struct TaskSpawner {
 impl TaskSpawner {
     pub fn new(
         task_id: TaskId,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         system_command_sender: SystemCommandSender,
         task_registry: TaskRegistry,
         task_name: String,
     ) -> Self {
         Self {
             task_id,
-            topic_request_sender,
-            topic_subscriber,
+            topic_manager,
             system_command_sender,
             task_registry,
             task_name,
@@ -1127,8 +970,7 @@ impl TaskSpawner {
         E::Config: 'static,
     {
         let task_id: TaskId = self.task_id.clone();
-        let topic_request_sender: TopicRequestSender = self.topic_request_sender;
-        let topic_subscriber: TopicSubscriber = self.topic_subscriber;
+        let topic_manager: TopicManager = self.topic_manager;
         let system_command_sender: SystemCommandSender = self.system_command_sender;
         let task_registry: TaskRegistry = self.task_registry;
         let task_name: String = self.task_name;
@@ -1148,15 +990,12 @@ impl TaskSpawner {
             if let Some(topics) = initial_topics {
                 log::info!("Processing initial topic subscriptions for task {}: {:?}", task_id, topics);
                 for topic in topics {
-                    if let Err(e) = topic_request_sender.send_subscribe_request(
+                    topic_manager.add_subscriber(
                         topic.clone(),
                         task_id.clone(),
                         topic_data_channel.sender.clone()
-                    ) {
-                        log::warn!("Failed to send initial topic request for '{}' (task {}): {}", topic, task_id, e);
-                    } else {
-                        log::info!("Sent initial topic request for '{}' from task {}", topic, task_id);
-                    }
+                    ).await;
+                    log::info!("Added initial topic subscription for '{}' from task {}", topic, task_id);
                 }
             }
 
@@ -1179,7 +1018,7 @@ impl TaskSpawner {
                                 match &event.kind {
                                     ExecutorEventKind::Message { message_id, topic, data } => {
                                         log::info!("Message event {} for task {} on topic '{}': '{}'", message_id, task_id, topic, data);
-                                        match topic_subscriber.broadcast_message(event.clone()).await {
+                                        match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
                                                 log::info!("Broadcasted message from task {} to {} subscribers on topic '{}'", task_id, success_count, topic);
                                             },
@@ -1213,7 +1052,7 @@ impl TaskSpawner {
                                     ExecutorEventKind::Exit { exit_code } => {
                                         log::info!("Exit event for task {} with exit code: {}", task_id, exit_code);
                                         
-                                        let removed_topics: Vec<String> = topic_subscriber.remove_all_subscriptions_by_task(task_id.clone()).await;
+                                        let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(task_id.clone()).await;
                                         log::info!("Task {} exited, removed {} topic subscriptions", task_id, removed_topics.len());
                                         
                                         if let Some(_removed_task) = task_registry.unregister_task(&task_name).await {
@@ -1977,8 +1816,7 @@ impl TaskRegistry {
     pub async fn start_task_from_config(
         &self,
         task_config: &TaskConfig,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
@@ -2010,8 +1848,7 @@ impl TaskRegistry {
         
         let task_spawner = TaskSpawner::new(
             task_id_new.clone(),
-            topic_request_sender,
-            topic_subscriber,
+            topic_manager,
             system_command_sender,
             self.clone(),
             task_config.name.clone(),
@@ -2043,8 +1880,7 @@ impl TaskRegistry {
         &self,
         task_name: &str,
         config: &ServerConfig,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
@@ -2053,8 +1889,7 @@ impl TaskRegistry {
             Some(task_config) => {
                 self.start_task_from_config(
                     task_config,
-                    topic_request_sender,
-                    topic_subscriber,
+                    topic_manager,
                     system_command_sender,
                     shutdown_token,
                 ).await
@@ -2066,8 +1901,7 @@ impl TaskRegistry {
     pub async fn add_task_from_toml(
         &self,
         toml_data: &str,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
@@ -2084,8 +1918,7 @@ impl TaskRegistry {
                 log::info!("Auto-starting task '{}' from TOML", task_config.name);
                 if let Err(e) = self.start_task_from_config(
                     task_config,
-                    topic_request_sender.clone(),
-                    topic_subscriber.clone(),
+                    topic_manager.clone(),
                     system_command_sender.clone(),
                     shutdown_token.clone(),
                 ).await {
@@ -2104,8 +1937,7 @@ impl TaskRegistry {
 
 pub struct MiclowServer {
     pub config: ServerConfig,
-    topic_channel: TopicChannel,
-    topic_subscriber: TopicSubscriber,
+    topic_manager: TopicManager,
     system_command_channel: SystemCommandChannel,
     task_registry: TaskRegistry,
     shutdown_token: CancellationToken,
@@ -2113,50 +1945,38 @@ pub struct MiclowServer {
 
 impl MiclowServer {
     pub fn new(config: ServerConfig) -> Self {
-        let topic_channel: TopicChannel = TopicChannel::new();
-        let topic_subscriber: TopicSubscriber = TopicSubscriber::new();
+        let topic_manager: TopicManager = TopicManager::new();
         let system_command_channel: SystemCommandChannel = SystemCommandChannel::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
         let task_registry: TaskRegistry = TaskRegistry::new();
         
         Self {
             config,
-            topic_channel,
-            topic_subscriber,
+            topic_manager,
             system_command_channel,
             task_registry,
             shutdown_token,
         }
     }
 
-    fn start_topic_request_worker(
-        topic_request_receiver: TopicRequestReceiver,
-        subscriber_manager: TopicSubscriber,
-        shutdown_token: CancellationToken,
-    ) {
-        log::info!("Starting topic request worker");
-        start_topic_request_worker(topic_request_receiver, subscriber_manager, shutdown_token);
-    }
 
     fn start_system_command_worker(
         system_command_receiver: SystemCommandReceiver,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         task_registry: TaskRegistry,
         config: ServerConfig,
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) {
         log::info!("Starting system command worker");
-        start_system_command_worker(system_command_receiver, topic_request_sender, topic_subscriber, task_registry, config, system_command_sender, shutdown_token);
+        start_system_command_worker(system_command_receiver, topic_manager, task_registry, config, system_command_sender, shutdown_token);
     }
 
 
     async fn start_user_tasks(
         config: &ServerConfig,
         task_registry: &TaskRegistry,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) {
@@ -2168,8 +1988,7 @@ impl MiclowServer {
             match task_registry.start_single_task(
                 &task_name,
                 config,
-                topic_request_sender.clone(),
-                topic_subscriber.clone(),
+                topic_manager.clone(),
                 system_command_sender.clone(),
                 shutdown_token.clone(),
             ).await {
@@ -2196,41 +2015,34 @@ impl MiclowServer {
     pub async fn start_server_with_interactive(
         self,
     ) -> Result<()> {
-        let topic_req_receiver: TopicRequestReceiver = self.topic_channel.receiver;
-        let topic_sender: TopicRequestSender = self.topic_channel.sender;
-        let topic_subscriber: TopicSubscriber = self.topic_subscriber.clone();
+        let topic_manager: TopicManager = self.topic_manager.clone();
         let system_command_receiver: SystemCommandReceiver = self.system_command_channel.receiver;
         let system_command_sender: SystemCommandSender = self.system_command_channel.sender;
 
-        Self::start_topic_request_worker(topic_req_receiver, topic_subscriber.clone(), self.shutdown_token.clone());
-        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
+        Self::start_system_command_worker(system_command_receiver, topic_manager.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
 
         Self::start_user_tasks(
             &self.config,
             &self.task_registry,
-            topic_sender.clone(),
-            topic_subscriber.clone(),
+            topic_manager.clone(),
             system_command_sender.clone(),
             self.shutdown_token.clone(),
         ).await;
 
         info!("All workers and user tasks started successfully");
         
-        let topic_request_sender: TopicRequestSender = topic_sender.clone();
-        
         log::info!("Server running. Press Ctrl+C to stop.");
         println!("Server running. Press Ctrl+C to stop.");
         
         Self::start_interactive_mode(
             system_command_sender.clone(), 
-            topic_subscriber.clone(),
+            topic_manager.clone(),
             self.shutdown_token.clone()
         ).await;
         
         log::info!("Received shutdown signal, stopping all workers...");
         
         Self::shutdown_workers(
-            topic_request_sender,
             self.task_registry,
             self.shutdown_token,
         ).await;
@@ -2244,27 +2056,21 @@ impl MiclowServer {
     pub async fn start_server(
         self,
     ) -> Result<()> {
-        let topic_req_receiver: TopicRequestReceiver = self.topic_channel.receiver;
-        let topic_sender: TopicRequestSender = self.topic_channel.sender;
-        let topic_subscriber: TopicSubscriber = self.topic_subscriber.clone();
+        let topic_manager: TopicManager = self.topic_manager.clone();
         let system_command_receiver: SystemCommandReceiver = self.system_command_channel.receiver;
         let system_command_sender: SystemCommandSender = self.system_command_channel.sender;
 
-        Self::start_topic_request_worker(topic_req_receiver, topic_subscriber.clone(), self.shutdown_token.clone());
-        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
+        Self::start_system_command_worker(system_command_receiver, topic_manager.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
 
         Self::start_user_tasks(
             &self.config,
             &self.task_registry,
-            topic_sender.clone(),
-            topic_subscriber,
-            system_command_sender,
+            topic_manager.clone(),
+            system_command_sender.clone(),
             self.shutdown_token.clone(),
         ).await;
 
         info!("All workers and user tasks started successfully");
-        
-        let topic_request_sender: TopicRequestSender = topic_sender;
         
         log::info!("Server running. Press Ctrl+C to stop.");
         println!("Server running. Press Ctrl+C to stop.");
@@ -2275,7 +2081,6 @@ impl MiclowServer {
         log::info!("Received shutdown signal, stopping all workers...");
         
         Self::shutdown_workers(
-            topic_request_sender,
             self.task_registry,
             self.shutdown_token,
         ).await;
@@ -2288,7 +2093,7 @@ impl MiclowServer {
 
     async fn start_interactive_mode(
         system_command_sender: SystemCommandSender,
-        topic_subscriber: TopicSubscriber,
+        topic_manager: TopicManager,
         shutdown_token: CancellationToken
     ) {
         let stdin = stdin();
@@ -2345,7 +2150,7 @@ impl MiclowServer {
                                 interactive_task_id.clone()
                             );
                             
-                            match topic_subscriber.broadcast_message(executor_event).await {
+                            match topic_manager.broadcast_message(executor_event).await {
                                 Ok(success_count) => {
                                     log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
                                 },
@@ -2364,15 +2169,13 @@ impl MiclowServer {
     }
 
     pub async fn trigger_graceful_shutdown(
-        topic_request_sender: TopicRequestSender,
         task_registry: TaskRegistry,
         shutdown_token: CancellationToken,
     ) {
-        Self::shutdown_workers(topic_request_sender, task_registry, shutdown_token).await;
+        Self::shutdown_workers(task_registry, shutdown_token).await;
     }
 
     async fn shutdown_workers(
-        topic_request_sender: TopicRequestSender,
         task_registry: TaskRegistry,
         shutdown_token: CancellationToken,
     ) {
@@ -2390,10 +2193,6 @@ impl MiclowServer {
         
         log::info!("Cancelling all tasks...");
         shutdown_token.cancel();
-        
-        log::info!("Closing all communication channels...");
-        
-        drop(topic_request_sender);
         
         log::info!("All channels closed, waiting for workers to finish...");
         
