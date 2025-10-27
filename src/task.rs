@@ -13,7 +13,7 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::sync::CancellationToken;
 use async_trait::async_trait;
 use std::process::Stdio;
-use crate::buffer::{TopicInputBuffer, consume_stream_line, StreamOutcome};
+use crate::buffer::{InputBufferManager, StreamOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId(Uuid);
@@ -646,27 +646,63 @@ impl SystemCommandWorker {
                                     SystemCommand::SubscribeTopic { topic } => {
                                         log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         if let Err(e) = topic_request_sender.send_subscribe_request(
                                             topic.clone(),
                                             task_id.clone(), 
                                             message.response_channel.clone()
                                         ) {
                                             log::warn!("Failed to send topic request (task {}): {}", task_id, e);
+                                            
+                                            let error_msg = format!("Failed to subscribe to topic '{}': {}", topic, e);
+                                            let error_event = ExecutorEvent::new_system_error(
+                                                message.request_id.clone(),
+                                                error_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(error_event);
                                         } else {
                                             log::info!("Sent topic request for '{}' from task {}", topic, task_id);
+                                            
+                                            let success_msg = format!("Successfully subscribed to topic '{}'", topic);
+                                            let success_event = ExecutorEvent::new_system_response(
+                                                message.request_id.clone(),
+                                                topic_name,
+                                                success_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(success_event);
                                         }
                                     },
                                     SystemCommand::UnsubscribeTopic { topic } => {
                                         log::info!("Processing UnsubscribeTopic command for task {}: '{}'", task_id, topic);
                                         
+                                        let topic_name = command_clone.get_topic_name();
                                         if let Err(e) = topic_request_sender.send_unsubscribe_request(
                                             topic.clone(),
                                             task_id.clone(), 
                                             message.response_channel.clone()
                                         ) {
                                             log::warn!("Failed to send unsubscribe request (task {}): {}", task_id, e);
+                                            
+                                            let error_msg = format!("Failed to unsubscribe from topic '{}': {}", topic, e);
+                                            let error_event = ExecutorEvent::new_system_error(
+                                                message.request_id.clone(),
+                                                error_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(error_event);
                                         } else {
                                             log::info!("Sent unsubscribe request for '{}' from task {}", topic, task_id);
+                                            
+                                            let success_msg = format!("Successfully unsubscribed from topic '{}'", topic);
+                                            let success_event = ExecutorEvent::new_system_response(
+                                                message.request_id.clone(),
+                                                topic_name,
+                                                success_msg,
+                                                task_id.clone()
+                                            );
+                                            let _ = message.response_channel.send(success_event);
                                         }
                                     },
                                     SystemCommand::Stdout { data } => {
@@ -1493,6 +1529,8 @@ impl Executor for CommandExecutor {
                     command_builder.env(key, value);
                 }
             }
+
+            command_builder.env("MICLOW_TASK_ID", task_id.to_string());
             
             let mut child = match command_builder
                 .stdout(Stdio::piped())
@@ -1624,16 +1662,40 @@ where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
 {
     task::spawn(async move {
-        let mut buffer = TopicInputBuffer::new();
+        let mut buffer_manager = InputBufferManager::new();
         let mut line = String::new();
+        let task_id_str = task_id.to_string();
+        
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => { break; }
+                _ = cancel_token.cancelled() => { 
+                    // キャンセル時に未完了のバッファをフラッシュ
+                    let unfinished = buffer_manager.flush_all_unfinished();
+                    for (_, key, data) in unfinished {
+                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
+                            let _ = event_tx.send_system_command(system_cmd, task_id.clone());
+                        } else {
+                            let _ = event_tx.send_message(key, data, task_id.clone());
+                        }
+                    }
+                    break; 
+                }
                 result = reader.read_line(&mut line) => {
                     match result {
-                        Ok(0) => break,
+                        Ok(0) => {
+                            // EOF時に未完了のバッファをフラッシュ
+                            let unfinished = buffer_manager.flush_all_unfinished();
+                            for (_, key, data) in unfinished {
+                                if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
+                                    let _ = event_tx.send_system_command(system_cmd, task_id.clone());
+                                } else {
+                                    let _ = event_tx.send_message(key, data, task_id.clone());
+                                }
+                            }
+                            break;
+                        }
                         Ok(_) => {
-                            match consume_stream_line(&mut buffer, &line) {
+                            match buffer_manager.consume_stream_line(&task_id_str, &line) {
                                 Ok(StreamOutcome::Emit { key, data }) => {
                                     if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
                                         let _ = event_tx.send_system_command(system_cmd, task_id.clone());
@@ -1678,10 +1740,7 @@ pub struct TaskConfig {
 }
 
 impl TaskConfig {
-    pub fn from_toml(toml_str: &str) -> Result<Self> {
-        toml::from_str(toml_str)
-            .map_err(|e| anyhow::anyhow!("Failed to parse TOML: {}", e))
-    }
+    // TaskConfig::from_toml は削除（ServerConfig::from_toml を使用）
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1689,6 +1748,8 @@ pub struct ServerConfig {
     #[serde(skip)]
     pub config_file: Option<String>,
     pub tasks: Vec<TaskConfig>,
+    #[serde(default)]
+    pub include_paths: Vec<String>,
 }
 
 impl ServerConfig {
@@ -1702,7 +1763,11 @@ impl ServerConfig {
     pub fn from_file(config_file: String) -> Result<Self> {
         let config_content: String = std::fs::read_to_string(&config_file)?;
         let mut config = Self::from_toml(&config_content)?;
-        config.config_file = Some(config_file);
+        config.config_file = Some(config_file.clone());
+        
+        // includeファイルを読み込む
+        config.load_includes(&config_file)?;
+        
         Ok(config)
     }
     
@@ -1740,6 +1805,85 @@ impl ServerConfig {
                     if topic.contains(' ') {
                         return Err(anyhow::anyhow!("Task '{}' initial topic '{}' contains spaces (not allowed)", task.name, topic));
                     }
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// includeファイルを再帰的に読み込む（循環参照を防止）
+    fn load_includes(&mut self, base_config_path: &str) -> Result<()> {
+        let mut loaded_files = std::collections::HashSet::new();
+        let base_dir = std::path::Path::new(base_config_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        
+        // include_pathsをクローンして借用の問題を回避
+        let include_paths = self.include_paths.clone();
+        self.load_includes_recursive(&mut loaded_files, base_dir, &include_paths)?;
+        Ok(())
+    }
+    
+    /// 再帰的にincludeファイルを読み込む内部メソッド
+    fn load_includes_recursive(
+        &mut self,
+        loaded_files: &mut std::collections::HashSet<String>,
+        base_dir: &std::path::Path,
+        include_paths: &[String],
+    ) -> Result<()> {
+        for include_path in include_paths {
+            // 相対パスを絶対パスに変換
+            let full_path = if std::path::Path::new(include_path).is_absolute() {
+                include_path.clone()
+            } else {
+                base_dir.join(include_path).to_string_lossy().to_string()
+            };
+            
+            // 循環参照をチェック
+            if loaded_files.contains(&full_path) {
+                log::warn!("Circular include detected for file: {}", full_path);
+                continue;
+            }
+            
+            // ファイルが存在するかチェック
+            if !std::path::Path::new(&full_path).exists() {
+                log::warn!("Include file not found: {}", full_path);
+                continue;
+            }
+            
+            // ファイルを読み込む
+            match std::fs::read_to_string(&full_path) {
+                Ok(content) => {
+                    loaded_files.insert(full_path.clone());
+                    log::info!("Loading include file: {}", full_path);
+                    
+                    // TOMLを解析
+                    match Self::from_toml(&content) {
+                        Ok(included_config) => {
+                            // タスクをマージ
+                            self.tasks.extend(included_config.tasks);
+                            
+                            // 再帰的にincludeファイルを読み込む
+                            if !included_config.include_paths.is_empty() {
+                                let include_dir = std::path::Path::new(&full_path)
+                                    .parent()
+                                    .unwrap_or(std::path::Path::new("."));
+                                
+                                self.load_includes_recursive(
+                                    loaded_files,
+                                    include_dir,
+                                    &included_config.include_paths,
+                                )?;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to parse include file {}: {}", full_path, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to read include file {}: {}", full_path, e);
                 }
             }
         }
@@ -1954,21 +2098,33 @@ impl TaskRegistry {
         system_command_sender: SystemCommandSender,
         shutdown_token: CancellationToken,
     ) -> Result<()> {
-        let task_config = TaskConfig::from_toml(toml_data)?;
+        // ServerConfig形式でTOMLを解析（config.tomlと同じ形式）
+        let server_config = ServerConfig::from_toml(toml_data)?;
         
-        if task_config.auto_start.unwrap_or(false) {
-            log::info!("Auto-starting task '{}' from TOML", task_config.name);
-            self.start_task_from_config(
-                &task_config,
-                topic_request_sender,
-                topic_subscriber,
-                system_command_sender,
-                shutdown_token,
-            ).await
-        } else {
-            log::info!("Task '{}' added to registry from TOML (auto_start=false, waiting for start command)", task_config.name);
-            Ok(())
+        if server_config.tasks.is_empty() {
+            return Err(anyhow::anyhow!("No tasks found in TOML data"));
         }
+        
+        // すべてのタスクを処理
+        for task_config in &server_config.tasks {
+            if task_config.auto_start.unwrap_or(false) {
+                log::info!("Auto-starting task '{}' from TOML", task_config.name);
+                if let Err(e) = self.start_task_from_config(
+                    task_config,
+                    topic_request_sender.clone(),
+                    topic_subscriber.clone(),
+                    system_command_sender.clone(),
+                    shutdown_token.clone(),
+                ).await {
+                    log::error!("Failed to start task '{}': {}", task_config.name, e);
+                    // エラーが発生しても他のタスクの処理は続行
+                }
+            } else {
+                log::info!("Task '{}' added to registry from TOML (auto_start=false, waiting for start command)", task_config.name);
+            }
+        }
+        
+        Ok(())
     }
 
 }

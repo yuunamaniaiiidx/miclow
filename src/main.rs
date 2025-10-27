@@ -11,8 +11,8 @@ use clap::Parser;
 #[command(name = "miclow")]
 #[command(about = "Miclow - A lightweight orchestration system for asynchronous task execution")]
 pub struct Cli {
-    #[arg(long, default_value = "config.toml")]
-    pub config_file: String,
+    #[arg(value_name = "CONFIG", help = "Configuration file path")]
+    pub config: String,
 }
 
 #[tokio::main]
@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     
     let cli = Cli::parse();
     
-    run_miclow(cli.config_file).await?;
+    run_miclow(cli.config).await?;
 
     Ok(())
 }
