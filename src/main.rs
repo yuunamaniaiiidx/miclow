@@ -1,11 +1,13 @@
 mod task;
 mod buffer;
+mod logging;
 
 use anyhow::Result;
 use task::{
     ServerConfig, MiclowServer
 };
 use clap::Parser;
+use tokio::sync::mpsc;
 
 #[derive(Parser)]
 #[command(name = "miclow")]
@@ -17,8 +19,6 @@ pub struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
-    
     let cli = Cli::parse();
     
     run_miclow(cli.config).await?;
@@ -30,7 +30,7 @@ async fn run_miclow(config_file: String) -> Result<()> {
     let config = ServerConfig::from_file(config_file)?;
     
     let miclow_server = MiclowServer::new(config);
-    miclow_server.start_server_with_interactive().await?;
+    miclow_server.start_server().await?;
 
     Ok(())
 }
