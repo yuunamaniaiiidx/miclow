@@ -435,12 +435,23 @@ pub fn start_system_command_worker(
     userlog_sender: TokioUnboundedSender<UserLogEvent>,
 ) -> tokio::task::JoinHandle<()> {
     task::spawn(async move {
+        // Track running command executions to allow cancellation/abort
+        let running_commands: Arc<RwLock<HashMap<TaskId, JoinHandle<()>>>> = Arc::new(RwLock::new(HashMap::new()));
+        
         loop {
             tokio::select! {
                 biased;
                 
                 _ = shutdown_token.cancelled() => {
-                    log::info!("SystemCommand worker received shutdown signal");
+                    log::info!("SystemCommand worker received shutdown signal, aborting all running commands");
+                    
+                    // Abort all running command executions
+                    let mut commands = running_commands.write().await;
+                    for (task_id, handle) in commands.drain() {
+                        log::info!("Aborting SystemCommand execution for task {}", task_id);
+                        handle.abort();
+                    }
+                    
                     break;
                 }
                 
@@ -449,8 +460,10 @@ pub fn start_system_command_worker(
                             Some(message) => {
                                 let task_id: TaskId = message.task_id.clone();
                                 
-                                log::info!("Processing SystemCommand for task {}", task_id);
+                                log::info!("Spawning SystemCommand for task {} (parallel execution)", task_id);
                                 
+                                // Spawn command execution in a separate task to allow parallel processing
+                                // This prevents one slow command from blocking other commands
                                 let context = SystemCommandContext {
                                     topic_manager: topic_manager.clone(),
                                     task_registry: task_registry.clone(),
@@ -462,9 +475,41 @@ pub fn start_system_command_worker(
                                     response_channel: message.response_channel.clone(),
                                 };
                                 
-                                if let Err(e) = message.command.execute(&context).await {
-                                    log::error!("Failed to execute SystemCommand for task {}: {}", task_id, e);
-                                }
+                                let command_shutdown_token = shutdown_token.clone();
+                                let running_commands_clone = running_commands.clone();
+                                let task_id_clone = task_id.clone();
+                                
+                                let handle = tokio::spawn(async move {
+                                    log::info!("Executing SystemCommand for task {}", task_id_clone);
+                                    tokio::select! {
+                                        _ = command_shutdown_token.cancelled() => {
+                                            log::info!("SystemCommand for task {} cancelled due to shutdown", task_id_clone);
+                                            let cancel_error = ExecutorEvent::new_system_error(
+                                                "Command execution cancelled due to system shutdown".to_string(),
+                                                task_id_clone.clone()
+                                            );
+                                            let _ = context.response_channel.send(cancel_error);
+                                        }
+                                        result = message.command.execute(&context) => {
+                                            match result {
+                                                Ok(_) => {
+                                                    log::info!("Successfully executed SystemCommand for task {}", task_id_clone);
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to execute SystemCommand for task {}: {}", task_id_clone, e);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Remove from tracking when finished
+                                    let mut commands = running_commands_clone.write().await;
+                                    commands.remove(&task_id_clone);
+                                });
+                                
+                                // Track the handle
+                                let mut commands = running_commands.write().await;
+                                commands.insert(task_id, handle);
                             }
                             None => {
                                 log::info!("SystemCommand receiver closed");
@@ -474,6 +519,7 @@ pub fn start_system_command_worker(
                     }
                 }
             }
+            
             log::info!("SystemCommand worker stopped");
     })
 }
