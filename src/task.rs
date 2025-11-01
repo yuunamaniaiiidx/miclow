@@ -79,17 +79,17 @@ impl ExecutorEventSender {
         self.sender.send(event)
     }
 
-    pub fn send_message(&self, key: String, data: String, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_message(key, data, task_id))
+    pub fn send_message(&self, key: String, data: String) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+        self.send(ExecutorEvent::new_message(key, data))
     }
 
-    pub fn send_error(&self, error: String, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_error(error, task_id))
+    pub fn send_error(&self, error: String) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+        self.send(ExecutorEvent::new_error(error))
     }
 
 
-    pub fn send_exit(&self, code: i32, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_exit(code, task_id))
+    pub fn send_exit(&self, code: i32) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+        self.send(ExecutorEvent::new_exit(code))
     }
 }
 
@@ -197,11 +197,11 @@ pub enum SystemResponseEvent {
 }
 
 impl SystemResponseEvent {
-    pub fn new_system_response(topic: String, data: String, _task_id: TaskId) -> Self {
+    pub fn new_system_response(topic: String, data: String) -> Self {
         Self::SystemResponse { topic, data }
     }
 
-    pub fn new_system_error(topic: String, error: String, _task_id: TaskId) -> Self {
+    pub fn new_system_error(topic: String, error: String) -> Self {
         Self::SystemError { topic, error }
     }
 
@@ -589,7 +589,6 @@ pub fn start_system_control_worker(
                                             let cancel_error = SystemResponseEvent::new_system_error(
                                                 "system.error".to_string(),
                                                 status.to_string(),
-                                                task_id_clone.clone()
                                             );
                                             let _ = context.response_channel.send(cancel_error);
                                         }
@@ -651,30 +650,30 @@ pub enum ExecutorEvent {
 }
 
 impl ExecutorEvent {
-    pub fn new_message(topic: String, data: String, _task_id: TaskId) -> Self {
+    pub fn new_message(topic: String, data: String) -> Self {
         Self::Message { 
             topic, 
             data 
         }
     }
 
-    pub fn new_error(error: String, _task_id: TaskId) -> Self {
+    pub fn new_error(error: String) -> Self {
         Self::Error { error }
     }
 
-    pub fn new_exit(exit_code: i32, _task_id: TaskId) -> Self {
+    pub fn new_exit(exit_code: i32) -> Self {
         Self::Exit { exit_code }
     }
 
-    pub fn new_task_stdout(data: String, _task_id: TaskId) -> Self {
+    pub fn new_task_stdout(data: String) -> Self {
         Self::TaskStdout { data }
     }
 
-    pub fn new_task_stderr(data: String, _task_id: TaskId) -> Self {
+    pub fn new_task_stderr(data: String) -> Self {
         Self::TaskStderr { data }
     }
 
-    pub fn new_system_control(key: String, data: String, _task_id: TaskId) -> Self {
+    pub fn new_system_control(key: String, data: String) -> Self {
         Self::SystemControl { 
             key, 
             data 
@@ -933,7 +932,6 @@ impl SystemControlHandler for SubscribeTopicSystemControl {
         let success_event = SystemResponseEvent::new_system_response(
             response_topic,
             status.to_string(),
-            context.task_id.clone()
         );
         let _ = context.response_channel.send(success_event);
         Ok(())
@@ -963,7 +961,6 @@ impl SystemControlHandler for UnsubscribeTopicSystemControl {
             let success_event = SystemResponseEvent::new_system_response(
                 response_topic,
                 status.to_string(),
-                context.task_id.clone()
             );
             let _ = context.response_channel.send(success_event);
         } else {
@@ -974,7 +971,6 @@ impl SystemControlHandler for UnsubscribeTopicSystemControl {
             let error_event = SystemResponseEvent::new_system_error(
                 response_topic,
                 status.to_string(),
-                context.task_id.clone()
             );
             let _ = context.response_channel.send(error_event);
         }
@@ -1008,7 +1004,6 @@ impl SystemControlHandler for StartTaskSystemControl {
                 let success_event = SystemResponseEvent::new_system_response(
                     response_topic,
                     status.to_string(),
-                    context.task_id.clone()
                 );
                 let _ = context.response_channel.send(success_event);
                 Ok(())
@@ -1021,7 +1016,6 @@ impl SystemControlHandler for StartTaskSystemControl {
                 let error_event = SystemResponseEvent::new_system_error(
                     response_topic,
                     status.to_string(),
-                    context.task_id.clone()
                 );
                 let _ = context.response_channel.send(error_event);
                 Err(format!("Failed to start task '{}': {}", self.task_name, e))
@@ -1049,7 +1043,6 @@ impl SystemControlHandler for StopTaskSystemControl {
                 let success_event = SystemResponseEvent::new_system_response(
                     response_topic,
                     status.to_string(),
-                    context.task_id.clone()
                 );
                 let _ = context.response_channel.send(success_event);
                 Ok(())
@@ -1062,7 +1055,6 @@ impl SystemControlHandler for StopTaskSystemControl {
                 let error_event = SystemResponseEvent::new_system_error(
                     response_topic,
                     status.to_string(),
-                    context.task_id.clone()
                 );
                 let _ = context.response_channel.send(error_event);
                 Err(format!("Failed to stop task '{}': {}", self.task_name, e))
@@ -1095,7 +1087,6 @@ impl SystemControlHandler for AddTaskFromTomlSystemControl {
                 let success_event = SystemResponseEvent::new_system_response(
                     "system.add-task-from-toml".to_string(),
                     status.to_string(),
-                    context.task_id.clone()
                 );
                 let _ = context.response_channel.send(success_event);
                 Ok(())
@@ -1107,7 +1098,6 @@ impl SystemControlHandler for AddTaskFromTomlSystemControl {
                 let error_event = SystemResponseEvent::new_system_error(
                     "system.add-task-from-toml".to_string(),
                     status.to_string(),
-                    context.task_id.clone()
                 );
                 let _ = context.response_channel.send(error_event);
                 Err(format!("Failed to add task from TOML: {}", e))
@@ -1153,7 +1143,6 @@ impl SystemControlHandler for StatusSystemControl {
         let status_event = SystemResponseEvent::new_system_response(
             "system.status".to_string(),
             json_response,
-            context.task_id.clone()
         );
         
         if let Err(e) = context.response_channel.send(status_event) {
@@ -1318,7 +1307,7 @@ impl CommandBackend {
                 data_trimmed.to_string()
             };
             
-            return Some(ExecutorEvent::new_system_control(actual_key, actual_data, TaskId::new()));
+            return Some(ExecutorEvent::new_system_control(actual_key, actual_data));
         }
         
         None
@@ -1375,7 +1364,6 @@ impl TaskBackend for CommandBackend {
                 Err(e) => {
                     let _ = event_tx_clone.send(ExecutorEvent::new_error(
                         format!("Failed to start process '{}': {}", command, e),
-                        task_id.clone(),
                     ));
                     return;
                 }
@@ -1394,7 +1382,7 @@ impl TaskBackend for CommandBackend {
                 event_tx_clone.clone(),
                 cancel_token.clone(),
                 task_id.clone(),
-                if view_stdout { Some(ExecutorEvent::new_task_stdout as fn(String, TaskId) -> ExecutorEvent) } else { None },
+                if view_stdout { Some(ExecutorEvent::new_task_stdout as fn(String) -> ExecutorEvent) } else { None },
             );
 
             let stderr_handle = spawn_stream_reader(
@@ -1403,13 +1391,12 @@ impl TaskBackend for CommandBackend {
                 event_tx_clone.clone(),
                 cancel_token.clone(),
                 task_id.clone(),
-                if view_stderr { Some(ExecutorEvent::new_task_stderr as fn(String, TaskId) -> ExecutorEvent) } else { None },
+                if view_stderr { Some(ExecutorEvent::new_task_stderr as fn(String) -> ExecutorEvent) } else { None },
             );
 
             
             let cancel_input: CancellationToken = cancel_token.clone();
             let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
-            let task_id_input: TaskId = task_id.clone();
             let input_handle = task::spawn(async move {
                 loop {
                     tokio::select! {
@@ -1419,11 +1406,11 @@ impl TaskBackend for CommandBackend {
                                 Some(input_data) => {
                                     let bytes: Vec<u8> = if input_data.ends_with('\n') { input_data.into_bytes() } else { format!("{}\n", input_data).into_bytes() };
                                     if let Err(e) = stdin_writer.write_all(&bytes).await {
-                                        let _ = event_tx_input.send_error(format!("Failed to write to stdin: {}", e), task_id_input.clone());
+                                        let _ = event_tx_input.send_error(format!("Failed to write to stdin: {}", e));
                                         break;
                                     }
                                     if let Err(e) = stdin_writer.flush().await {
-                                        let _ = event_tx_input.send_error(format!("Failed to flush stdin: {}", e), task_id_input.clone());
+                                        let _ = event_tx_input.send_error(format!("Failed to flush stdin: {}", e));
                                         break;
                                     }
                                 },
@@ -1479,12 +1466,12 @@ impl TaskBackend for CommandBackend {
                     match res {
                         Ok(exit_status) => {
                             let code: i32 = exit_status.code().unwrap_or(-1);
-                            let _ = event_tx_status.send_exit(code, task_id_status.clone());
+                            let _ = event_tx_status.send_exit(code);
                         }
                         Err(e) => {
                             log::error!("Error waiting for process: {}", e);
                             let _ = event_tx_status
-                                .send_error(format!("Error waiting for process: {}", e), task_id_status.clone());
+                                .send_error(format!("Error waiting for process: {}", e));
                         }
                     }
                 };
@@ -1604,7 +1591,7 @@ fn spawn_stream_reader<R>(
     event_tx: ExecutorEventSender,
     cancel_token: CancellationToken,
     task_id: TaskId,
-    emit_func: Option<fn(String, TaskId) -> ExecutorEvent>,
+    emit_func: Option<fn(String) -> ExecutorEvent>,
 ) -> task::JoinHandle<()> 
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static
@@ -1620,22 +1607,22 @@ where
                     if let Some(system_control_cmd_event) = CommandBackend::parse_system_control_command_from_plaintext(&topic, &data) {
                         let _ = event_tx.send(system_control_cmd_event);
                     } else {
-                        let _ = event_tx.send_message(topic, data, task_id.clone());
+                        let _ = event_tx.send_message(topic, data);
                     }
                 }
                 Ok(StreamOutcome::Plain(output)) => {
-                    let _ = event_tx.send_message(topic_name.clone(), output.clone(), task_id.clone());
+                    let _ = event_tx.send_message(topic_name.clone(), output.clone());
                     if let Some(emit) = emit_func {
-                        let _ = event_tx.send(emit(output, task_id.clone()));
+                        let _ = event_tx.send(emit(output));
                     }
                 }
                 Ok(StreamOutcome::None) => {}
                 Err(e) => {
-                    let _ = event_tx.send_error(e.clone(), task_id.clone());
+                    let _ = event_tx.send_error(e.clone());
                     let output = crate::buffer::strip_crlf(line_content).to_string();
-                    let _ = event_tx.send_message(topic_name.clone(), output.clone(), task_id.clone());
+                    let _ = event_tx.send_message(topic_name.clone(), output.clone());
                     if let Some(emit) = emit_func {
-                        let _ = event_tx.send(emit(output, task_id.clone()));
+                        let _ = event_tx.send(emit(output));
                     }
                 }
             }
@@ -1665,7 +1652,7 @@ where
                         },
                         Err(e) => {
                             log::error!("Error reading from {}: {}", topic_name, e);
-                            let _ = event_tx.send_error(format!("Error reading from {}: {}", topic_name, e), task_id.clone());
+                            let _ = event_tx.send_error(format!("Error reading from {}: {}", topic_name, e));
                             break;
                         }
                     }
@@ -2300,8 +2287,6 @@ impl MiclowSystem {
         let reader = TokioBufReader::new(stdin);
         let mut lines = reader.lines();
         
-        let interactive_task_id = TaskId::new();
-        
         let system_input_topic = "system";
         
         loop {
@@ -2329,7 +2314,6 @@ impl MiclowSystem {
                         let event = ExecutorEvent::new_message(
                             system_input_topic.to_string(),
                             system_input.to_string(),
-                            interactive_task_id.clone()
                         );
                         
                         match topic_manager.broadcast_message(event).await {
