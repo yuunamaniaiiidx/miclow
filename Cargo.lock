@@ -1107,6 +1107,7 @@ dependencies = [
  "sqlx",
  "strum",
  "strum_macros",
+ "syn",
  "tempfile",
  "tokio",
  "tokio-util",
