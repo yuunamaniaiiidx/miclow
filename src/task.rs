@@ -612,18 +612,12 @@ impl TaskSpawner {
         }
     }
 
-    pub async fn spawn_backend<E>(
+    pub async fn spawn_backend(
         self,
-        backend: E,
-        config: E::Config,
+        backend: CommandBackend,
         shutdown_token: CancellationToken,
         subscribe_topics: Option<Vec<String>>,
-    ) -> tokio::task::JoinHandle<()>
-    where
-        E: TaskBackend + 'static,
-        E::Event: 'static + Into<ExecutorEvent>,
-        E::Config: 'static,
-    {
+    ) -> tokio::task::JoinHandle<()> {
         let task_id: TaskId = self.task_id.clone();
         let task_name: String = self.task_name.clone();
         let topic_manager: TopicManager = self.topic_manager;
@@ -635,7 +629,7 @@ impl TaskSpawner {
             let topic_data_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let mut topic_data_receiver = topic_data_channel.receiver;
             
-            let mut backend_handle = match backend.spawn(config, task_id.clone()).await {
+            let mut backend_handle = match backend.spawn(task_id.clone()).await {
                 Ok(handle) => handle,
                 Err(e) => {
                     log::error!("Failed to spawn task backend for task {}: {}", task_id, e);
@@ -784,20 +778,6 @@ impl TaskSpawner {
             log::info!("Task {} completed", task_id);
         })
     }
-}
-
-pub struct TaskBackendHandle {
-    pub event_receiver: ExecutorEventReceiver,
-    pub input_sender: InputSender,
-    pub shutdown_sender: ShutdownSender,
-}
-
-#[async_trait]
-pub trait TaskBackend: Send + Sync {
-    type Event: Send + Clone;
-    type Config: Send + Clone;
-    
-    async fn spawn(&self, config: Self::Config, task_id: TaskId) -> Result<TaskBackendHandle, Error>;
 }
 
 #[derive(Clone)]
@@ -1122,27 +1102,65 @@ pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<Box<
     Some(cmd)
 }
 
-#[derive(Debug, Clone)]
-pub struct CommandConfig {
-    pub command: String,
-    pub args: Vec<String>,
-    pub working_directory: Option<String>,
-    pub environment_vars: Option<HashMap<String, String>>,
-    pub stdout_topic: String,
-    pub stderr_topic: String,
-    pub view_stdout: bool,
-    pub view_stderr: bool,
+pub struct TaskBackendHandle {
+    pub event_receiver: ExecutorEventReceiver,
+    pub input_sender: InputSender,
+    pub shutdown_sender: ShutdownSender,
 }
 
+#[async_trait]
+pub trait TaskBackend: Send + Sync {
+    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error>;
+}
 
-pub struct CommandBackend;
+#[derive(Clone)]
+pub struct CommandBackend {
+    command: String,
+    args: Vec<String>,
+    working_directory: Option<String>,
+    environment_vars: Option<HashMap<String, String>>,
+    stdout_topic: String,
+    stderr_topic: String,
+    view_stdout: bool,
+    view_stderr: bool,
+}
+
+impl CommandBackend {
+    pub fn new(
+        command: String,
+        args: Vec<String>,
+        working_directory: Option<String>,
+        environment_vars: Option<HashMap<String, String>>,
+        stdout_topic: String,
+        stderr_topic: String,
+        view_stdout: bool,
+        view_stderr: bool,
+    ) -> Self {
+        Self {
+            command,
+            args,
+            working_directory,
+            environment_vars,
+            stdout_topic,
+            stderr_topic,
+            view_stdout,
+            view_stderr,
+        }
+    }
+}
 
 #[async_trait]
 impl TaskBackend for CommandBackend {
-    type Event = ExecutorEvent;
-    type Config = CommandConfig;
-    
-    async fn spawn(&self, config: CommandConfig, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
+    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
+        let command = self.command.clone();
+        let args = self.args.clone();
+        let working_directory = self.working_directory.clone();
+        let environment_vars = self.environment_vars.clone();
+        let stdout_topic = self.stdout_topic.clone();
+        let stderr_topic = self.stderr_topic.clone();
+        let view_stdout = self.view_stdout;
+        let view_stderr = self.view_stderr;
+
         let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
         let input_channel: InputChannel = InputChannel::new();
         let mut shutdown_channel = ShutdownChannel::new();
@@ -1151,17 +1169,17 @@ impl TaskBackend for CommandBackend {
         let mut input_receiver = input_channel.receiver;
 
         task::spawn(async move {
-            let mut command_builder = TokioCommand::new(&config.command);
+            let mut command_builder = TokioCommand::new(&command);
             
-            for arg in &config.args {
+            for arg in &args {
                 command_builder.arg(arg);
             }
             
-            if let Some(working_dir) = &config.working_directory {
+            if let Some(working_dir) = &working_directory {
                 command_builder.current_dir(working_dir);
             }
 
-            if let Some(env_vars) = &config.environment_vars {
+            if let Some(env_vars) = &environment_vars {
                 for (key, value) in env_vars {
                     command_builder.env(key, value);
                 }
@@ -1178,7 +1196,7 @@ impl TaskBackend for CommandBackend {
                 Ok(child) => child,
                 Err(e) => {
                     let _ = event_tx_clone.send(ExecutorEvent::new_error(
-                        format!("Failed to start process '{}': {}", config.command, e),
+                        format!("Failed to start process '{}': {}", command, e),
                         task_id.clone(),
                     ));
                     return;
@@ -1194,20 +1212,20 @@ impl TaskBackend for CommandBackend {
 
             let stdout_handle = spawn_stream_reader(
                 TokioBufReader::new(stdout),
-                config.stdout_topic.clone(),
+                stdout_topic.clone(),
                 event_tx_clone.clone(),
                 cancel_token.clone(),
                 task_id.clone(),
-                if config.view_stdout { Some(ExecutorEvent::new_task_stdout as fn(String, TaskId) -> ExecutorEvent) } else { None },
+                if view_stdout { Some(ExecutorEvent::new_task_stdout as fn(String, TaskId) -> ExecutorEvent) } else { None },
             );
 
             let stderr_handle = spawn_stream_reader(
                 TokioBufReader::new(stderr),
-                config.stderr_topic.clone(),
+                stderr_topic.clone(),
                 event_tx_clone.clone(),
                 cancel_token.clone(),
                 task_id.clone(),
-                if config.view_stderr { Some(ExecutorEvent::new_task_stderr as fn(String, TaskId) -> ExecutorEvent) } else { None },
+                if view_stderr { Some(ExecutorEvent::new_task_stderr as fn(String, TaskId) -> ExecutorEvent) } else { None },
             );
 
             
@@ -1683,18 +1701,16 @@ impl TaskRegistry {
         let task_id_new = TaskId::new();
         let shutdown_channel = ShutdownChannel::new();
         
-        let command_config = CommandConfig {
-            command: task_config.command.clone(),
-            args: task_config.args.clone(),
-            working_directory: task_config.working_directory.clone(),
-            environment_vars: task_config.environment_vars.clone(),
-            stdout_topic: task_config.stdout_topic.clone().unwrap(),
-            stderr_topic: task_config.stderr_topic.clone().unwrap(),
-            view_stdout: task_config.view_stdout,
-            view_stderr: task_config.view_stderr,
-        };
-        
-        let backend = CommandBackend;
+        let backend = CommandBackend::new(
+            task_config.command.clone(),
+            task_config.args.clone(),
+            task_config.working_directory.clone(),
+            task_config.environment_vars.clone(),
+            task_config.stdout_topic.clone().unwrap(),
+            task_config.stderr_topic.clone().unwrap(),
+            task_config.view_stdout,
+            task_config.view_stderr,
+        );
         let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
@@ -1708,7 +1724,6 @@ impl TaskRegistry {
         
         let task_handle = task_spawner.spawn_backend(
             backend,
-            command_config,
             shutdown_token,
             subscribe_topics,
         ).await;
@@ -1815,7 +1830,7 @@ impl BackgroundTaskManager {
 
     pub async fn abort_all(&mut self) {
         let mut handles = std::mem::take(&mut self.handles);
-        for (_name, mut h) in handles.drain(..) {
+        for (_name, h) in handles.drain(..) {
             h.abort();
             let _ = h.await;
         }
