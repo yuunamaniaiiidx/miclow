@@ -136,7 +136,6 @@ restart_on_failure = true
 - `system.add-task-from-toml:TOMLデータ` - TOML形式のデータから新しいタスクを動的追加
 
 #### システム制御
-- `system.killserver` - サーバーをグレースフルシャットダウン
 - `system.status` - システムの状態を取得
 
 #### 使用例
@@ -149,9 +148,6 @@ print("system.stdout:処理が完了しました")
 
 # タスクの開始
 print("system.start-task:worker_task")
-
-# サーバーのシャットダウン
-print("system.killserver")
 ```
 
 ### メッセージ形式

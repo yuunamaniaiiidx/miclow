@@ -308,13 +308,6 @@ class MiclowClient:
 
         return self.add_task_from_toml(toml_data)
 
-    def kill_server(self) -> None:
-        """Initiate graceful server shutdown."""
-        print('"system.killserver"::')
-        print('')
-        print('::"system.killserver"')
-        sys.stdout.flush()
-
     @contextmanager
     def listen_to_topic(self, topic: str):
         """

@@ -6,5 +6,4 @@ while True:
         print("\"system.stdout\": ", s)
     cnt += 1
     if cnt > 100:
-        print("\"system.killserver\": ")
         break
