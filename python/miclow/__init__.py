@@ -11,9 +11,11 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -65,6 +67,8 @@ class MiclowClient:
         self._subscribed_topics = set()
         self._response_handlers: dict[str, SystemResponse] = {}
         self._response_lock = threading.Lock()
+        self._message_buffer: deque[tuple[str, str]] = deque()
+        self._buffer_lock = threading.Lock()
 
     def send_message(self, topic: str, message: str) -> None:
         """
@@ -82,10 +86,17 @@ class MiclowClient:
     def receive_message(self) -> tuple[str, str]:
         """
         Receive a message from stdin using multiline protocol.
+        First checks the message buffer, then reads from stdin if buffer is empty.
 
         Returns:
             A tuple of (topic, message). If no topic is specified, topic will be empty.
         """
+        # バッファからメッセージを取得
+        with self._buffer_lock:
+            if self._message_buffer:
+                return self._message_buffer.popleft()
+
+        # バッファが空の場合はstdinから読み取る
         key = input()
         value = "\n".join(input() for _ in range(int(input())))
 
@@ -93,32 +104,49 @@ class MiclowClient:
 
     def _handle_system_response(self, topic: str, message: str) -> None:
         """Handle system response messages."""
+        timestamp = datetime.now().isoformat()
         if topic.startswith("system.error."):
             with self._response_lock:
                 self._response_handlers[topic] = SystemResponse(
                     response_type=SystemResponseType.ERROR,
                     topic=topic,
-                    data=message
+                    data=message,
+                    timestamp=timestamp
                 )
         elif topic.startswith("system."):
             with self._response_lock:
                 self._response_handlers[topic] = SystemResponse(
                     response_type=SystemResponseType.SUCCESS,
                     topic=topic,
-                    data=message
+                    data=message,
+                    timestamp=timestamp
                 )
 
     def _wait_for_response(self, expected_topic: str) -> SystemResponse:
         """Wait for a system response."""
-        key = ""
-        while key != expected_topic:
-            key = input()
-            value = "\n".join(input() for _ in range(int(input())))
-        return SystemResponse(
-            response_type=SystemResponseType.SUCCESS,
-            topic=key,
-            data=value
-        )
+        while True:
+            # バッファからメッセージを確認
+            with self._buffer_lock:
+                if self._message_buffer:
+                    key, value = self._message_buffer.popleft()
+                else:
+                    # バッファが空の場合はstdinから読み取る
+                    key = input()
+                    value = "\n".join(input() for _ in range(int(input())))
+
+            # 期待するトピックが見つかった場合
+            if key == expected_topic:
+                timestamp = datetime.now().isoformat()
+                return SystemResponse(
+                    response_type=SystemResponseType.SUCCESS,
+                    topic=key,
+                    data=value,
+                    timestamp=timestamp
+                )
+
+            # 期待するトピックでない場合はバッファに保存
+            with self._buffer_lock:
+                self._message_buffer.append((key, value))
 
     def subscribe_topic(self, topic: str) -> SystemResponse:
         """
