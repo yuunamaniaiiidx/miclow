@@ -33,7 +33,7 @@ impl std::fmt::Display for TaskId {
 
 
 pub struct SystemCommandMessage {
-    pub command: Box<dyn Executable>,
+    pub command: Box<dyn SystemCommandHandler>,
     pub task_id: TaskId,
     pub response_channel: ExecutorEventSender,
 }
@@ -49,7 +49,7 @@ impl std::fmt::Debug for SystemCommandMessage {
 }
 
 impl SystemCommandMessage {
-    pub fn new(command: Box<dyn Executable>, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
+    pub fn new(command: Box<dyn SystemCommandHandler>, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
         Self {
             command,
             task_id,
@@ -211,7 +211,7 @@ impl SystemCommandManager {
         Ok(())
     }
 
-    pub async fn send_system_command(&self, command: Box<dyn Executable>, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), String> {
+    pub async fn send_system_command(&self, command: Box<dyn SystemCommandHandler>, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), String> {
         let message = SystemCommandMessage::new(command, task_id, response_channel);
         self.add_command(message).await
     }
@@ -612,15 +612,15 @@ impl TaskSpawner {
         }
     }
 
-    pub async fn spawn_executor<E>(
+    pub async fn spawn_backend<E>(
         self,
-        executor: E,
+        backend: E,
         config: E::Config,
         shutdown_token: CancellationToken,
         subscribe_topics: Option<Vec<String>>,
     ) -> tokio::task::JoinHandle<()>
     where
-        E: Executor + 'static,
+        E: TaskBackend + 'static,
         E::Event: 'static + Into<ExecutorEvent>,
         E::Config: 'static,
     {
@@ -635,10 +635,10 @@ impl TaskSpawner {
             let topic_data_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let mut topic_data_receiver = topic_data_channel.receiver;
             
-            let mut executor_handle = match executor.spawn(config, task_id.clone()).await {
+            let mut backend_handle = match backend.spawn(config, task_id.clone()).await {
                 Ok(handle) => handle,
                 Err(e) => {
-                    log::error!("Failed to spawn executor for task {}: {}", task_id, e);
+                    log::error!("Failed to spawn task backend for task {}: {}", task_id, e);
                     return;
                 }
             };
@@ -662,14 +662,14 @@ impl TaskSpawner {
                     
                     _ = shutdown_token.cancelled() => {
                         log::info!("Task {} received shutdown signal", task_id);
-                        let _ = executor_handle.shutdown_sender.shutdown();
+                        let _ = backend_handle.shutdown_sender.shutdown();
                         break;
                     },
                     
-                    event = executor_handle.event_receiver.recv() => {
+                    event = backend_handle.event_receiver.recv() => {
                         match event {
-                            Some(executor_event) => {
-                                let event: ExecutorEvent = executor_event;
+                            Some(event) => {
+                                let event: ExecutorEvent = event;
                                 
                                 match &event.kind {
                                     ExecutorEventKind::Message { topic, data } => {
@@ -736,7 +736,7 @@ impl TaskSpawner {
                                 }
                             },
                             None => {
-                                log::info!("Executor event receiver closed for task {}", task_id);
+                                log::info!("Task backend event receiver closed for task {}", task_id);
                                 break;
                             }
                         }
@@ -750,8 +750,8 @@ impl TaskSpawner {
                                     let lines: Vec<&str> = data.lines().collect();
                                     
                                     if let Some(topic_name) = topic_data.topic() {
-                                        if let Err(e) = executor_handle.input_sender.send(topic_name.clone()) {
-                                            log::warn!("Failed to send topic name to executor for task {}: {}", task_id, e);
+                                        if let Err(e) = backend_handle.input_sender.send(topic_name.clone()) {
+                                            log::warn!("Failed to send topic name to task backend for task {}: {}", task_id, e);
                                             continue;
                                         }
                                     } else {
@@ -759,14 +759,14 @@ impl TaskSpawner {
                                         continue;
                                     }
                                     
-                                    if let Err(e) = executor_handle.input_sender.send(lines.len().to_string()) {
-                                        log::warn!("Failed to send line count to executor for task {}: {}", task_id, e);
+                                    if let Err(e) = backend_handle.input_sender.send(lines.len().to_string()) {
+                                        log::warn!("Failed to send line count to task backend for task {}: {}", task_id, e);
                                         continue;
                                     }
                                     
                                     for line in lines {
-                                        if let Err(e) = executor_handle.input_sender.send(line.to_string()) {
-                                            log::warn!("Failed to send line to executor for task {}: {}", task_id, e);
+                                        if let Err(e) = backend_handle.input_sender.send(line.to_string()) {
+                                            log::warn!("Failed to send line to task backend for task {}: {}", task_id, e);
                                             break;
                                         }
                                     }
@@ -781,23 +781,23 @@ impl TaskSpawner {
                 }
             }
             
-            log::info!("Executor task {} completed", task_id);
+            log::info!("Task {} completed", task_id);
         })
     }
 }
 
-pub struct ExecutorHandle {
+pub struct TaskBackendHandle {
     pub event_receiver: ExecutorEventReceiver,
     pub input_sender: InputSender,
     pub shutdown_sender: ShutdownSender,
 }
 
 #[async_trait]
-pub trait Executor: Send + Sync {
+pub trait TaskBackend: Send + Sync {
     type Event: Send + Clone;
     type Config: Send + Clone;
     
-    async fn spawn(&self, config: Self::Config, task_id: TaskId) -> Result<ExecutorHandle, Error>;
+    async fn spawn(&self, config: Self::Config, task_id: TaskId) -> Result<TaskBackendHandle, Error>;
 }
 
 #[derive(Clone)]
@@ -813,7 +813,7 @@ pub struct SystemCommandContext {
 }
 
 #[async_trait]
-pub trait Executable: Send + Sync {
+pub trait SystemCommandHandler: Send + Sync {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String>;
 }
 
@@ -822,37 +822,8 @@ pub struct SubscribeTopicCommand {
     pub topic: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnsubscribeTopicCommand {
-    pub topic: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StartTaskCommand {
-    pub task_name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StopTaskCommand {
-    pub task_name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddTaskFromTomlCommand {
-    pub toml_data: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatusCommand;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownCommand {
-    pub command: String,
-    pub data: String,
-}
-
 #[async_trait]
-impl Executable for SubscribeTopicCommand {
+impl SystemCommandHandler for SubscribeTopicCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::info!("Processing SubscribeTopic command for task {}: '{}'", context.task_id, self.topic);
         
@@ -874,8 +845,13 @@ impl Executable for SubscribeTopicCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsubscribeTopicCommand {
+    pub topic: String,
+}
+
 #[async_trait]
-impl Executable for UnsubscribeTopicCommand {
+impl SystemCommandHandler for UnsubscribeTopicCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::info!("Processing UnsubscribeTopic command for task {}: '{}'", context.task_id, self.topic);
         
@@ -907,8 +883,13 @@ impl Executable for UnsubscribeTopicCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartTaskCommand {
+    pub task_name: String,
+}
+
 #[async_trait]
-impl Executable for StartTaskCommand {
+impl SystemCommandHandler for StartTaskCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::info!("Processing StartTask command for task {}: '{}'", context.task_id, self.task_name);
         
@@ -946,8 +927,13 @@ impl Executable for StartTaskCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopTaskCommand {
+    pub task_name: String,
+}
+
 #[async_trait]
-impl Executable for StopTaskCommand {
+impl SystemCommandHandler for StopTaskCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::info!("Processing StopTask command for task {}: '{}'", context.task_id, self.task_name);
         
@@ -978,8 +964,13 @@ impl Executable for StopTaskCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddTaskFromTomlCommand {
+    pub toml_data: String,
+}
+
 #[async_trait]
-impl Executable for AddTaskFromTomlCommand {
+impl SystemCommandHandler for AddTaskFromTomlCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::info!("Processing AddTaskFromToml command for task {} with TOML data", context.task_id);
         
@@ -1016,8 +1007,11 @@ impl Executable for AddTaskFromTomlCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusCommand;
+
 #[async_trait]
-impl Executable for StatusCommand {
+impl SystemCommandHandler for StatusCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::info!("Processing Status command for task {}", context.task_id);
         
@@ -1062,15 +1056,21 @@ impl Executable for StatusCommand {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownCommand {
+    pub command: String,
+    pub data: String,
+}
+
 #[async_trait]
-impl Executable for UnknownCommand {
+impl SystemCommandHandler for UnknownCommand {
     async fn execute(&self, context: &SystemCommandContext) -> Result<(), String> {
         log::warn!("Unknown system command '{}' with data '{}' from task {}", self.command, self.data, context.task_id);
         Ok(())
     }
 }
 
-pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<Box<dyn Executable>> {
+pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<Box<dyn SystemCommandHandler>> {
     let key_lower = key.to_lowercase();
     let data_trimmed = data.trim();
     
@@ -1078,7 +1078,7 @@ pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<Box<
         return None;
     }
     
-    let cmd: Box<dyn Executable> = match key_lower.as_str() {
+    let cmd: Box<dyn SystemCommandHandler> = match key_lower.as_str() {
         "system.subscribe-topic" => {
             Box::new(SubscribeTopicCommand { 
                 topic: data_trimmed.to_lowercase() 
@@ -1135,14 +1135,14 @@ pub struct CommandConfig {
 }
 
 
-pub struct CommandExecutor;
+pub struct CommandBackend;
 
 #[async_trait]
-impl Executor for CommandExecutor {
+impl TaskBackend for CommandBackend {
     type Event = ExecutorEvent;
     type Config = CommandConfig;
     
-    async fn spawn(&self, config: CommandConfig, task_id: TaskId) -> Result<ExecutorHandle, Error> {
+    async fn spawn(&self, config: CommandConfig, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
         let input_channel: InputChannel = InputChannel::new();
         let mut shutdown_channel = ShutdownChannel::new();
@@ -1274,7 +1274,7 @@ impl Executor for CommandExecutor {
             let _ = input_handle.await;
         });
         
-        Ok(ExecutorHandle {
+        Ok(TaskBackendHandle {
             event_receiver: event_channel.receiver,
             input_sender: input_channel.sender,
             shutdown_sender: shutdown_channel.sender,
@@ -1694,7 +1694,7 @@ impl TaskRegistry {
             view_stderr: task_config.view_stderr,
         };
         
-        let executor = CommandExecutor;
+        let backend = CommandBackend;
         let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
@@ -1706,8 +1706,8 @@ impl TaskRegistry {
             userlog_sender,
         );
         
-        let task_handle = task_spawner.spawn_executor(
-            executor,
+        let task_handle = task_spawner.spawn_backend(
+            backend,
             command_config,
             shutdown_token,
             subscribe_topics,
@@ -2021,13 +2021,13 @@ impl MiclowServer {
                         } else {
                             log::info!("Sending message topic:'{}'", system_input);
                             
-                            let executor_event = ExecutorEvent::new_message(
+                            let event = ExecutorEvent::new_message(
                                 system_input_topic.to_string(),
                                 system_input.to_string(),
                                 interactive_task_id.clone()
                             );
                             
-                            match topic_manager.broadcast_message(executor_event).await {
+                            match topic_manager.broadcast_message(event).await {
                                 Ok(success_count) => {
                                     log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
                                 },
