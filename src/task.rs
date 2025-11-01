@@ -188,21 +188,23 @@ impl std::fmt::Display for SystemResponseStatus {
 pub enum SystemResponseEvent {
     SystemResponse {
         topic: String,
+        status: String,
         data: String,
     },
     SystemError {
         topic: String,
+        status: String,
         error: String,
     },
 }
 
 impl SystemResponseEvent {
-    pub fn new_system_response(topic: String, data: String) -> Self {
-        Self::SystemResponse { topic, data }
+    pub fn new_system_response(topic: String, status: String, data: String) -> Self {
+        Self::SystemResponse { topic, status, data }
     }
 
-    pub fn new_system_error(topic: String, error: String) -> Self {
-        Self::SystemError { topic, error }
+    pub fn new_system_error(topic: String, status: String, error: String) -> Self {
+        Self::SystemError { topic, status, error }
     }
 
     pub fn topic(&self) -> &str {
@@ -589,6 +591,7 @@ pub fn start_system_control_worker(
                                             let cancel_error = SystemResponseEvent::new_system_error(
                                                 "system.error".to_string(),
                                                 status.to_string(),
+                                                "cancelled".to_string(),
                                             );
                                             let _ = context.response_channel.send(cancel_error);
                                         }
@@ -928,10 +931,11 @@ impl SystemControlHandler for SubscribeTopicSystemControl {
         log::info!("Successfully subscribed to topic '{}'", self.topic);
         
         let status = SystemResponseStatus::Success;
-        let response_topic = format!("system.subscribe-topic.{}", self.topic);
+        let response_topic = "system.subscribe-topic".to_string();
         let success_event = SystemResponseEvent::new_system_response(
             response_topic,
             status.to_string(),
+            self.topic.clone(),
         );
         let _ = context.response_channel.send(success_event);
         Ok(())
@@ -957,20 +961,22 @@ impl SystemControlHandler for UnsubscribeTopicSystemControl {
             log::info!("Successfully unsubscribed from topic '{}'", self.topic);
             
             let status = SystemResponseStatus::Success;
-            let response_topic = format!("system.unsubscribe-topic.{}", self.topic);
+            let response_topic = "system.unsubscribe-topic".to_string();
             let success_event = SystemResponseEvent::new_system_response(
                 response_topic,
                 status.to_string(),
+                self.topic.clone(),
             );
             let _ = context.response_channel.send(success_event);
         } else {
             log::warn!("Failed to unsubscribe from topic '{}'", self.topic);
             
             let status = SystemResponseStatus::Error;
-            let response_topic = format!("system.unsubscribe-topic.{}", self.topic);
+            let response_topic = "system.unsubscribe-topic".to_string();
             let error_event = SystemResponseEvent::new_system_error(
                 response_topic,
                 status.to_string(),
+                self.topic.clone(),
             );
             let _ = context.response_channel.send(error_event);
         }
@@ -1000,10 +1006,11 @@ impl SystemControlHandler for StartTaskSystemControl {
                 log::info!("Successfully started task '{}'", self.task_name);
                 
                 let status = SystemResponseStatus::Success;
-                let response_topic = format!("system.start-task.{}", self.task_name);
+                let response_topic = "system.start-task".to_string();
                 let success_event = SystemResponseEvent::new_system_response(
                     response_topic,
                     status.to_string(),
+                    self.task_name.clone(),
                 );
                 let _ = context.response_channel.send(success_event);
                 Ok(())
@@ -1012,10 +1019,11 @@ impl SystemControlHandler for StartTaskSystemControl {
                 log::error!("Failed to start task '{}': {}", self.task_name, e);
                 
                 let status = SystemResponseStatus::Error;
-                let response_topic = format!("system.start-task.{}", self.task_name);
+                let response_topic = "system.start-task".to_string();
                 let error_event = SystemResponseEvent::new_system_error(
                     response_topic,
                     status.to_string(),
+                    self.task_name.clone(),
                 );
                 let _ = context.response_channel.send(error_event);
                 Err(format!("Failed to start task '{}': {}", self.task_name, e))
@@ -1039,10 +1047,11 @@ impl SystemControlHandler for StopTaskSystemControl {
                 log::info!("Successfully stopped task '{}'", self.task_name);
                 
                 let status = SystemResponseStatus::Success;
-                let response_topic = format!("system.stop-task.{}", self.task_name);
+                let response_topic = "system.stop-task".to_string();
                 let success_event = SystemResponseEvent::new_system_response(
                     response_topic,
                     status.to_string(),
+                    self.task_name.clone(),
                 );
                 let _ = context.response_channel.send(success_event);
                 Ok(())
@@ -1051,10 +1060,11 @@ impl SystemControlHandler for StopTaskSystemControl {
                 log::error!("Failed to stop task '{}': {}", self.task_name, e);
                 
                 let status = SystemResponseStatus::Error;
-                let response_topic = format!("system.stop-task.{}", self.task_name);
+                let response_topic = "system.stop-task".to_string();
                 let error_event = SystemResponseEvent::new_system_error(
                     response_topic,
                     status.to_string(),
+                    self.task_name.clone(),
                 );
                 let _ = context.response_channel.send(error_event);
                 Err(format!("Failed to stop task '{}': {}", self.task_name, e))
@@ -1087,6 +1097,7 @@ impl SystemControlHandler for AddTaskFromTomlSystemControl {
                 let success_event = SystemResponseEvent::new_system_response(
                     "system.add-task-from-toml".to_string(),
                     status.to_string(),
+                    String::new(),
                 );
                 let _ = context.response_channel.send(success_event);
                 Ok(())
@@ -1098,6 +1109,7 @@ impl SystemControlHandler for AddTaskFromTomlSystemControl {
                 let error_event = SystemResponseEvent::new_system_error(
                     "system.add-task-from-toml".to_string(),
                     status.to_string(),
+                    e.to_string(),
                 );
                 let _ = context.response_channel.send(error_event);
                 Err(format!("Failed to add task from TOML: {}", e))
@@ -1140,8 +1152,10 @@ impl SystemControlHandler for StatusSystemControl {
         json_response.push_str("\n  ]\n");
         json_response.push_str("}");
         
+        let status = SystemResponseStatus::Success;
         let status_event = SystemResponseEvent::new_system_response(
             "system.status".to_string(),
+            status.to_string(),
             json_response,
         );
         
@@ -1431,18 +1445,18 @@ impl TaskBackend for CommandBackend {
                         _ = cancel_system_response.cancelled() => { break; }
                         system_response = system_response_receiver_for_stdin.recv() => {
                             match system_response {
-                                Some(SystemResponseEvent::SystemResponse { topic, data }) => {
-                                    log::info!("SystemResponse event for task {}: topic='{}', data='{}'", task_id_system_response, topic, data);
-                                    // バックエンドプロトコル: topicname\n行数\nデータ行...
+                                Some(SystemResponseEvent::SystemResponse { topic, status, data }) => {
+                                    log::info!("SystemResponse event for task {}: topic='{}', status='{}', data='{}'", task_id_system_response, topic, status, data);
                                     let _ = input_sender_clone.send(topic.clone());
                                     let lines: Vec<&str> = data.lines().collect();
-                                    let _ = input_sender_clone.send(lines.len().to_string());
+                                    let _ = input_sender_clone.send((lines.len() + 1).to_string());
+                                    let _ = input_sender_clone.send(status.clone());
                                     for line in lines {
                                         let _ = input_sender_clone.send(line.to_string());
                                     }
                                 },
-                                Some(SystemResponseEvent::SystemError { topic, error }) => {
-                                    log::error!("SystemError event for task {}: topic='{}', error='{}'", task_id_system_response, topic, error);
+                                Some(SystemResponseEvent::SystemError { topic, status, error }) => {
+                                    log::error!("SystemError event for task {}: topic='{}', status='{}', error='{}'", task_id_system_response, topic, status, error);
                                     // バックエンドプロトコル: topicname\n行数\nデータ行...
                                     let _ = input_sender_clone.send(topic.clone());
                                     let lines: Vec<&str> = error.lines().collect();

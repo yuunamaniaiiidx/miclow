@@ -137,10 +137,31 @@ class MiclowClient:
             # 期待するトピックが見つかった場合
             if key == expected_topic:
                 timestamp = datetime.now().isoformat()
+
+                # valueの一行目をステータスとして判定
+                lines = value.split('\n')
+                if lines:
+                    status_line = lines[0].strip()
+                    # それ以降の行をdataとして使用
+                    data = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+                    # ステータスを判定して設定
+                    if status_line == 'success':
+                        response_type = SystemResponseType.SUCCESS
+                    elif status_line == 'error':
+                        response_type = SystemResponseType.ERROR
+                    else:
+                        # デフォルトはERRORとして扱う
+                        response_type = SystemResponseType.ERROR
+                        data = value  # ステータス行が不明な場合は全体をdataに
+                else:
+                    # 空の場合はERRORとして扱う
+                    response_type = SystemResponseType.ERROR
+                    data = ''
+
                 return SystemResponse(
-                    response_type=SystemResponseType.SUCCESS,
+                    response_type=response_type,
                     topic=key,
-                    data=value,
+                    data=data,
                     timestamp=timestamp
                 )
 
@@ -164,7 +185,7 @@ class MiclowClient:
         sys.stdout.flush()
         self._subscribed_topics.add(topic)
 
-        expected_topic = f"system.subscribe-topic.{topic}"
+        expected_topic = "system.subscribe-topic"
         return self._wait_for_response(expected_topic)
 
     def unsubscribe_topic(self, topic: str) -> SystemResponse:
@@ -183,7 +204,7 @@ class MiclowClient:
         sys.stdout.flush()
         self._subscribed_topics.discard(topic)
 
-        expected_topic = f"system.unsubscribe-topic.{topic}"
+        expected_topic = "system.unsubscribe-topic"
         return self._wait_for_response(expected_topic)
 
     def send_stdout(self, message: str) -> None:
@@ -225,7 +246,7 @@ class MiclowClient:
         print('::"system.start-task"')
         sys.stdout.flush()
 
-        expected_topic = f"system.start-task.{task_name}"
+        expected_topic = "system.start-task"
         return self._wait_for_response(expected_topic)
 
     def stop_task(self, task_name: str) -> SystemResponse:
@@ -243,7 +264,7 @@ class MiclowClient:
         print('::"system.stop-task"')
         sys.stdout.flush()
 
-        expected_topic = f"system.stop-task.{task_name}"
+        expected_topic = "system.stop-task"
         return self._wait_for_response(expected_topic)
 
     def get_status(self) -> SystemResponse:
