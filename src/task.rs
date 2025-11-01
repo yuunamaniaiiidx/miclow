@@ -39,7 +39,8 @@ impl std::fmt::Display for TaskId {
 pub struct SystemControlMessage {
     pub command: Box<dyn SystemControlHandler>,
     pub task_id: TaskId,
-    pub response_channel: ExecutorEventSender,
+    pub response_channel: SystemResponseSender,
+    pub task_event_sender: ExecutorEventSender,
 }
 
 impl std::fmt::Debug for SystemControlMessage {
@@ -47,17 +48,19 @@ impl std::fmt::Debug for SystemControlMessage {
         f.debug_struct("SystemControlMessage")
             .field("command", &"SystemControl")
             .field("task_id", &self.task_id)
-            .field("response_channel", &"ExecutorEventSender")
+            .field("response_channel", &"SystemResponseSender")
+            .field("task_event_sender", &"ExecutorEventSender")
             .finish()
     }
 }
 
 impl SystemControlMessage {
-    pub fn new(command: Box<dyn SystemControlHandler>, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
+    pub fn new(command: Box<dyn SystemControlHandler>, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender) -> Self {
         Self {
             command,
             task_id,
             response_channel,
+            task_event_sender,
         }
     }
 }
@@ -164,6 +167,87 @@ impl InputChannel {
     }
 }
 
+// System -> Task 方向のイベント（SystemControl コマンドの応答）
+#[derive(Debug, Clone)]
+pub enum SystemResponseEvent {
+    SystemResponse {
+        topic: String,
+        data: TaskMessageData,
+    },
+    SystemError {
+        topic: String,
+        error: String,
+    },
+}
+
+impl SystemResponseEvent {
+    pub fn new_system_response(topic: String, data: TaskMessageData, _task_id: TaskId) -> Self {
+        Self::SystemResponse { topic, data }
+    }
+
+    pub fn new_system_error(topic: String, error: String, _task_id: TaskId) -> Self {
+        Self::SystemError { topic, error }
+    }
+
+    pub fn topic(&self) -> &str {
+        match self {
+            Self::SystemResponse { topic, .. } => topic,
+            Self::SystemError { topic, .. } => topic,
+        }
+    }
+
+    pub fn data(&self) -> Option<&TaskMessageData> {
+        match self {
+            Self::SystemResponse { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SystemResponseSender {
+    sender: mpsc::UnboundedSender<SystemResponseEvent>,
+}
+
+impl SystemResponseSender {
+    pub fn new(sender: mpsc::UnboundedSender<SystemResponseEvent>) -> Self {
+        Self { sender }
+    }
+
+    pub fn send(&self, event: SystemResponseEvent) -> Result<(), mpsc::error::SendError<SystemResponseEvent>> {
+        self.sender.send(event)
+    }
+}
+
+pub struct SystemResponseReceiver {
+    receiver: mpsc::UnboundedReceiver<SystemResponseEvent>,
+}
+
+impl SystemResponseReceiver {
+    pub fn new(receiver: mpsc::UnboundedReceiver<SystemResponseEvent>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<SystemResponseEvent> {
+        self.receiver.recv().await
+    }
+}
+
+pub struct SystemResponseChannel {
+    pub sender: SystemResponseSender,
+    pub receiver: SystemResponseReceiver,
+}
+
+impl SystemResponseChannel {
+    pub fn new() -> Self {
+        let (tx, receiver) = mpsc::unbounded_channel::<SystemResponseEvent>();
+        Self {
+            sender: SystemResponseSender::new(tx),
+            receiver: SystemResponseReceiver::new(receiver),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ShutdownSender {
     sender: mpsc::UnboundedSender<()>,
@@ -215,8 +299,8 @@ impl SystemControlManager {
         Ok(())
     }
 
-    pub async fn send_system_control_command(&self, command: Box<dyn SystemControlHandler>, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), String> {
-        let message = SystemControlMessage::new(command, task_id, response_channel);
+    pub async fn send_system_control_command(&self, command: Box<dyn SystemControlHandler>, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender) -> Result<(), String> {
+        let message = SystemControlMessage::new(command, task_id, response_channel, task_event_sender);
         self.add_command(message).await
     }
 
@@ -473,6 +557,7 @@ pub fn start_system_control_worker(
                                     system_control_manager: system_control_manager.clone(),
                                     task_id: task_id.clone(),
                                     response_channel: message.response_channel.clone(),
+                                    task_event_sender: message.task_event_sender.clone(),
                                 };
                                 
                                 let command_shutdown_token = shutdown_token.clone();
@@ -484,7 +569,8 @@ pub fn start_system_control_worker(
                                     tokio::select! {
                                         _ = command_shutdown_token.cancelled() => {
                                             log::info!("SystemControl for task {} cancelled due to shutdown", task_id_clone);
-                                            let cancel_error = ExecutorEvent::new_system_error(
+                                            let cancel_error = SystemResponseEvent::new_system_error(
+                                                "system.error".to_string(),
                                                 "Command execution cancelled due to system shutdown".to_string(),
                                                 task_id_clone.clone()
                                             );
@@ -537,12 +623,6 @@ pub enum ExecutorEvent {
     TaskStderr {
         data: TaskMessageData,
     },
-    SystemResponse {
-        data: TaskMessageData,
-    },
-    SystemError {
-        error: String,
-    },
     SystemControl {
         key: String,
         data: String,
@@ -579,18 +659,6 @@ impl ExecutorEvent {
         Self::TaskStderr { data }
     }
 
-    pub fn new_system_response(data: TaskMessageData, _task_id: TaskId) -> Self {
-        Self::SystemResponse { 
-            data 
-        }
-    }
-
-    pub fn new_system_error(error: String, _task_id: TaskId) -> Self {
-        Self::SystemError { 
-            error 
-        }
-    }
-
     pub fn new_system_control(key: String, data: String, _task_id: TaskId) -> Self {
         Self::SystemControl { 
             key, 
@@ -603,7 +671,6 @@ impl ExecutorEvent {
             Self::Message { data, .. } => Some(data),
             Self::TaskStdout { data } => Some(data),
             Self::TaskStderr { data } => Some(data),
-            Self::SystemResponse { data, .. } => Some(data),
             _ => None,
         }
     }
@@ -715,6 +782,7 @@ impl TaskSpawner {
                                             if let Err(e) = system_control_manager.send_system_control_command(
                                                 system_control_cmd,
                                                 task_id.clone(),
+                                                backend_handle.system_response_sender.clone(),
                                                 topic_data_channel.sender.clone()
                                             ).await {
                                                 log::warn!("Failed to send system control command to worker (task {}): {}", task_id, e);
@@ -724,12 +792,6 @@ impl TaskSpawner {
                                         } else {
                                             log::warn!("Failed to convert SystemControl event to handler for task {}", task_id);
                                         }
-                                    },
-                                    ExecutorEvent::SystemResponse { data } => {
-                                        log::info!("SystemResponse event for task {}: '{}'", task_id, data);
-                                    },
-                                    ExecutorEvent::SystemError { error } => {
-                                        log::error!("SystemError event for task {}: '{}'", task_id, error);
                                     },
                                     ExecutorEvent::TaskStdout { data } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
@@ -824,7 +886,8 @@ pub struct SystemControlContext {
     pub userlog_sender: TokioUnboundedSender<UserLogEvent>,
     pub system_control_manager: SystemControlManager,
     pub task_id: TaskId,
-    pub response_channel: ExecutorEventSender,
+    pub response_channel: SystemResponseSender,
+    pub task_event_sender: ExecutorEventSender,
 }
 
 #[async_trait]
@@ -845,13 +908,15 @@ impl SystemControlHandler for SubscribeTopicSystemControl {
         context.topic_manager.add_subscriber(
             self.topic.clone(),
             context.task_id.clone(), 
-            context.response_channel.clone()
+            context.task_event_sender.clone()
         ).await;
         
         log::info!("Successfully subscribed to topic '{}'", self.topic);
         
         let success_msg = format!("Successfully subscribed to topic '{}'", self.topic);
-        let success_event = ExecutorEvent::new_system_response(
+        let response_topic = format!("system.subscribe-topic.{}", self.topic);
+        let success_event = SystemResponseEvent::new_system_response(
+            response_topic,
             success_msg,
             context.task_id.clone()
         );
@@ -879,7 +944,9 @@ impl SystemControlHandler for UnsubscribeTopicSystemControl {
             log::info!("Successfully unsubscribed from topic '{}'", self.topic);
             
             let success_msg = format!("Successfully unsubscribed from topic '{}'", self.topic);
-            let success_event = ExecutorEvent::new_system_response(
+            let response_topic = format!("system.unsubscribe-topic.{}", self.topic);
+            let success_event = SystemResponseEvent::new_system_response(
+                response_topic,
                 success_msg,
                 context.task_id.clone()
             );
@@ -888,7 +955,9 @@ impl SystemControlHandler for UnsubscribeTopicSystemControl {
             log::warn!("Failed to unsubscribe from topic '{}'", self.topic);
             
             let error_msg = format!("Failed to unsubscribe from topic '{}'", self.topic);
-            let error_event = ExecutorEvent::new_system_error(
+            let response_topic = format!("system.unsubscribe-topic.{}", self.topic);
+            let error_event = SystemResponseEvent::new_system_error(
+                response_topic,
                 error_msg,
                 context.task_id.clone()
             );
@@ -920,7 +989,9 @@ impl SystemControlHandler for StartTaskSystemControl {
                 let success_msg = format!("Successfully started task '{}'", self.task_name);
                 log::info!("{}", success_msg);
                 
-                let success_event = ExecutorEvent::new_system_response(
+                let response_topic = format!("system.start-task.{}", self.task_name);
+                let success_event = SystemResponseEvent::new_system_response(
+                    response_topic,
                     success_msg,
                     context.task_id.clone()
                 );
@@ -931,7 +1002,9 @@ impl SystemControlHandler for StartTaskSystemControl {
                 let error_msg = format!("Failed to start task '{}': {}", self.task_name, e);
                 log::error!("{}", error_msg);
                 
-                let error_event = ExecutorEvent::new_system_error(
+                let response_topic = format!("system.start-task.{}", self.task_name);
+                let error_event = SystemResponseEvent::new_system_error(
+                    response_topic,
                     error_msg,
                     context.task_id.clone()
                 );
@@ -957,7 +1030,9 @@ impl SystemControlHandler for StopTaskSystemControl {
                 let success_msg = format!("Successfully stopped task '{}'", self.task_name);
                 log::info!("{}", success_msg);
                 
-                let success_event = ExecutorEvent::new_system_response(
+                let response_topic = format!("system.stop-task.{}", self.task_name);
+                let success_event = SystemResponseEvent::new_system_response(
+                    response_topic,
                     success_msg,
                     context.task_id.clone()
                 );
@@ -968,7 +1043,9 @@ impl SystemControlHandler for StopTaskSystemControl {
                 let error_msg = format!("Failed to stop task '{}': {}", self.task_name, e);
                 log::error!("{}", error_msg);
                 
-                let error_event = ExecutorEvent::new_system_error(
+                let response_topic = format!("system.stop-task.{}", self.task_name);
+                let error_event = SystemResponseEvent::new_system_error(
+                    response_topic,
                     error_msg,
                     context.task_id.clone()
                 );
@@ -1000,7 +1077,8 @@ impl SystemControlHandler for AddTaskFromTomlSystemControl {
                 let success_msg = format!("Successfully added task to executor from TOML");
                 log::info!("{}", success_msg);
                 
-                let success_event = ExecutorEvent::new_system_response(
+                let success_event = SystemResponseEvent::new_system_response(
+                    "system.add-task-from-toml".to_string(),
                     success_msg,
                     context.task_id.clone()
                 );
@@ -1011,7 +1089,8 @@ impl SystemControlHandler for AddTaskFromTomlSystemControl {
                 let error_msg = format!("Failed to add task from TOML: {}", e);
                 log::error!("{}", error_msg);
                 
-                let error_event = ExecutorEvent::new_system_error(
+                let error_event = SystemResponseEvent::new_system_error(
+                    "system.add-task-from-toml".to_string(),
                     error_msg,
                     context.task_id.clone()
                 );
@@ -1056,7 +1135,8 @@ impl SystemControlHandler for StatusSystemControl {
         json_response.push_str("\n  ]\n");
         json_response.push_str("}");
         
-        let status_event = ExecutorEvent::new_system_response(
+        let status_event = SystemResponseEvent::new_system_response(
+            "system.status".to_string(),
             json_response,
             context.task_id.clone()
         );
@@ -1101,12 +1181,12 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<Box<dy
     let cmd: Box<dyn SystemControlHandler> = match key_lower.as_str() {
         "system.subscribe-topic" => {
             Box::new(SubscribeTopicSystemControl { 
-                topic: data_trimmed.to_lowercase() 
+                topic: data_trimmed.to_string() 
             })
         },
         "system.unsubscribe-topic" => {
             Box::new(UnsubscribeTopicSystemControl { 
-                topic: data_trimmed.to_lowercase() 
+                topic: data_trimmed.to_string() 
             })
         },
         "system.start-task" => {
@@ -1144,6 +1224,8 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<Box<dy
 
 pub struct TaskBackendHandle {
     pub event_receiver: ExecutorEventReceiver,
+    pub event_sender: ExecutorEventSender,
+    pub system_response_sender: SystemResponseSender,
     pub input_sender: InputSender,
     pub shutdown_sender: ShutdownSender,
 }
@@ -1240,12 +1322,14 @@ impl TaskBackend for CommandBackend {
         let view_stdout = self.view_stdout;
         let view_stderr = self.view_stderr;
 
-        let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
-        let input_channel: InputChannel = InputChannel::new();
-        let mut shutdown_channel = ShutdownChannel::new();
-        
-        let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
-        let mut input_receiver = input_channel.receiver;
+            let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
+            let input_channel: InputChannel = InputChannel::new();
+            let mut shutdown_channel = ShutdownChannel::new();
+            let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
+            
+            let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
+            let mut input_receiver = input_channel.receiver;
+            let input_sender_clone = input_channel.sender.clone();
 
         task::spawn(async move {
             let mut command_builder = TokioCommand::new(&command);
@@ -1326,6 +1410,43 @@ impl TaskBackend for CommandBackend {
                                     if let Err(e) = stdin_writer.flush().await {
                                         let _ = event_tx_input.send_error(format!("Failed to flush stdin: {}", e), task_id_input.clone());
                                         break;
+                                    }
+                                },
+                                None => break,
+                            }
+                        }
+                    }
+                }
+            });
+
+            // SystemResponseEvent を InputChannel 経由で stdin に送信するタスク
+            let mut system_response_receiver_for_stdin = system_response_channel.receiver;
+            let cancel_system_response: CancellationToken = cancel_token.clone();
+            let task_id_system_response: TaskId = task_id.clone();
+            let _system_response_handle = task::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel_system_response.cancelled() => { break; }
+                        system_response = system_response_receiver_for_stdin.recv() => {
+                            match system_response {
+                                Some(SystemResponseEvent::SystemResponse { topic, data }) => {
+                                    log::info!("SystemResponse event for task {}: topic='{}', data='{}'", task_id_system_response, topic, data);
+                                    // バックエンドプロトコル: topicname\n行数\nデータ行...
+                                    let _ = input_sender_clone.send(topic.clone());
+                                    let lines: Vec<&str> = data.lines().collect();
+                                    let _ = input_sender_clone.send(lines.len().to_string());
+                                    for line in lines {
+                                        let _ = input_sender_clone.send(line.to_string());
+                                    }
+                                },
+                                Some(SystemResponseEvent::SystemError { topic, error }) => {
+                                    log::error!("SystemError event for task {}: topic='{}', error='{}'", task_id_system_response, topic, error);
+                                    // バックエンドプロトコル: topicname\n行数\nデータ行...
+                                    let _ = input_sender_clone.send(topic.clone());
+                                    let lines: Vec<&str> = error.lines().collect();
+                                    let _ = input_sender_clone.send(lines.len().to_string());
+                                    for line in lines {
+                                        let _ = input_sender_clone.send(line.to_string());
                                     }
                                 },
                                 None => break,
@@ -1454,6 +1575,8 @@ impl TaskBackend for CommandBackend {
         
         Ok(TaskBackendHandle {
             event_receiver: event_channel.receiver,
+            event_sender: event_channel.sender,
+            system_response_sender: system_response_channel.sender,
             input_sender: input_channel.sender,
             shutdown_sender: shutdown_channel.sender,
         })
