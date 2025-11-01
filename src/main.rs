@@ -7,7 +7,7 @@ use task::{
     ServerConfig, MiclowServer
 };
 use clap::Parser;
-use tokio::sync::mpsc;
+use std::process::exit;
 
 #[derive(Parser)]
 #[command(name = "miclow")]
@@ -30,7 +30,8 @@ async fn run_miclow(config_file: String) -> Result<()> {
     let config = ServerConfig::from_file(config_file)?;
     
     let miclow_server = MiclowServer::new(config);
-    miclow_server.start_server().await?;
+    miclow_server.start_server_with_interactive().await?;
 
+    exit(0);
     Ok(())
 }

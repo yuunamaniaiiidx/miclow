@@ -1866,7 +1866,7 @@ impl MiclowServer {
         }
     }
 
-    pub async fn start_server(
+    pub async fn start_server_with_interactive(
         mut self,
     ) -> Result<()> {
         let topic_manager: TopicManager = self.topic_manager.clone();
@@ -1905,13 +1905,25 @@ impl MiclowServer {
         log::info!("Server running. Press Ctrl+C to stop.");
         println!("Server running. Press Ctrl+C to stop.");
         
-        // Ctrl+C を待ち受け、受信時にシャットダウンを要求
+        // ★ここでCtrl+Cの監視タスクを追加
         let shutdown_token = self.shutdown_token.clone();
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            log::error!("Ctrl+C signal error: {}", e);
-        } else {
-            log::info!("Received Ctrl+C. Requesting graceful shutdown...");
-            shutdown_token.cancel();
+        // インタラクティブ入力は専用タスクとして管理
+        let mut interactive_handle = tokio::spawn(Self::start_interactive_mode(
+            self.system_command_manager.clone(),
+            topic_manager.clone(),
+            self.shutdown_token.clone()
+        ));
+        let ctrlc_fut = async {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                log::error!("Ctrl+C signal error: {}", e);
+            } else {
+                log::info!("Received Ctrl+C. Requesting graceful shutdown...");
+                shutdown_token.cancel();
+            }
+        };
+        tokio::select! {
+            _ = &mut interactive_handle => {},
+            _ = ctrlc_fut => {},
         }
 
         log::info!("Received shutdown signal, stopping all workers...");
@@ -1924,6 +1936,11 @@ impl MiclowServer {
         // ログを吐き切る猶予を与えた後、ログ集約を停止
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         logging_shutdown.cancel();
+        // 念のためインタラクティブタスクも収束させる
+        if !interactive_handle.is_finished() {
+            interactive_handle.abort();
+            let _ = interactive_handle.await;
+        }
         // 背景タスクは即時abortで収束させる（ログ集約のブロック回避）
         self.background_tasks.abort_all().await;
         // ロガーのフラッシュを呼び出す（ChannelLoggerのflushは軽量だが呼ぶ）
@@ -1932,6 +1949,80 @@ impl MiclowServer {
         log::info!("Graceful shutdown completed");
         println!("Graceful shutdown completed");
         return Ok(());
+    }
+
+
+    async fn start_interactive_mode(
+        system_command_manager: SystemCommandManager,
+        topic_manager: TopicManager,
+        shutdown_token: CancellationToken
+    ) {
+        let stdin = stdin();
+        let reader = TokioBufReader::new(stdin);
+        let mut lines = reader.lines();
+        
+        let interactive_task_id = TaskId::new();
+        
+        let interactive_event_channel = ExecutorEventChannel::new();
+        let interactive_event_sender = interactive_event_channel.sender;
+        
+        loop {
+            if shutdown_token.is_cancelled() {
+                log::info!("Interactive mode received shutdown signal");
+                break;
+            }
+            
+            
+            tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    log::info!("Interactive mode received shutdown signal");
+                    break;
+                }
+                line_result = lines.next_line() => {
+                    if let Some(line) = line_result.unwrap_or_default() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        
+                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext("", trimmed) {
+                            log::info!("Sending system command from interactive mode: {:?}", system_cmd);
+                            
+                            if let Err(e) = system_command_manager.send_system_command(
+                                system_cmd,
+                                interactive_task_id.clone(),
+                                interactive_event_sender.clone()
+                            ).await {
+                                log::error!("Failed to send system command: {}", e);
+                                eprintln!("Failed to send system command: {}", e);
+                            } else {
+                                log::info!("Successfully sent system command from interactive mode");
+                            }
+                        } else {
+                            log::info!("Sending message to stdout topic: '{}'", trimmed);
+                            
+                            let executor_event = ExecutorEvent::new_message(
+                                "stdout".to_string(),
+                                trimmed.to_string(),
+                                interactive_task_id.clone()
+                            );
+                            
+                            match topic_manager.broadcast_message(executor_event).await {
+                                Ok(success_count) => {
+                                    log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
+                                },
+                                Err(e) => {
+                                    log::error!("Failed to broadcast message to stdout topic: {}", e);
+                                    eprintln!("Failed to broadcast message to stdout topic: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
 
