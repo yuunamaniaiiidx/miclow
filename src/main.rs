@@ -4,7 +4,7 @@ mod logging;
 
 use anyhow::Result;
 use task::{
-    ServerConfig, MiclowServer
+    SystemConfig, MiclowSystem
 };
 use clap::Parser;
 use std::process::exit;
@@ -27,10 +27,10 @@ async fn main() -> Result<()> {
 }
 
 async fn run_miclow(config_file: String) -> Result<()> {
-    let config = ServerConfig::from_file(config_file)?;
+    let config = SystemConfig::from_file(config_file)?;
     
-    let miclow_server = MiclowServer::new(config);
-    miclow_server.start_server_with_interactive().await?;
+    let miclow_system = MiclowSystem::new(config);
+    miclow_system.start_system_with_interactive().await?;
 
     exit(0);
     Ok(())
