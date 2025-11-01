@@ -1435,7 +1435,6 @@ impl TaskBackend for CommandBackend {
                 }
             });
 
-            // SystemResponseEvent を InputChannel 経由で stdin に送信するタスク
             let mut system_response_receiver_for_stdin = system_response_channel.receiver;
             let cancel_system_response: CancellationToken = cancel_token.clone();
             let task_id_system_response: TaskId = task_id.clone();
@@ -1457,7 +1456,6 @@ impl TaskBackend for CommandBackend {
                                 },
                                 Some(SystemResponseEvent::SystemError { topic, status, error }) => {
                                     log::error!("SystemError event for task {}: topic='{}', status='{}', error='{}'", task_id_system_response, topic, status, error);
-                                    // バックエンドプロトコル: topicname\n行数\nデータ行...
                                     let _ = input_sender_clone.send(topic.clone());
                                     let lines: Vec<&str> = error.lines().collect();
                                     let _ = input_sender_clone.send(lines.len().to_string());
