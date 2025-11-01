@@ -66,7 +66,7 @@ args = ["main.py"]
 working_directory = "./"
 auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = ["key1", "key2"]
+subscribe_topics = ["key1", "key2"]
 
 [[tasks]]
 task_name = "stdout"
@@ -75,7 +75,7 @@ args = ["stdout.py"]
 working_directory = "./"
 auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = ["stdout"]
+subscribe_topics = ["stdout"]
 ```
 
 2. **Miclowの起動**

@@ -260,7 +260,7 @@ class MiclowClient:
         working_directory: str | None = None,
         environment_vars: dict[str, str] | None = None,
         auto_start: bool | None = None,
-        initial_topics: list[str] | None = None
+        subscribe_topics: list[str] | None = None
     ) -> SystemResponse:
         """
         Add a task by constructing TOML configuration from parameters.
@@ -272,7 +272,7 @@ class MiclowClient:
             working_directory: Working directory for the task
             environment_vars: Environment variables as key-value pairs
             auto_start: Whether to start the task automatically
-            initial_topics: List of topics to subscribe to initially
+            subscribe_topics: List of topics to subscribe to initially
 
         Returns:
             SystemResponse with the result
@@ -300,9 +300,9 @@ class MiclowClient:
         if auto_start is not None:
             toml_lines.append(f'auto_start = {str(auto_start).lower()}')
 
-        if initial_topics:
-            topics_str = ', '.join(f'"{topic}"' for topic in initial_topics)
-            toml_lines.append(f'initial_topics = [{topics_str}]')
+        if subscribe_topics:
+            topics_str = ', '.join(f'"{topic}"' for topic in subscribe_topics)
+            toml_lines.append(f'subscribe_topics = [{topics_str}]')
 
         toml_data = '\n'.join(toml_lines)
 
@@ -410,7 +410,7 @@ def add_task(
     working_directory: str | None = None,
     environment_vars: dict[str, str] | None = None,
     auto_start: bool | None = None,
-    initial_topics: list[str] | None = None
+    subscribe_topics: list[str] | None = None
 ) -> SystemResponse:
     """Add a task by constructing TOML configuration from parameters."""
     return get_client().add_task(
@@ -420,6 +420,6 @@ def add_task(
         working_directory=working_directory,
         environment_vars=environment_vars,
         auto_start=auto_start,
-        initial_topics=initial_topics
+        subscribe_topics=subscribe_topics
     )
 

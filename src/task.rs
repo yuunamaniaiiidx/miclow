@@ -849,7 +849,7 @@ impl TaskSpawner {
         executor: E,
         config: E::Config,
         shutdown_token: CancellationToken,
-        initial_topics: Option<Vec<String>>,
+        subscribe_topics: Option<Vec<String>>,
     ) -> tokio::task::JoinHandle<()>
     where
         E: Executor + 'static,
@@ -875,7 +875,7 @@ impl TaskSpawner {
                 }
             };
 
-            if let Some(topics) = initial_topics {
+            if let Some(topics) = subscribe_topics {
                 log::info!("Processing initial topic subscriptions for task {}: {:?}", task_id, topics);
                 for topic in topics {
                     topic_manager.add_subscriber(
@@ -1359,7 +1359,7 @@ pub struct TaskConfig {
     pub working_directory: Option<String>,
     pub environment_vars: Option<HashMap<String, String>>,
     pub auto_start: Option<bool>,
-    pub initial_topics: Option<Vec<String>>,
+    pub subscribe_topics: Option<Vec<String>>,
     pub stdout_topic: Option<String>,
     pub stderr_topic: Option<String>,
     #[serde(default)]
@@ -1423,8 +1423,8 @@ impl ServerConfig {
                 }
             }
             
-            if let Some(initial_topics) = &task.initial_topics {
-                for (topic_index, topic) in initial_topics.iter().enumerate() {
+            if let Some(subscribe_topics) = &task.subscribe_topics {
+                for (topic_index, topic) in subscribe_topics.iter().enumerate() {
                     if topic.is_empty() {
                         return Err(anyhow::anyhow!("Task '{}' has empty initial topic at index {}", task.name, topic_index));
                     }
@@ -1703,7 +1703,7 @@ impl TaskRegistry {
         };
         
         let executor = CommandExecutor;
-        let initial_topics = task_config.initial_topics.clone();
+        let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
             task_id_new.clone(),
@@ -1718,7 +1718,7 @@ impl TaskRegistry {
             executor,
             command_config,
             shutdown_token,
-            initial_topics,
+            subscribe_topics,
         ).await;
         
         let running_task = RunningTask {
@@ -1966,12 +1966,13 @@ impl MiclowServer {
         let interactive_event_channel = ExecutorEventChannel::new();
         let interactive_event_sender = interactive_event_channel.sender;
         
+        let system_input_topic = "system";
+        
         loop {
             if shutdown_token.is_cancelled() {
                 log::info!("Interactive mode received shutdown signal");
                 break;
             }
-            
             
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1985,7 +1986,9 @@ impl MiclowServer {
                             continue;
                         }
                         
-                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext("", trimmed) {
+                        let system_input = trimmed;
+                        
+                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext("", system_input) {
                             log::info!("Sending system command from interactive mode: {:?}", system_cmd);
                             
                             if let Err(e) = system_command_manager.send_system_command(
@@ -1999,11 +2002,11 @@ impl MiclowServer {
                                 log::info!("Successfully sent system command from interactive mode");
                             }
                         } else {
-                            log::info!("Sending message to stdout topic: '{}'", trimmed);
+                            log::info!("Sending message topic:'{}'", system_input);
                             
                             let executor_event = ExecutorEvent::new_message(
-                                "stdout".to_string(),
-                                trimmed.to_string(),
+                                system_input_topic.to_string(),
+                                system_input.to_string(),
                                 interactive_task_id.clone()
                             );
                             
