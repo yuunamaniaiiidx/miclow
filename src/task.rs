@@ -434,8 +434,7 @@ pub fn start_system_command_worker(
     shutdown_token: CancellationToken,
     userlog_sender: TokioUnboundedSender<UserLogEvent>,
 ) -> tokio::task::JoinHandle<()> {
-    task::spawn(async move {
-        // Track running command executions to allow cancellation/abort
+        task::spawn(async move {
         let running_commands: Arc<RwLock<HashMap<TaskId, JoinHandle<()>>>> = Arc::new(RwLock::new(HashMap::new()));
         
         loop {
@@ -445,7 +444,6 @@ pub fn start_system_command_worker(
                 _ = shutdown_token.cancelled() => {
                     log::info!("SystemCommand worker received shutdown signal, aborting all running commands");
                     
-                    // Abort all running command executions
                     let mut commands = running_commands.write().await;
                     for (task_id, handle) in commands.drain() {
                         log::info!("Aborting SystemCommand execution for task {}", task_id);
@@ -462,8 +460,6 @@ pub fn start_system_command_worker(
                                 
                                 log::info!("Spawning SystemCommand for task {} (parallel execution)", task_id);
                                 
-                                // Spawn command execution in a separate task to allow parallel processing
-                                // This prevents one slow command from blocking other commands
                                 let context = SystemCommandContext {
                                     topic_manager: topic_manager.clone(),
                                     task_registry: task_registry.clone(),
@@ -502,12 +498,10 @@ pub fn start_system_command_worker(
                                         }
                                     }
                                     
-                                    // Remove from tracking when finished
                                     let mut commands = running_commands_clone.write().await;
                                     commands.remove(&task_id_clone);
                                 });
                                 
-                                // Track the handle
                                 let mut commands = running_commands.write().await;
                                 commands.insert(task_id, handle);
                             }
@@ -544,6 +538,10 @@ pub enum ExecutorEvent {
     },
     SystemError {
         error: String,
+    },
+    SystemCommand {
+        key: String,
+        data: String,
     },
     Error {
         error: String,
@@ -586,6 +584,13 @@ impl ExecutorEvent {
     pub fn new_system_error(error: String, _task_id: TaskId) -> Self {
         Self::SystemError { 
             error 
+        }
+    }
+
+    pub fn new_system_command(key: String, data: String, _task_id: TaskId) -> Self {
+        Self::SystemCommand { 
+            key, 
+            data 
         }
     }
 
@@ -690,8 +695,19 @@ impl TaskSpawner {
                                 
                                 match &event {
                                     ExecutorEvent::Message { topic, data } => {
-                                        if let Some(system_cmd) = parse_system_command_from_plaintext(topic, data) {
-                                            log::info!("SystemCommand detected from task {}: {}", task_id, topic);
+                                        log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
+                                        match topic_manager.broadcast_message(event.clone()).await {
+                                            Ok(success_count) => {
+                                                log::info!("Broadcasted message from task {} to {} subscribers on topic '{}'", task_id, success_count, topic);
+                                            },
+                                            Err(e) => {
+                                                log::error!("Failed to broadcast message from task {} on topic '{}': {}", task_id, topic, e);
+                                            }
+                                        }
+                                    },
+                                    ExecutorEvent::SystemCommand { .. } => {
+                                        if let Some(system_cmd) = system_command_to_handler(&event) {
+                                            log::info!("SystemCommand detected from task {}", task_id);
                                             if let Err(e) = system_command_manager.send_system_command(
                                                 system_cmd,
                                                 task_id.clone(),
@@ -702,15 +718,7 @@ impl TaskSpawner {
                                                 log::info!("Sent system command to worker for task {}", task_id);
                                             }
                                         } else {
-                                            log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
-                                            match topic_manager.broadcast_message(event.clone()).await {
-                                                Ok(success_count) => {
-                                                    log::info!("Broadcasted message from task {} to {} subscribers on topic '{}'", task_id, success_count, topic);
-                                                },
-                                                Err(e) => {
-                                                    log::error!("Failed to broadcast message from task {} on topic '{}': {}", task_id, topic, e);
-                                                }
-                                            }
+                                            log::warn!("Failed to convert SystemCommand event to handler for task {}", task_id);
                                         }
                                     },
                                     ExecutorEvent::SystemResponse { data } => {
@@ -1073,7 +1081,12 @@ impl SystemCommandHandler for UnknownCommand {
     }
 }
 
-pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<Box<dyn SystemCommandHandler>> {
+
+pub fn system_command_to_handler(event: &ExecutorEvent) -> Option<Box<dyn SystemCommandHandler>> {
+    let ExecutorEvent::SystemCommand { key, data } = event else {
+        return None;
+    };
+    
     let key_lower = key.to_lowercase();
     let data_trimmed = data.trim();
     
@@ -1115,7 +1128,7 @@ pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<Box<
         },
         _ if key_lower.starts_with("system.") => {
             Box::new(UnknownCommand { 
-                command: key_lower, 
+                command: key_lower.clone(), 
                 data: data_trimmed.to_string() 
             })
         },
@@ -1169,6 +1182,45 @@ impl CommandBackend {
             view_stdout,
             view_stderr,
         }
+    }
+
+    pub fn parse_system_command_from_plaintext(key: &str, data: &str) -> Option<ExecutorEvent> {
+        let key_lower = key.to_lowercase();
+        let data_trimmed = data.trim();
+        
+        if data_trimmed.is_empty() && key_lower.as_str() != "system.status" {
+            return None;
+        }
+        
+        let is_system_command = key_lower.starts_with("system.") || (key_lower.is_empty() && data_trimmed.starts_with("system."));
+        
+        if is_system_command {
+            let actual_key = if key_lower.is_empty() {
+                let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    parts[0].to_string()
+                } else {
+                    data_trimmed.to_string()
+                }
+            } else {
+                key_lower.clone()
+            };
+            
+            let actual_data = if key_lower.is_empty() && actual_key != data_trimmed {
+                let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    parts[1].to_string()
+                } else {
+                    String::new()
+                }
+            } else {
+                data_trimmed.to_string()
+            };
+            
+            return Some(ExecutorEvent::new_system_command(actual_key, actual_data, TaskId::new()));
+        }
+        
+        None
     }
 }
 
@@ -1339,39 +1391,53 @@ where
         let mut line = String::new();
         let task_id_str = task_id.to_string();
         
-        loop {
-            let mut flush_unfinished = || {
-                let unfinished = buffer_manager.flush_all_unfinished();
-                for (_, key, data) in unfinished {
-                    let _ = event_tx.send_message(key, data, task_id.clone());
+        let process_stream_outcome = |outcome: Result<StreamOutcome, String>, line_content: &str| {
+            match outcome {
+                Ok(StreamOutcome::Emit { topic, data }) => {
+                    if let Some(system_cmd_event) = CommandBackend::parse_system_command_from_plaintext(&topic, &data) {
+                        let _ = event_tx.send(system_cmd_event);
+                    } else {
+                        let _ = event_tx.send_message(topic, data, task_id.clone());
+                    }
                 }
-            };
+                Ok(StreamOutcome::Plain(output)) => {
+                    let _ = event_tx.send_message(topic_name.clone(), output.clone(), task_id.clone());
+                    if let Some(emit) = emit_func {
+                        let _ = event_tx.send(emit(output, task_id.clone()));
+                    }
+                }
+                Ok(StreamOutcome::None) => {}
+                Err(e) => {
+                    let _ = event_tx.send_error(e.clone(), task_id.clone());
+                    let output = crate::buffer::strip_crlf(line_content).to_string();
+                    let _ = event_tx.send_message(topic_name.clone(), output.clone(), task_id.clone());
+                    if let Some(emit) = emit_func {
+                        let _ = event_tx.send(emit(output, task_id.clone()));
+                    }
+                }
+            }
+        };
+
+        loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => { flush_unfinished(); break; }
+                _ = cancel_token.cancelled() => {
+                    let unfinished = buffer_manager.flush_all_unfinished();
+                    for (_, topic, data) in unfinished {
+                        process_stream_outcome(Ok(StreamOutcome::Emit { topic, data }), "");
+                    }
+                    break;
+                }
                 result = reader.read_line(&mut line) => {
                     match result {
-                        Ok(0) => { flush_unfinished(); break; },
-                        Ok(_) => {
-                            match buffer_manager.consume_stream_line(&task_id_str, &line) {
-                                Ok(StreamOutcome::Emit { key, data }) => {
-                                    let _ = event_tx.send_message(key, data, task_id.clone());
-                                }
-                                Ok(StreamOutcome::Plain(output)) => {
-                                    let _ = event_tx.send_message(topic_name.clone(), output.clone(), task_id.clone());
-                                    if let Some(emit) = emit_func {
-                                        let _ = event_tx.send(emit(output, task_id.clone()));
-                                    }
-                                }
-                                Ok(StreamOutcome::None) => {}
-                                Err(e) => {
-                                    let _ = event_tx.send_error(e.clone(), task_id.clone());
-                                    let output = crate::buffer::strip_crlf(&line).to_string();
-                                    let _ = event_tx.send_message(topic_name.clone(), output.clone(), task_id.clone());
-                                    if let Some(emit) = emit_func {
-                                        let _ = event_tx.send(emit(output, task_id.clone()));
-                                    }
-                                }
+                        Ok(0) => {
+                            let unfinished = buffer_manager.flush_all_unfinished();
+                            for (_, topic, data) in unfinished {
+                                process_stream_outcome(Ok(StreamOutcome::Emit { topic, data }), "");
                             }
+                            break;
+                        }
+                        Ok(_) => {
+                            process_stream_outcome(buffer_manager.consume_stream_line(&task_id_str, &line), &line);
                             line.clear();
                         },
                         Err(e) => {
@@ -1968,7 +2034,6 @@ impl MiclowServer {
         
         let shutdown_token = self.shutdown_token.clone();
         let mut interactive_handle = tokio::spawn(Self::start_interactive_mode(
-            self.system_command_manager.clone(),
             topic_manager.clone(),
             self.shutdown_token.clone()
         ));
@@ -2008,7 +2073,6 @@ impl MiclowServer {
 
 
     async fn start_interactive_mode(
-        system_command_manager: SystemCommandManager,
         topic_manager: TopicManager,
         shutdown_token: CancellationToken
     ) {
@@ -2017,9 +2081,6 @@ impl MiclowServer {
         let mut lines = reader.lines();
         
         let interactive_task_id = TaskId::new();
-        
-        let interactive_event_channel = ExecutorEventChannel::new();
-        let interactive_event_sender = interactive_event_channel.sender;
         
         let system_input_topic = "system";
         
@@ -2043,36 +2104,21 @@ impl MiclowServer {
                         
                         let system_input = trimmed;
                         
-                        if let Some(system_cmd) = parse_system_command_from_plaintext("", system_input) {
-                            log::info!("Sending system command from interactive mode: {}", system_input);
-                            
-                            if let Err(e) = system_command_manager.send_system_command(
-                                system_cmd,
-                                interactive_task_id.clone(),
-                                interactive_event_sender.clone()
-                            ).await {
-                                log::error!("Failed to send system command: {}", e);
-                                eprintln!("Failed to send system command: {}", e);
-                            } else {
-                                log::info!("Successfully sent system command from interactive mode");
-                            }
-                        } else {
-                            log::info!("Sending message topic:'{}'", system_input);
-                            
-                            let event = ExecutorEvent::new_message(
-                                system_input_topic.to_string(),
-                                system_input.to_string(),
-                                interactive_task_id.clone()
-                            );
-                            
-                            match topic_manager.broadcast_message(event).await {
-                                Ok(success_count) => {
-                                    log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
-                                },
-                                Err(e) => {
-                                    log::error!("Failed to broadcast message to stdout topic: {}", e);
-                                    eprintln!("Failed to broadcast message to stdout topic: {}", e);
-                                }
+                        log::info!("Sending message topic:'{}'", system_input);
+                        
+                        let event = ExecutorEvent::new_message(
+                            system_input_topic.to_string(),
+                            system_input.to_string(),
+                            interactive_task_id.clone()
+                        );
+                        
+                        match topic_manager.broadcast_message(event).await {
+                            Ok(success_count) => {
+                                log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
+                            },
+                            Err(e) => {
+                                log::error!("Failed to broadcast message to stdout topic: {}", e);
+                                eprintln!("Failed to broadcast message to stdout topic: {}", e);
                             }
                         }
                     } else {
