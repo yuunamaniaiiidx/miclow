@@ -528,7 +528,7 @@ pub fn start_system_command_worker(
 pub type TaskMessageData = String;
 
 #[derive(Debug, Clone)]
-pub enum ExecutorEventKind {
+pub enum ExecutorEvent {
     Message {
         topic: String,
         data: TaskMessageData,
@@ -553,78 +553,55 @@ pub enum ExecutorEventKind {
     },
 }
 
-#[derive(Debug, Clone)]
-pub struct ExecutorEvent {
-    pub kind: ExecutorEventKind,
-}
-
 impl ExecutorEvent {
     pub fn new_message(topic: String, data: TaskMessageData, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::Message { 
-                topic, 
-                data 
-            },
+        Self::Message { 
+            topic, 
+            data 
         }
     }
 
-
     pub fn new_error(error: String, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::Error { error },
-        }
+        Self::Error { error }
     }
 
     pub fn new_exit(exit_code: i32, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::Exit { exit_code },
-        }
+        Self::Exit { exit_code }
     }
 
-
-
     pub fn new_task_stdout(data: TaskMessageData, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::TaskStdout { data },
-        }
+        Self::TaskStdout { data }
     }
 
     pub fn new_task_stderr(data: TaskMessageData, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::TaskStderr { data },
-        }
+        Self::TaskStderr { data }
     }
 
     pub fn new_system_response(data: TaskMessageData, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::SystemResponse { 
-                data 
-            },
+        Self::SystemResponse { 
+            data 
         }
     }
 
     pub fn new_system_error(error: String, _task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::SystemError { 
-                error 
-            },
+        Self::SystemError { 
+            error 
         }
     }
 
-
     pub fn data(&self) -> Option<&TaskMessageData> {
-        match &self.kind {
-            ExecutorEventKind::Message { data, .. } => Some(data),
-            ExecutorEventKind::TaskStdout { data } => Some(data),
-            ExecutorEventKind::TaskStderr { data } => Some(data),
-            ExecutorEventKind::SystemResponse { data, .. } => Some(data),
+        match self {
+            Self::Message { data, .. } => Some(data),
+            Self::TaskStdout { data } => Some(data),
+            Self::TaskStderr { data } => Some(data),
+            Self::SystemResponse { data, .. } => Some(data),
             _ => None,
         }
     }
 
     pub fn topic(&self) -> Option<&String> {
-        match &self.kind {
-            ExecutorEventKind::Message { topic, .. } => Some(topic),
+        match self {
+            Self::Message { topic, .. } => Some(topic),
             _ => None,
         }
     }
@@ -711,8 +688,8 @@ impl TaskSpawner {
                             Some(event) => {
                                 let event: ExecutorEvent = event;
                                 
-                                match &event.kind {
-                                    ExecutorEventKind::Message { topic, data } => {
+                                match &event {
+                                    ExecutorEvent::Message { topic, data } => {
                                         if let Some(system_cmd) = parse_system_command_from_plaintext(topic, data) {
                                             log::info!("SystemCommand detected from task {}: {}", task_id, topic);
                                             if let Err(e) = system_command_manager.send_system_command(
@@ -736,13 +713,13 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorEventKind::SystemResponse { data } => {
+                                    ExecutorEvent::SystemResponse { data } => {
                                         log::info!("SystemResponse event for task {}: '{}'", task_id, data);
                                     },
-                                    ExecutorEventKind::SystemError { error } => {
+                                    ExecutorEvent::SystemError { error } => {
                                         log::error!("SystemError event for task {}: '{}'", task_id, error);
                                     },
-                                    ExecutorEventKind::TaskStdout { data } => {
+                                    ExecutorEvent::TaskStdout { data } => {
                                         let flags = task_registry.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((view_stdout, _)) = flags {
                                             if view_stdout {
@@ -750,7 +727,7 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorEventKind::TaskStderr { data } => {
+                                    ExecutorEvent::TaskStderr { data } => {
                                         let flags = task_registry.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((_, view_stderr)) = flags {
                                             if view_stderr {
@@ -758,10 +735,10 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorEventKind::Error { error } => {
+                                    ExecutorEvent::Error { error } => {
                                         log::error!("Error event for task {}: '{}'", task_id, error);
                                     },
-                                    ExecutorEventKind::Exit { exit_code } => {
+                                    ExecutorEvent::Exit { exit_code } => {
                                         log::info!("Exit event for task {} with exit code: {}", task_id, exit_code);
                                         
                                         let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(task_id.clone()).await;
