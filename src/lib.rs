@@ -15,6 +15,7 @@ pub mod running_task;
 pub mod start_context_variant;
 pub mod system_control_manager;
 pub mod topic_manager;
+pub mod background_task_manager;
 pub mod config;
 pub mod miclow;
 pub mod buffer;

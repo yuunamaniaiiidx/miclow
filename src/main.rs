@@ -14,6 +14,7 @@ mod running_task;
 mod start_context_variant;
 mod system_control_manager;
 mod topic_manager;
+mod background_task_manager;
 mod config;
 mod miclow;
 mod buffer;

@@ -27,6 +27,7 @@ use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
 use crate::interactive_backend::InteractiveBackend;
+use crate::background_task_manager::BackgroundTaskManager;
 use crate::config::{TaskConfig, SystemConfig};
 use tokio::task::JoinHandle;
 #[cfg(unix)]
@@ -1511,38 +1512,6 @@ impl TaskExecutor {
         Ok(())
     }
 
-}
-
-#[derive(Default)]
-pub struct BackgroundTaskManager {
-    handles: Vec<(String, JoinHandle<()>)>,
-}
-
-impl BackgroundTaskManager {
-    pub fn new() -> Self { Self { handles: Vec::new() } }
-    pub fn register(&mut self, name: &str, handle: JoinHandle<()>) {
-        self.handles.push((name.to_string(), handle));
-    }
-    pub async fn shutdown_all(&mut self, timeout: std::time::Duration) {
-        let mut handles = std::mem::take(&mut self.handles);
-        for (idx, (name, mut h)) in handles.drain(..).enumerate() {
-            log::info!("Waiting background task {} ({}) up to {:?}", idx, name, timeout);
-            let finished_in_time = tokio::time::timeout(timeout, &mut h).await.is_ok();
-            if !finished_in_time {
-                log::warn!("Background task {} ({}) did not finish in {:?}, aborting", idx, name, timeout);
-                h.abort();
-                let _ = h.await;
-            }
-        }
-    }
-
-    pub async fn abort_all(&mut self) {
-        let mut handles = std::mem::take(&mut self.handles);
-        for (_name, h) in handles.drain(..) {
-            h.abort();
-            let _ = h.await;
-        }
-    }
 }
 
 pub struct MiclowSystem {
