@@ -20,7 +20,6 @@ Miclowは、軽量オーケストレーションシステムとして設計さ�
 
 ### ⚙️ 設定ファイルベース
 - TOML形式の設定ファイル
-- タスクの自動起動設定
 - 初期トピック購読の設定
 
 ### 🛠️ システムコマンド
@@ -64,7 +63,6 @@ task_name = "python-script"
 command = "python3"
 args = ["main.py"]
 working_directory = "./"
-auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
 subscribe_topics = ["key1", "key2"]
 
@@ -73,7 +71,6 @@ task_name = "stdout"
 command = "python3"
 args = ["stdout.py"]
 working_directory = "./"
-auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
 subscribe_topics = ["stdout"]
 ```
@@ -114,8 +111,6 @@ args = ["引数1", "引数2"]
 working_directory = "/作業ディレクトリ"
 environment = { VAR1 = "value1", VAR2 = "value2" }
 topics = ["購読するトピック1", "トピック2"]
-auto_start = true
-restart_on_failure = true
 ```
 
 ### システムコマンド
