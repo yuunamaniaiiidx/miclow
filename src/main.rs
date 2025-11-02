@@ -1,4 +1,9 @@
 mod task_id;
+mod executor_event_channel;
+mod input_channel;
+mod system_response_channel;
+mod shutdown_channel;
+mod user_log_sender;
 mod miclow;
 mod buffer;
 mod logging;
