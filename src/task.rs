@@ -2428,15 +2428,12 @@ impl TaskExecutor {
 
     pub async fn start_task_from_config(
         &self,
-        task_config: &TaskConfig,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
-        shutdown_token: CancellationToken,
-        userlog_sender: UserLogSender,
-        return_message_sender: Option<ExecutorEventSender>,
-        is_function: bool,
-        initial_input: Option<String>,
+        context: StartFromConfigContext,
     ) -> Result<()> {
+        let task_config = &context.task_config;
+        let is_function = context.is_function();
+        let return_message_sender = context.return_message_sender();
+        let initial_input = context.initial_input();
         log::info!("Starting task '{}'", task_config.name);
         
         
@@ -2466,16 +2463,16 @@ impl TaskExecutor {
         
         let task_spawner = TaskSpawner::new(
             task_id_new.clone(),
-            topic_manager,
-            system_control_manager,
+            context.topic_manager,
+            context.system_control_manager,
             self.clone(),
             task_config.name.clone(),
-            userlog_sender,
+            context.userlog_sender,
         );
         
         let spawn_result = task_spawner.spawn_backend(
             backend,
-            shutdown_token,
+            context.shutdown_token,
             subscribe_topics,
             return_message_sender, // other_return_message_sender
         ).await;
@@ -2557,6 +2554,52 @@ pub enum StartContextVariant {
     },
 }
 
+#[derive(Clone)]
+pub struct StartFromConfigContext {
+    pub task_config: TaskConfig,
+    pub topic_manager: TopicManager,
+    pub system_control_manager: SystemControlManager,
+    pub shutdown_token: CancellationToken,
+    pub userlog_sender: UserLogSender,
+    pub variant: StartContextVariant,
+}
+
+impl StartContext {
+    /// StartContextからStartFromConfigContextへの変換
+    /// task_configは外部から提供する必要がある（StartContextには含まれていないため）
+    pub fn to_config_context(&self, task_config: TaskConfig) -> StartFromConfigContext {
+        StartFromConfigContext {
+            task_config,
+            topic_manager: self.topic_manager.clone(),
+            system_control_manager: self.system_control_manager.clone(),
+            shutdown_token: self.shutdown_token.clone(),
+            userlog_sender: self.userlog_sender.clone(),
+            variant: self.variant.clone(),
+        }
+    }
+}
+
+impl StartFromConfigContext {
+    /// StartFromConfigContextから必要な値を取得するヘルパーメソッド
+    pub fn is_function(&self) -> bool {
+        matches!(self.variant, StartContextVariant::Functions { .. })
+    }
+
+    pub fn return_message_sender(&self) -> Option<ExecutorEventSender> {
+        match &self.variant {
+            StartContextVariant::Tasks => None,
+            StartContextVariant::Functions { return_message_sender, .. } => Some(return_message_sender.clone()),
+        }
+    }
+
+    pub fn initial_input(&self) -> Option<String> {
+        match &self.variant {
+            StartContextVariant::Tasks => None,
+            StartContextVariant::Functions { initial_input, .. } => initial_input.clone(),
+        }
+    }
+}
+
 impl TaskExecutor {
     pub async fn start_single_task(
         &self,
@@ -2566,31 +2609,15 @@ impl TaskExecutor {
             StartContextVariant::Tasks => {
                 // tasksから検索
                 if let Some(task_config) = context.config.tasks.iter().find(|t| t.name == context.task_name) {
-                    return self.start_task_from_config(
-                        task_config,
-                        context.topic_manager,
-                        context.system_control_manager,
-                        context.shutdown_token,
-                        context.userlog_sender,
-                        None, // Tasksではreturn_message_senderは不要
-                        false, // is_function = false
-                        None, // Tasksではinitial_inputは不要
-                    ).await;
+                    let config_context = context.to_config_context(task_config.clone());
+                    return self.start_task_from_config(config_context).await;
                 }
             }
-            StartContextVariant::Functions { return_message_sender, initial_input } => {
+            StartContextVariant::Functions { .. } => {
                 // functionsから検索
                 if let Some(task_config) = context.config.functions.iter().find(|t| t.name == context.task_name) {
-                    return self.start_task_from_config(
-                        task_config,
-                        context.topic_manager,
-                        context.system_control_manager,
-                        context.shutdown_token,
-                        context.userlog_sender,
-                        Some(return_message_sender),
-                        true, // is_function = true
-                        initial_input,
-                    ).await;
+                    let config_context = context.to_config_context(task_config.clone());
+                    return self.start_task_from_config(config_context).await;
                 }
             }
         }
@@ -2615,16 +2642,15 @@ impl TaskExecutor {
         
         for task_config in &system_config.tasks {
             log::info!("Starting task '{}' from TOML", task_config.name);
-            if let Err(e) = self.start_task_from_config(
-                task_config,
-                topic_manager.clone(),
-                system_control_manager.clone(),
-                shutdown_token.clone(),
-                userlog_sender.clone(),
-                None, // add_task_from_tomlではreturn_message_senderは不要
-                false, // add_task_from_tomlはtasksとして扱う
-                None, // add_task_from_tomlではinitial_inputは不要
-            ).await {
+            let config_context = StartFromConfigContext {
+                task_config: task_config.clone(),
+                topic_manager: topic_manager.clone(),
+                system_control_manager: system_control_manager.clone(),
+                shutdown_token: shutdown_token.clone(),
+                userlog_sender: userlog_sender.clone(),
+                variant: StartContextVariant::Tasks,
+            };
+            if let Err(e) = self.start_task_from_config(config_context).await {
                 log::error!("Failed to start task '{}': {}", task_config.name, e);
             }
         }
@@ -2846,5 +2872,3 @@ impl MiclowSystem {
         log::info!("All user tasks stopped");
     }
 }
-
-// TODO function機能を追加のリファクタが必要、かなり難しそう
