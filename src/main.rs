@@ -8,6 +8,8 @@ mod system_control_command;
 mod system_control_message;
 mod spawn_backend_result;
 mod task_backend_handle;
+mod task_backend;
+mod interactive_backend;
 mod running_task;
 mod start_context_variant;
 mod system_control_manager;
