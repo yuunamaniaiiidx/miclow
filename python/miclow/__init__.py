@@ -30,7 +30,8 @@ __version__ = "0.1.0"
 __all__ = [
     "MiclowClient", "get_client", "send_message", "receive_message",
     "subscribe_topic", "send_stdout", "send_stderr", "SystemResponse",
-    "start_task", "stop_task", "get_status", "add_task_from_toml", "add_task"
+    "start_task", "stop_task", "get_status", "add_task_from_toml", "add_task",
+    "call_function"
 ]
 
 class SystemResponseType(Enum):
@@ -91,12 +92,11 @@ class MiclowClient:
         Returns:
             A tuple of (topic, message). If no topic is specified, topic will be empty.
         """
-        # バッファからメッセージを取得
+        # バッファをチェック
         with self._buffer_lock:
             if self._message_buffer:
                 return self._message_buffer.popleft()
 
-        # バッファが空の場合はstdinから読み取る
         key = input()
         value = "\n".join(input() for _ in range(int(input())))
 
@@ -128,66 +128,41 @@ class MiclowClient:
 
     def _wait_for_response(self, expected_topic: str) -> SystemResponse:
         """Wait for a system response."""
-        while True:
-            # 既にバッファに期待するトピックのレスポンスがある場合は、それを返す
-            with self._response_lock:
-                if expected_topic in self._response_handlers:
-                    response_queue = self._response_handlers[expected_topic]
-                    if response_queue:
-                        return response_queue.popleft()
+        key = input()
+        value = "\n".join(input() for _ in range(int(input())))
 
-            # バッファからメッセージを確認
-            with self._buffer_lock:
-                if self._message_buffer:
-                    key, value = self._message_buffer.popleft()
-                else:
-                    # バッファが空の場合はstdinから読み取る
-                    key = input()
-                    value = "\n".join(input() for _ in range(int(input())))
+        print(key, value)
 
-            # system responseの場合は、バッファに保存
-            if key.startswith("system."):
-                timestamp = datetime.now().isoformat()
-                # valueの一行目をステータスとして判定
-                lines = value.split('\n')
-                if lines:
-                    status_line = lines[0].strip()
-                    # それ以降の行をdataとして使用
-                    data = '\n'.join(lines[1:]) if len(lines) > 1 else ''
-                    # ステータスを判定して設定
-                    if status_line == 'success':
-                        response_type = SystemResponseType.SUCCESS
-                    elif status_line == 'error':
-                        response_type = SystemResponseType.ERROR
-                    else:
-                        # デフォルトはERRORとして扱う
-                        response_type = SystemResponseType.ERROR
-                        data = value  # ステータス行が不明な場合は全体をdataに
-                else:
-                    # 空の場合はERRORとして扱う
-                    response_type = SystemResponseType.ERROR
-                    data = ''
+        timestamp = datetime.now().isoformat()
+        # valueの一行目をステータスとして判定
+        lines = value.split('\n')
+        if lines:
+            status_line = lines[0].strip()
+            # それ以降の行をdataとして使用
+            data = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+            # ステータスを判定して設定
+            if status_line == 'success':
+                response_type = SystemResponseType.SUCCESS
+            elif status_line == 'error':
+                response_type = SystemResponseType.ERROR
+            else:
+                # デフォルトはERRORとして扱う
+                response_type = SystemResponseType.ERROR
+                data = value  # ステータス行が不明な場合は全体をdataに
+        else:
+            # 空の場合はERRORとして扱う
+            response_type = SystemResponseType.ERROR
+            data = ''
 
-                system_response = SystemResponse(
-                    response_type=response_type,
-                    topic=key,
-                    data=data,
-                    timestamp=timestamp
-                )
+        system_response = SystemResponse(
+            response_type=response_type,
+            topic=key,
+            data=data,
+            timestamp=timestamp
+        )
 
-                # バッファに保存
-                with self._response_lock:
-                    if key not in self._response_handlers:
-                        self._response_handlers[key] = deque()
-                    self._response_handlers[key].append(system_response)
+        return system_response
 
-                # 期待するトピックの場合は返す
-                if key == expected_topic:
-                    return system_response
-
-            # system responseでない場合、または期待するトピックでない場合はメッセージバッファに保存
-            with self._buffer_lock:
-                self._message_buffer.append((key, value))
 
     def subscribe_topic(self, topic: str) -> SystemResponse:
         """
@@ -226,30 +201,6 @@ class MiclowClient:
 
         expected_topic = "system.unsubscribe-topic"
         return self._wait_for_response(expected_topic)
-
-    def send_stdout(self, message: str) -> None:
-        """
-        Send a message to stdout using multiline protocol.
-
-        Args:
-            message: The message to output (can be multiline)
-        """
-        print('"system.stdout"::')
-        print(message)
-        print('::"system.stdout"')
-        sys.stdout.flush()
-
-    def send_stderr(self, message: str) -> None:
-        """
-        Send a message to stderr using multiline protocol.
-
-        Args:
-            message: The message to output (can be multiline)
-        """
-        print('"system.stderr"::')
-        print(message)
-        print('::"system.stderr"')
-        sys.stdout.flush()
 
     def start_task(self, task_name: str) -> SystemResponse:
         """
@@ -372,6 +323,45 @@ class MiclowClient:
 
         return self.add_task_from_toml(toml_data)
 
+    def call_function(self, function_name: str, data: str = "") -> str:
+        """
+        Call a function defined in [[functions]] section and wait for return value.
+
+        Args:
+            function_name: The name of the function to call (must be defined in [[functions]])
+            data: Optional data to pass to the function (will be sent as input)
+
+        Returns:
+            The return value from the function (via system.return)
+
+        Raises:
+            RuntimeError: If the function call fails or no return value is received
+        """
+        # system.function.{function_name}コマンドを送信
+        function_command = f"system.function.{function_name}"
+        print(f'"{function_command}"::')
+        print(data)
+        print(f'::"{function_command}"')
+        sys.stdout.flush()
+
+        # システムレスポンスを待つ（関数が起動したことの確認）
+        expected_topic = f"system.function.{function_name}"
+        response = self._wait_for_response(expected_topic)
+
+        if response.response_type == SystemResponseType.ERROR:
+            raise RuntimeError(f"Failed to call function '{function_name}': {response.data}")
+
+        # 関数の返り値（system.return）を待つ
+        # return_messageは通常のメッセージとして受信される
+        while True:
+            topic, message = self.receive_message()
+            # system.returnメッセージをチェック
+            if topic == "system.return":
+                return message
+            # 他のメッセージはバッファに保存
+            with self._buffer_lock:
+                self._message_buffer.append((topic, message))
+
     @contextmanager
     def listen_to_topic(self, topic: str):
         """
@@ -477,4 +467,21 @@ def add_task(
         environment_vars=environment_vars,
         subscribe_topics=subscribe_topics
     )
+
+
+def call_function(function_name: str, data: str = "") -> str:
+    """
+    Call a function defined in [[functions]] section and wait for return value.
+
+    Args:
+        function_name: The name of the function to call (must be defined in [[functions]])
+        data: Optional data to pass to the function (will be sent as input)
+
+    Returns:
+        The return value from the function (via system.return)
+
+    Raises:
+        RuntimeError: If the function call fails or no return value is received
+    """
+    return get_client().call_function(function_name, data)
 
