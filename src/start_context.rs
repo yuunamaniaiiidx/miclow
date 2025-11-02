@@ -26,7 +26,7 @@ pub struct StartContext {
 }
 
 #[derive(Clone)]
-pub struct StartFromConfigContext {
+pub struct ReadyStartContext {
     pub task_config: TaskConfig,
     pub topic_manager: TopicManager,
     pub system_control_manager: SystemControlManager,
@@ -36,8 +36,8 @@ pub struct StartFromConfigContext {
 }
 
 impl StartContext {
-    pub fn to_config_context(&self, task_config: TaskConfig) -> StartFromConfigContext {
-        StartFromConfigContext {
+    pub fn to_ready_context(&self, task_config: TaskConfig) -> ReadyStartContext {
+        ReadyStartContext {
             task_config,
             topic_manager: self.topic_manager.clone(),
             system_control_manager: self.system_control_manager.clone(),
@@ -48,7 +48,7 @@ impl StartContext {
     }
 }
 
-impl StartFromConfigContext {
+impl ReadyStartContext {
     pub fn is_function(&self) -> bool {
         matches!(self.variant, StartContextVariant::Functions { .. })
     }

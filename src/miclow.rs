@@ -22,7 +22,7 @@ use crate::system_control_message::SystemControlMessage;
 use crate::spawn_backend_result::SpawnBackendResult;
 use crate::task_backend_handle::TaskBackendHandle;
 use crate::running_task::RunningTask;
-use crate::start_context::{StartContext, StartFromConfigContext, StartContextVariant};
+use crate::start_context::{StartContext, ReadyStartContext, StartContextVariant};
 use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
@@ -899,7 +899,7 @@ impl TaskExecutor {
 
     pub async fn start_task_from_config(
         &self,
-        context: StartFromConfigContext,
+        context: ReadyStartContext,
     ) -> Result<()> {
         let task_config = &context.task_config;
         let is_function = context.is_function();
@@ -1007,13 +1007,13 @@ impl TaskExecutor {
         match context.variant {
             StartContextVariant::Tasks => {
                 if let Some(task_config) = context.config.tasks.iter().find(|t| t.name == context.task_name) {
-                    let config_context = context.to_config_context(task_config.clone());
+                    let config_context = context.to_ready_context(task_config.clone());
                     return self.start_task_from_config(config_context).await;
                 }
             }
             StartContextVariant::Functions { .. } => {
                 if let Some(task_config) = context.config.functions.iter().find(|t| t.name == context.task_name) {
-                    let config_context = context.to_config_context(task_config.clone());
+                    let config_context = context.to_ready_context(task_config.clone());
                     return self.start_task_from_config(config_context).await;
                 }
             }
@@ -1038,7 +1038,7 @@ impl TaskExecutor {
         
         for task_config in &system_config.tasks {
             log::info!("Starting task '{}' from TOML", task_config.name);
-            let config_context = StartFromConfigContext {
+            let config_context = ReadyStartContext {
                 task_config: task_config.clone(),
                 topic_manager: topic_manager.clone(),
                 system_control_manager: system_control_manager.clone(),
