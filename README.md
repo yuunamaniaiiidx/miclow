@@ -20,7 +20,6 @@ Miclowは、軽量オーケストレーションシステムとして設計さ�
 
 ### ⚙️ 設定ファイルベース
 - TOML形式の設定ファイル
-- タスクの自動起動設定
 - 初期トピック購読の設定
 
 ### 🛠️ システムコマンド
@@ -64,18 +63,16 @@ task_name = "python-script"
 command = "python3"
 args = ["main.py"]
 working_directory = "./"
-auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = ["key1", "key2"]
+subscribe_topics = ["key1", "key2"]
 
 [[tasks]]
 task_name = "stdout"
 command = "python3"
 args = ["stdout.py"]
 working_directory = "./"
-auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = ["stdout"]
+subscribe_topics = ["stdout"]
 ```
 
 2. **Miclowの起動**
@@ -114,8 +111,6 @@ args = ["引数1", "引数2"]
 working_directory = "/作業ディレクトリ"
 environment = { VAR1 = "value1", VAR2 = "value2" }
 topics = ["購読するトピック1", "トピック2"]
-auto_start = true
-restart_on_failure = true
 ```
 
 ### システムコマンド
@@ -136,7 +131,6 @@ restart_on_failure = true
 - `system.add-task-from-toml:TOMLデータ` - TOML形式のデータから新しいタスクを動的追加
 
 #### システム制御
-- `system.killserver` - サーバーをグレースフルシャットダウン
 - `system.status` - システムの状態を取得
 
 #### 使用例
@@ -149,9 +143,6 @@ print("system.stdout:処理が完了しました")
 
 # タスクの開始
 print("system.start-task:worker_task")
-
-# サーバーのシャットダウン
-print("system.killserver")
 ```
 
 ### メッセージ形式

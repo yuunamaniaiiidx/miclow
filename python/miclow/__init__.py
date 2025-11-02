@@ -11,9 +11,11 @@ import os
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
@@ -63,8 +65,10 @@ class MiclowClient:
         self.stdin = sys.stdin
         self.stdout = sys.stdout
         self._subscribed_topics = set()
-        self._response_handlers: dict[str, SystemResponse] = {}
+        self._response_handlers: dict[str, deque[SystemResponse]] = {}
         self._response_lock = threading.Lock()
+        self._message_buffer: deque[tuple[str, str]] = deque()
+        self._buffer_lock = threading.Lock()
 
     def send_message(self, topic: str, message: str) -> None:
         """
@@ -82,10 +86,17 @@ class MiclowClient:
     def receive_message(self) -> tuple[str, str]:
         """
         Receive a message from stdin using multiline protocol.
+        First checks the message buffer, then reads from stdin if buffer is empty.
 
         Returns:
             A tuple of (topic, message). If no topic is specified, topic will be empty.
         """
+        # バッファからメッセージを取得
+        with self._buffer_lock:
+            if self._message_buffer:
+                return self._message_buffer.popleft()
+
+        # バッファが空の場合はstdinから読み取る
         key = input()
         value = "\n".join(input() for _ in range(int(input())))
 
@@ -93,32 +104,90 @@ class MiclowClient:
 
     def _handle_system_response(self, topic: str, message: str) -> None:
         """Handle system response messages."""
+        timestamp = datetime.now().isoformat()
         if topic.startswith("system.error."):
             with self._response_lock:
-                self._response_handlers[topic] = SystemResponse(
+                if topic not in self._response_handlers:
+                    self._response_handlers[topic] = deque()
+                self._response_handlers[topic].append(SystemResponse(
                     response_type=SystemResponseType.ERROR,
                     topic=topic,
-                    data=message
-                )
+                    data=message,
+                    timestamp=timestamp
+                ))
         elif topic.startswith("system."):
             with self._response_lock:
-                self._response_handlers[topic] = SystemResponse(
+                if topic not in self._response_handlers:
+                    self._response_handlers[topic] = deque()
+                self._response_handlers[topic].append(SystemResponse(
                     response_type=SystemResponseType.SUCCESS,
                     topic=topic,
-                    data=message
-                )
+                    data=message,
+                    timestamp=timestamp
+                ))
 
     def _wait_for_response(self, expected_topic: str) -> SystemResponse:
         """Wait for a system response."""
-        key = ""
-        while key != expected_topic:
-            key = input()
-            value = "\n".join(input() for _ in range(int(input())))
-        return SystemResponse(
-            response_type=SystemResponseType.SUCCESS,
-            topic=key,
-            data=value
-        )
+        while True:
+            # 既にバッファに期待するトピックのレスポンスがある場合は、それを返す
+            with self._response_lock:
+                if expected_topic in self._response_handlers:
+                    response_queue = self._response_handlers[expected_topic]
+                    if response_queue:
+                        return response_queue.popleft()
+
+            # バッファからメッセージを確認
+            with self._buffer_lock:
+                if self._message_buffer:
+                    key, value = self._message_buffer.popleft()
+                else:
+                    # バッファが空の場合はstdinから読み取る
+                    key = input()
+                    value = "\n".join(input() for _ in range(int(input())))
+
+            # system responseの場合は、バッファに保存
+            if key.startswith("system."):
+                timestamp = datetime.now().isoformat()
+                # valueの一行目をステータスとして判定
+                lines = value.split('\n')
+                if lines:
+                    status_line = lines[0].strip()
+                    # それ以降の行をdataとして使用
+                    data = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+                    # ステータスを判定して設定
+                    if status_line == 'success':
+                        response_type = SystemResponseType.SUCCESS
+                    elif status_line == 'error':
+                        response_type = SystemResponseType.ERROR
+                    else:
+                        # デフォルトはERRORとして扱う
+                        response_type = SystemResponseType.ERROR
+                        data = value  # ステータス行が不明な場合は全体をdataに
+                else:
+                    # 空の場合はERRORとして扱う
+                    response_type = SystemResponseType.ERROR
+                    data = ''
+
+                system_response = SystemResponse(
+                    response_type=response_type,
+                    topic=key,
+                    data=data,
+                    timestamp=timestamp
+                )
+
+                # バッファに保存
+                with self._response_lock:
+                    if key not in self._response_handlers:
+                        self._response_handlers[key] = deque()
+                    self._response_handlers[key].append(system_response)
+
+                # 期待するトピックの場合は返す
+                if key == expected_topic:
+                    return system_response
+
+            # system responseでない場合、または期待するトピックでない場合はメッセージバッファに保存
+            with self._buffer_lock:
+                self._message_buffer.append((key, value))
 
     def subscribe_topic(self, topic: str) -> SystemResponse:
         """
@@ -136,7 +205,7 @@ class MiclowClient:
         sys.stdout.flush()
         self._subscribed_topics.add(topic)
 
-        expected_topic = f"system.subscribe-topic.{topic}"
+        expected_topic = "system.subscribe-topic"
         return self._wait_for_response(expected_topic)
 
     def unsubscribe_topic(self, topic: str) -> SystemResponse:
@@ -155,7 +224,7 @@ class MiclowClient:
         sys.stdout.flush()
         self._subscribed_topics.discard(topic)
 
-        expected_topic = f"system.unsubscribe-topic.{topic}"
+        expected_topic = "system.unsubscribe-topic"
         return self._wait_for_response(expected_topic)
 
     def send_stdout(self, message: str) -> None:
@@ -197,7 +266,7 @@ class MiclowClient:
         print('::"system.start-task"')
         sys.stdout.flush()
 
-        expected_topic = f"system.start-task.{task_name}"
+        expected_topic = "system.start-task"
         return self._wait_for_response(expected_topic)
 
     def stop_task(self, task_name: str) -> SystemResponse:
@@ -215,7 +284,7 @@ class MiclowClient:
         print('::"system.stop-task"')
         sys.stdout.flush()
 
-        expected_topic = f"system.stop-task.{task_name}"
+        expected_topic = "system.stop-task"
         return self._wait_for_response(expected_topic)
 
     def get_status(self) -> SystemResponse:
@@ -259,8 +328,7 @@ class MiclowClient:
         args: list[str],
         working_directory: str | None = None,
         environment_vars: dict[str, str] | None = None,
-        auto_start: bool | None = None,
-        initial_topics: list[str] | None = None
+        subscribe_topics: list[str] | None = None
     ) -> SystemResponse:
         """
         Add a task by constructing TOML configuration from parameters.
@@ -271,8 +339,7 @@ class MiclowClient:
             args: List of command arguments
             working_directory: Working directory for the task
             environment_vars: Environment variables as key-value pairs
-            auto_start: Whether to start the task automatically
-            initial_topics: List of topics to subscribe to initially
+            subscribe_topics: List of topics to subscribe to initially
 
         Returns:
             SystemResponse with the result
@@ -297,23 +364,13 @@ class MiclowClient:
             env_str = ', '.join(f'{k} = "{v}"' for k, v in environment_vars.items())
             toml_lines.append(f'environment_vars = {{ {env_str} }}')
 
-        if auto_start is not None:
-            toml_lines.append(f'auto_start = {str(auto_start).lower()}')
-
-        if initial_topics:
-            topics_str = ', '.join(f'"{topic}"' for topic in initial_topics)
-            toml_lines.append(f'initial_topics = [{topics_str}]')
+        if subscribe_topics:
+            topics_str = ', '.join(f'"{topic}"' for topic in subscribe_topics)
+            toml_lines.append(f'subscribe_topics = [{topics_str}]')
 
         toml_data = '\n'.join(toml_lines)
 
         return self.add_task_from_toml(toml_data)
-
-    def kill_server(self) -> None:
-        """Initiate graceful server shutdown."""
-        print('"system.killserver"::')
-        print('')
-        print('::"system.killserver"')
-        sys.stdout.flush()
 
     @contextmanager
     def listen_to_topic(self, topic: str):
@@ -409,8 +466,7 @@ def add_task(
     args: list[str],
     working_directory: str | None = None,
     environment_vars: dict[str, str] | None = None,
-    auto_start: bool | None = None,
-    initial_topics: list[str] | None = None
+    subscribe_topics: list[str] | None = None
 ) -> SystemResponse:
     """Add a task by constructing TOML configuration from parameters."""
     return get_client().add_task(
@@ -419,7 +475,6 @@ def add_task(
         args=args,
         working_directory=working_directory,
         environment_vars=environment_vars,
-        auto_start=auto_start,
-        initial_topics=initial_topics
+        subscribe_topics=subscribe_topics
     )
 

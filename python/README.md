@@ -56,7 +56,6 @@ The main client class for interacting with miclow.
 - `start_task(task_name: str)` - Start a task
 - `stop_task(task_name: str)` - Stop a task
 - `get_status()` - Get system status
-- `kill_server()` - Initiate graceful shutdown
 
 ### Convenience Functions
 

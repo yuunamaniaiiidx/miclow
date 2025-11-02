@@ -2,23 +2,20 @@
 task_name = "json-generator"
 command = "bash"
 args = ["-c", "echo '{\"name\": \"Alice\", \"age\": 30, \"city\": \"Tokyo\"}';"]
-auto_start = true
-initial_topics = ["json-data", "user-info"]
+subscribe_topics = ["json-data", "user-info"]
 
 [[tasks]]
 task_name = "python-script"
 command = "python3"
 args = ["main.py"]
 working_directory = "./"
-auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = []
+subscribe_topics = []
 
 [[tasks]]
 task_name = "stdout"
 command = "python3"
 args = ["stdout.py"]
 working_directory = "./"
-auto_start = true
 environment_vars = { PYTHONUNBUFFERED = "1" }
-initial_topics = ["stdout"]
+subscribe_topics = ["stdout"]

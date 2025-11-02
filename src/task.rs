@@ -5,15 +5,19 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::process::Command as TokioCommand;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader, stdin};
-use log::info;
 use tokio::task;
-use chrono;
 use uuid::Uuid;
-use tokio::signal::unix::{signal, SignalKind};
 use tokio_util::sync::CancellationToken;
 use async_trait::async_trait;
 use std::process::Stdio;
 use crate::buffer::{InputBufferManager, StreamOutcome};
+use crate::logging::{UserLogEvent, UserLogKind, spawn_user_log_aggregator, LogEvent, spawn_log_aggregator, set_channel_logger, level_from_env};
+use tokio::task::JoinHandle;
+#[cfg(unix)]
+use nix::sys::signal::{kill, Signal};
+#[cfg(unix)]
+use nix::unistd::Pid;
+ 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId(Uuid);
@@ -21,10 +25,6 @@ pub struct TaskId(Uuid);
 impl TaskId {
     pub fn new() -> Self {
         Self(Uuid::now_v7())
-    }
-
-    pub fn uuid(&self) -> &Uuid {
-        &self.0
     }
 }
 
@@ -34,186 +34,32 @@ impl std::fmt::Display for TaskId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MessageId(Uuid);
 
-impl MessageId {
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-
-    pub fn uuid(&self) -> &Uuid {
-        &self.0
-    }
+pub struct SystemControlMessage {
+    pub command: Box<dyn SystemControlHandler>,
+    pub task_id: TaskId,
+    pub response_channel: SystemResponseSender,
+    pub task_event_sender: ExecutorEventSender,
 }
 
-impl std::fmt::Display for MessageId {
+impl std::fmt::Debug for SystemControlMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        f.debug_struct("SystemControlMessage")
+            .field("command", &"SystemControl")
+            .field("task_id", &self.task_id)
+            .field("response_channel", &"SystemResponseSender")
+            .field("task_event_sender", &"ExecutorEventSender")
+            .finish()
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum TopicRequestType {
-    Subscribe,
-    Unsubscribe,
-}
-
-#[derive(Debug, Clone)]
-pub struct TopicRequestMessage {
-    pub message_id: MessageId,
-    pub topic: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub task_id: TaskId,
-    pub request_type: TopicRequestType,
-    pub response_channel: ExecutorEventSender,
-}
-
-impl TopicRequestMessage {
-    pub fn new_subscribe(topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
-        Self {
-            message_id: MessageId::new(),
-            topic,
-            timestamp: chrono::Utc::now(),
-            task_id,
-            request_type: TopicRequestType::Subscribe,
-            response_channel,
-        }
-    }
-
-    pub fn new_unsubscribe(topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
-        Self {
-            message_id: MessageId::new(),
-            topic,
-            timestamp: chrono::Utc::now(),
-            task_id,
-            request_type: TopicRequestType::Unsubscribe,
-            response_channel,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SystemCommandMessage {
-    pub command: SystemCommand,
-    pub task_id: TaskId,
-    pub request_id: MessageId,
-    pub response_channel: ExecutorEventSender,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-}
-
-impl SystemCommandMessage {
-    pub fn new(command: SystemCommand, task_id: TaskId, response_channel: ExecutorEventSender) -> Self {
+impl SystemControlMessage {
+    pub fn new(command: Box<dyn SystemControlHandler>, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender) -> Self {
         Self {
             command,
             task_id,
-            request_id: MessageId::new(),
             response_channel,
-            timestamp: chrono::Utc::now(),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct TopicRequestSender {
-    sender: Arc<mpsc::UnboundedSender<TopicRequestMessage>>,
-}
-
-impl TopicRequestSender {
-    pub fn new(sender: Arc<mpsc::UnboundedSender<TopicRequestMessage>>) -> Self {
-        Self { sender }
-    }
-
-    pub fn send(&self, message: TopicRequestMessage) -> Result<(), mpsc::error::SendError<TopicRequestMessage>> {
-        self.sender.send(message)
-    }
-
-    pub fn send_subscribe_request(&self, topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), mpsc::error::SendError<TopicRequestMessage>> {
-        self.send(TopicRequestMessage::new_subscribe(topic, task_id, response_channel))
-    }
-
-    pub fn send_unsubscribe_request(&self, topic: String, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), mpsc::error::SendError<TopicRequestMessage>> {
-        self.send(TopicRequestMessage::new_unsubscribe(topic, task_id, response_channel))
-    }
-}
-
-pub struct TopicRequestReceiver {
-    receiver: mpsc::UnboundedReceiver<TopicRequestMessage>,
-}
-
-impl TopicRequestReceiver {
-    pub fn new(receiver: mpsc::UnboundedReceiver<TopicRequestMessage>) -> Self {
-        Self { receiver }
-    }
-
-    pub async fn recv(&mut self) -> Option<TopicRequestMessage> {
-        self.receiver.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<TopicRequestMessage, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
-}
-
-pub struct TopicChannel {
-    pub sender: TopicRequestSender,
-    pub receiver: TopicRequestReceiver,
-}
-
-impl TopicChannel {
-    pub fn new() -> Self {
-        let (tx, receiver) = mpsc::unbounded_channel::<TopicRequestMessage>();
-        Self {
-            sender: TopicRequestSender::new(Arc::new(tx)),
-            receiver: TopicRequestReceiver::new(receiver),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct TopicDataSender {
-    sender: mpsc::UnboundedSender<ExecutorEvent>,
-}
-
-impl TopicDataSender {
-    pub fn new(sender: mpsc::UnboundedSender<ExecutorEvent>) -> Self {
-        Self { sender }
-    }
-
-    pub fn send(&self, event: ExecutorEvent) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.sender.send(event)
-    }
-}
-
-pub struct TopicDataReceiver {
-    receiver: mpsc::UnboundedReceiver<ExecutorEvent>,
-}
-
-impl TopicDataReceiver {
-    pub fn new(receiver: mpsc::UnboundedReceiver<ExecutorEvent>) -> Self {
-        Self { receiver }
-    }
-
-    pub async fn recv(&mut self) -> Option<ExecutorEvent> {
-        self.receiver.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<ExecutorEvent, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
-}
-
-pub struct TopicDataChannel {
-    pub sender: TopicDataSender,
-    pub receiver: TopicDataReceiver,
-}
-
-impl TopicDataChannel {
-    pub fn new() -> Self {
-        let (tx, receiver) = mpsc::unbounded_channel::<ExecutorEvent>();
-        Self {
-            sender: TopicDataSender::new(tx),
-            receiver: TopicDataReceiver::new(receiver),
+            task_event_sender,
         }
     }
 }
@@ -232,20 +78,17 @@ impl ExecutorEventSender {
         self.sender.send(event)
     }
 
-    pub fn send_message(&self, key: String, data: String, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_message(key, data, task_id))
+    pub fn send_message(&self, key: String, data: String) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+        self.send(ExecutorEvent::new_message(key, data))
     }
 
-    pub fn send_error(&self, error: String, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_error(error, task_id))
+    pub fn send_error(&self, error: String) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+        self.send(ExecutorEvent::new_error(error))
     }
 
-    pub fn send_system_command(&self, command: SystemCommand, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_systemcommand(command, task_id))
-    }
 
-    pub fn send_exit(&self, code: i32, task_id: TaskId) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
-        self.send(ExecutorEvent::new_exit(code, task_id))
+    pub fn send_exit(&self, code: i32) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+        self.send(ExecutorEvent::new_exit(code))
     }
 }
 
@@ -306,9 +149,6 @@ impl InputReceiver {
         self.receiver.recv().await
     }
 
-    pub fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
 }
 
 pub struct InputChannel {
@@ -322,6 +162,104 @@ impl InputChannel {
         Self {
             sender: InputSender::new(tx),
             receiver: InputReceiver::new(receiver),
+        }
+    }
+}
+
+// SystemControl コマンドの応答ステータス
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemResponseStatus {
+    Success,
+    Error,
+}
+
+impl std::fmt::Display for SystemResponseStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SystemResponseStatus::Success => write!(f, "success"),
+            SystemResponseStatus::Error => write!(f, "error"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SystemResponseEvent {
+    SystemResponse {
+        topic: String,
+        status: String,
+        data: String,
+    },
+    SystemError {
+        topic: String,
+        status: String,
+        error: String,
+    },
+}
+
+impl SystemResponseEvent {
+    pub fn new_system_response(topic: String, status: String, data: String) -> Self {
+        Self::SystemResponse { topic, status, data }
+    }
+
+    pub fn new_system_error(topic: String, status: String, error: String) -> Self {
+        Self::SystemError { topic, status, error }
+    }
+
+    pub fn topic(&self) -> &str {
+        match self {
+            Self::SystemResponse { topic, .. } => topic,
+            Self::SystemError { topic, .. } => topic,
+        }
+    }
+
+    pub fn data(&self) -> Option<&String> {
+        match self {
+            Self::SystemResponse { data, .. } => Some(data),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SystemResponseSender {
+    sender: mpsc::UnboundedSender<SystemResponseEvent>,
+}
+
+impl SystemResponseSender {
+    pub fn new(sender: mpsc::UnboundedSender<SystemResponseEvent>) -> Self {
+        Self { sender }
+    }
+
+    pub fn send(&self, event: SystemResponseEvent) -> Result<(), mpsc::error::SendError<SystemResponseEvent>> {
+        self.sender.send(event)
+    }
+}
+
+pub struct SystemResponseReceiver {
+    receiver: mpsc::UnboundedReceiver<SystemResponseEvent>,
+}
+
+impl SystemResponseReceiver {
+    pub fn new(receiver: mpsc::UnboundedReceiver<SystemResponseEvent>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<SystemResponseEvent> {
+        self.receiver.recv().await
+    }
+}
+
+pub struct SystemResponseChannel {
+    pub sender: SystemResponseSender,
+    pub receiver: SystemResponseReceiver,
+}
+
+impl SystemResponseChannel {
+    pub fn new() -> Self {
+        let (tx, receiver) = mpsc::unbounded_channel::<SystemResponseEvent>();
+        Self {
+            sender: SystemResponseSender::new(tx),
+            receiver: SystemResponseReceiver::new(receiver),
         }
     }
 }
@@ -340,14 +278,26 @@ impl ShutdownSender {
         self.sender.send(())
     }
 
-    pub fn is_closed(&self) -> bool {
-        self.sender.is_closed()
-    }
 }
 
 pub struct ShutdownChannel {
     pub sender: ShutdownSender,
     pub receiver: mpsc::UnboundedReceiver<()>,
+}
+
+#[derive(Clone, Debug)]
+pub struct UserLogSender {
+    sender: mpsc::UnboundedSender<UserLogEvent>,
+}
+
+impl UserLogSender {
+    pub fn new(sender: mpsc::UnboundedSender<UserLogEvent>) -> Self {
+        Self { sender }
+    }
+
+    pub fn send(&self, event: UserLogEvent) -> Result<(), mpsc::error::SendError<UserLogEvent>> {
+        self.sender.send(event)
+    }
 }
 
 impl ShutdownChannel {
@@ -361,64 +311,56 @@ impl ShutdownChannel {
 }
 
 #[derive(Clone, Debug)]
-pub struct SystemCommandSender {
-    sender: mpsc::UnboundedSender<SystemCommandMessage>,
+pub struct SystemControlManager {
+    commands: Arc<RwLock<Vec<SystemControlMessage>>>,
+    shutdown_token: CancellationToken,
 }
 
-impl SystemCommandSender {
-    pub fn new(sender: mpsc::UnboundedSender<SystemCommandMessage>) -> Self {
-        Self { sender }
-    }
-
-    pub fn send(&self, message: SystemCommandMessage) -> Result<(), mpsc::error::SendError<SystemCommandMessage>> {
-        self.sender.send(message)
-    }
-
-    pub fn send_system_command(&self, command: SystemCommand, task_id: TaskId, response_channel: ExecutorEventSender) -> Result<(), mpsc::error::SendError<SystemCommandMessage>> {
-        self.send(SystemCommandMessage::new(command, task_id, response_channel))
-    }
-}
-
-pub struct SystemCommandReceiver {
-    receiver: mpsc::UnboundedReceiver<SystemCommandMessage>,
-}
-
-impl SystemCommandReceiver {
-    pub fn new(receiver: mpsc::UnboundedReceiver<SystemCommandMessage>) -> Self {
-        Self { receiver }
-    }
-
-    pub async fn recv(&mut self) -> Option<SystemCommandMessage> {
-        self.receiver.recv().await
-    }
-
-    pub fn try_recv(&mut self) -> Result<SystemCommandMessage, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
-    }
-}
-
-pub struct SystemCommandChannel {
-    pub sender: SystemCommandSender,
-    pub receiver: SystemCommandReceiver,
-}
-
-impl SystemCommandChannel {
-    pub fn new() -> Self {
-        let (tx, receiver) = mpsc::unbounded_channel::<SystemCommandMessage>();
+impl SystemControlManager {
+    pub fn new(shutdown_token: CancellationToken) -> Self {
         Self {
-            sender: SystemCommandSender::new(tx),
-            receiver: SystemCommandReceiver::new(receiver),
+            commands: Arc::new(RwLock::new(Vec::new())),
+            shutdown_token,
+        }
+    }
+
+    pub async fn add_command(&self, message: SystemControlMessage) -> Result<(), String> {
+        let mut commands = self.commands.write().await;
+        commands.push(message);
+        Ok(())
+    }
+
+    pub async fn send_system_control_command(&self, command: Box<dyn SystemControlHandler>, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender) -> Result<(), String> {
+        let message = SystemControlMessage::new(command, task_id, response_channel, task_event_sender);
+        self.add_command(message).await
+    }
+
+    pub async fn recv_command(&self) -> Option<SystemControlMessage> {
+        loop {
+            if self.shutdown_token.is_cancelled() {
+                return None;
+            }
+
+            {
+                let mut commands = self.commands.write().await;
+                if let Some(message) = commands.pop() {
+                    return Some(message);
+                }
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
     }
 }
 
+
 #[derive(Clone)]
-pub struct TopicSubscriber {
+pub struct TopicManager {
     subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorEventSender>>>>>>,
     task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorEventSender>>>>,
 }
 
-impl TopicSubscriber {
+impl TopicManager {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
@@ -484,7 +426,7 @@ impl TopicSubscriber {
                     if let Some(strong_ref) = weak_ref.upgrade() {
                         !Arc::ptr_eq(sender, &strong_ref)
                     } else {
-                        true // 弱参照が無効な場合は保持
+                        true
                     }
                 } else {
                     true
@@ -602,368 +544,117 @@ impl TopicSubscriber {
     }
 }
 
-pub fn start_system_command_worker(
-    mut system_command_receiver: SystemCommandReceiver,
-    topic_request_sender: TopicRequestSender,
-    topic_subscriber: TopicSubscriber,
-    task_registry: TaskRegistry,
-    config: ServerConfig,
-    system_command_sender: SystemCommandSender,
+pub fn start_system_control_worker(
+    system_control_manager: SystemControlManager,
+    topic_manager: TopicManager,
+    task_executor: TaskExecutor,
+    config: SystemConfig,
     shutdown_token: CancellationToken,
-) {
-    task::spawn(async move {
+    userlog_sender: UserLogSender,
+) -> tokio::task::JoinHandle<()> {
+        task::spawn(async move {
+        let running_commands: Arc<RwLock<HashMap<TaskId, JoinHandle<()>>>> = Arc::new(RwLock::new(HashMap::new()));
+        
         loop {
             tokio::select! {
                 biased;
                 
                 _ = shutdown_token.cancelled() => {
-                    log::info!("SystemCommand worker received shutdown signal");
+                    log::info!("SystemControl worker received shutdown signal, aborting all running commands");
+                    
+                    let mut commands = running_commands.write().await;
+                    for (task_id, handle) in commands.drain() {
+                        log::info!("Aborting SystemControl execution for task {}", task_id);
+                        handle.abort();
+                    }
+                    
                     break;
                 }
                 
-                maybe = async { system_command_receiver.recv().await } => {
+                maybe = async { system_control_manager.recv_command().await } => {
                         match maybe {
                             Some(message) => {
                                 let task_id: TaskId = message.task_id.clone();
-                                let command: SystemCommand = message.command.clone();
                                 
-                                log::info!("Processing SystemCommand for task {}: {:?}", task_id, command);
+                                log::info!("Spawning SystemControl for task {} (parallel execution)", task_id);
                                 
-                                let command_clone = command.clone();
-                                match command {
-                                    SystemCommand::SubscribeTopic { topic } => {
-                                        log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        if let Err(e) = topic_request_sender.send_subscribe_request(
-                                            topic.clone(),
-                                            task_id.clone(), 
-                                            message.response_channel.clone()
-                                        ) {
-                                            log::warn!("Failed to send topic request (task {}): {}", task_id, e);
-                                            
-                                            let error_msg = format!("Failed to subscribe to topic '{}': {}", topic, e);
-                                            let error_event = ExecutorEvent::new_system_error(
-                                                message.request_id.clone(),
-                                                error_msg,
-                                                task_id.clone()
+                                let context = SystemControlContext {
+                                    topic_manager: topic_manager.clone(),
+                                    task_executor: task_executor.clone(),
+                                    config: config.clone(),
+                                    shutdown_token: shutdown_token.clone(),
+                                    userlog_sender: userlog_sender.clone(),
+                                    system_control_manager: system_control_manager.clone(),
+                                    task_id: task_id.clone(),
+                                    response_channel: message.response_channel.clone(),
+                                    task_event_sender: message.task_event_sender.clone(),
+                                };
+                                
+                                let command_shutdown_token = shutdown_token.clone();
+                                let running_commands_clone = running_commands.clone();
+                                let task_id_clone = task_id.clone();
+                                
+                                let handle = tokio::spawn(async move {
+                                    log::info!("Executing SystemControl for task {}", task_id_clone);
+                                    tokio::select! {
+                                        _ = command_shutdown_token.cancelled() => {
+                                            log::info!("SystemControl for task {} cancelled due to shutdown", task_id_clone);
+                                            let status = SystemResponseStatus::Error;
+                                            let cancel_error = SystemResponseEvent::new_system_error(
+                                                "system.error".to_string(),
+                                                status.to_string(),
+                                                "cancelled".to_string(),
                                             );
-                                            let _ = message.response_channel.send(error_event);
-                                        } else {
-                                            log::info!("Sent topic request for '{}' from task {}", topic, task_id);
-                                            
-                                            let success_msg = format!("Successfully subscribed to topic '{}'", topic);
-                                            let success_event = ExecutorEvent::new_system_response(
-                                                message.request_id.clone(),
-                                                topic_name,
-                                                success_msg,
-                                                task_id.clone()
-                                            );
-                                            let _ = message.response_channel.send(success_event);
+                                            let _ = context.response_channel.send(cancel_error);
                                         }
-                                    },
-                                    SystemCommand::UnsubscribeTopic { topic } => {
-                                        log::info!("Processing UnsubscribeTopic command for task {}: '{}'", task_id, topic);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        if let Err(e) = topic_request_sender.send_unsubscribe_request(
-                                            topic.clone(),
-                                            task_id.clone(), 
-                                            message.response_channel.clone()
-                                        ) {
-                                            log::warn!("Failed to send unsubscribe request (task {}): {}", task_id, e);
-                                            
-                                            let error_msg = format!("Failed to unsubscribe from topic '{}': {}", topic, e);
-                                            let error_event = ExecutorEvent::new_system_error(
-                                                message.request_id.clone(),
-                                                error_msg,
-                                                task_id.clone()
-                                            );
-                                            let _ = message.response_channel.send(error_event);
-                                        } else {
-                                            log::info!("Sent unsubscribe request for '{}' from task {}", topic, task_id);
-                                            
-                                            let success_msg = format!("Successfully unsubscribed from topic '{}'", topic);
-                                            let success_event = ExecutorEvent::new_system_response(
-                                                message.request_id.clone(),
-                                                topic_name,
-                                                success_msg,
-                                                task_id.clone()
-                                            );
-                                            let _ = message.response_channel.send(success_event);
-                                        }
-                                    },
-                                    SystemCommand::Stdout { data } => {
-                                        println!("{}", data);
-                                    },
-                                    SystemCommand::Stderr { data } => {
-                                        eprintln!("{}", data);
-                                    },
-                                    SystemCommand::StartTask { task_name } => {
-                                        log::info!("Processing StartTask command for task {}: '{}'", task_id, task_name);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        match task_registry.start_single_task(
-                                            &task_name,
-                                            &config,
-                                            topic_request_sender.clone(),
-                                            topic_subscriber.clone(),
-                                            system_command_sender.clone(),
-                                            shutdown_token.clone(),
-                                        ).await {
-                                            Ok(_) => {
-                                                let success_msg = format!("Successfully started task '{}'", task_name);
-                                                log::info!("{}", success_msg);
-                                                
-                                                let success_event = ExecutorEvent::new_system_response(
-                                                    message.request_id.clone(),
-                                                    topic_name,
-                                                    success_msg,
-                                                    task_id.clone()
-                                                );
-                                                let _ = message.response_channel.send(success_event);
-                                            },
-                                            Err(e) => {
-                                                let error_msg = format!("Failed to start task '{}': {}", task_name, e);
-                                                log::error!("{}", error_msg);
-                                                
-                                                let error_event = ExecutorEvent::new_system_error(
-                                                    message.request_id.clone(),
-                                                    error_msg,
-                                                    task_id.clone()
-                                                );
-                                                let _ = message.response_channel.send(error_event);
+                                        result = message.command.execute(&context) => {
+                                            match result {
+                                                Ok(_) => {
+                                                    log::info!("Successfully executed SystemControl for task {}", task_id_clone);
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to execute SystemControl for task {}: {}", task_id_clone, e);
+                                                }
                                             }
                                         }
-                                    },
-                                    SystemCommand::StopTask { task_name } => {
-                                        log::info!("Processing StopTask command for task {}: '{}'", task_id, task_name);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        match task_registry.stop_task(&task_name).await {
-                                            Ok(_) => {
-                                                let success_msg = format!("Successfully stopped task '{}'", task_name);
-                                                log::info!("{}", success_msg);
-                                                
-                                                let success_event = ExecutorEvent::new_system_response(
-                                                    message.request_id.clone(),
-                                                    topic_name,
-                                                    success_msg,
-                                                    task_id.clone()
-                                                );
-                                                let _ = message.response_channel.send(success_event);
-                                            },
-                                            Err(e) => {
-                                                let error_msg = format!("Failed to stop task '{}': {}", task_name, e);
-                                                log::error!("{}", error_msg);
-                                                
-                                                let error_event = ExecutorEvent::new_system_error(
-                                                    message.request_id.clone(),
-                                                    error_msg,
-                                                    task_id.clone()
-                                                );
-                                                let _ = message.response_channel.send(error_event);
-                                            }
-                                        }
-                                    },
-                                    SystemCommand::KillServer => {
-                                        log::info!("Processing KillServer command for task {} - initiating graceful server shutdown", task_id);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        let shutdown_msg = "Server graceful shutdown initiated";
-                                        let shutdown_event = ExecutorEvent::new_system_response(
-                                            message.request_id.clone(),
-                                            topic_name,
-                                            shutdown_msg.to_string(),
-                                            task_id.clone()
-                                        );
-                                        let _ = message.response_channel.send(shutdown_event);
-                                        
-                                        log::info!("Starting graceful shutdown process...");
-                                        
-                                        let running_tasks = task_registry.running_tasks.read().await;
-                                        let task_names: Vec<String> = running_tasks.keys().cloned().collect();
-                                        drop(running_tasks);
-                                        
-                                        for task_name in task_names {
-                                            if let Err(e) = task_registry.stop_task(&task_name).await {
-                                                log::warn!("Failed to stop task '{}': {}", task_name, e);
-                                            }
-                                        }
-                                        
-                                        log::info!("Cancelling shutdown token to stop all workers");
-                                        shutdown_token.cancel();
-                                        
-                                        log::info!("Graceful shutdown process completed, exiting worker");
-                                        
-                                        log::info!("Exiting server process with code 0");
-                                        std::process::exit(0);
-                                    },
-                                    SystemCommand::AddTaskFromToml { toml_data } => {
-                                        log::info!("Processing AddTaskFromToml command for task {} with TOML data", task_id);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        match task_registry.add_task_from_toml(
-                                            &toml_data,
-                                            topic_request_sender.clone(),
-                                            topic_subscriber.clone(),
-                                            system_command_sender.clone(),
-                                            shutdown_token.clone(),
-                                        ).await {
-                                            Ok(_) => {
-                                                let success_msg = format!("Successfully added task to registry from TOML");
-                                                log::info!("{}", success_msg);
-                                                
-                                                let success_event = ExecutorEvent::new_system_response(
-                                                    message.request_id.clone(),
-                                                    topic_name,
-                                                    success_msg,
-                                                    task_id.clone()
-                                                );
-                                                let _ = message.response_channel.send(success_event);
-                                            },
-                                            Err(e) => {
-                                                let error_msg = format!("Failed to add task from TOML: {}", e);
-                                                log::error!("{}", error_msg);
-                                                
-                                                let error_event = ExecutorEvent::new_system_error(
-                                                    message.request_id.clone(),
-                                                    error_msg,
-                                                    task_id.clone()
-                                                );
-                                                let _ = message.response_channel.send(error_event);
-                                            }
-                                        }
-                                    },
-                                    SystemCommand::Status => {
-                                        log::info!("Processing Status command for task {}", task_id);
-                                        
-                                        let topic_name = command_clone.get_topic_name();
-                                        let tasks_info = task_registry.get_running_tasks_info().await;
-                                        let topics_info = topic_subscriber.get_topics_info().await;
-                                        
-                                        let mut json_response = String::from("{\n");
-                                        json_response.push_str("  \"tasks\": [\n");
-                                        
-                                        for (i, (task_name, task_id)) in tasks_info.iter().enumerate() {
-                                            if i > 0 {
-                                                json_response.push_str(",\n");
-                                            }
-                                            json_response.push_str(&format!("    {{\"name\": \"{}\", \"id\": \"{}\"}}", task_name, task_id));
-                                        }
-                                        
-                                        json_response.push_str("\n  ],\n");
-                                        json_response.push_str("  \"topics\": [\n");
-                                        
-                                        for (i, (topic_name, subscriber_count)) in topics_info.iter().enumerate() {
-                                            if i > 0 {
-                                                json_response.push_str(",\n");
-                                            }
-                                            json_response.push_str(&format!("    {{\"name\": \"{}\", \"subscribers\": {}}}", topic_name, subscriber_count));
-                                        }
-                                        
-                                        json_response.push_str("\n  ]\n");
-                                        json_response.push_str("}");
-                                        
-                                        let status_event = ExecutorEvent::new_system_response(
-                                            message.request_id.clone(),
-                                            topic_name,
-                                            json_response,
-                                            task_id.clone()
-                                        );
-                                        
-                                        if let Err(e) = message.response_channel.send(status_event) {
-                                            log::warn!("Failed to send status response to task {}: {}", task_id, e);
-                                        } else {
-                                            log::info!("Sent status response to task {}", task_id);
-                                        }
-                                    },
-                                    SystemCommand::Unknown { command, data } => {
-                                        log::warn!("Unknown system command '{}' with data '{}' from task {}", command, data, task_id);
                                     }
-                                }
+                                    
+                                    let mut commands = running_commands_clone.write().await;
+                                    commands.remove(&task_id_clone);
+                                });
+                                
+                                let mut commands = running_commands.write().await;
+                                commands.insert(task_id, handle);
                             }
                             None => {
-                                log::info!("SystemCommand receiver closed");
+                                log::info!("SystemControl receiver closed");
                                 break;
                             }
                         }
                     }
                 }
             }
-            log::info!("SystemCommand worker stopped");
-        });
+            
+            log::info!("SystemControl worker stopped");
+    })
 }
 
-pub fn start_topic_request_worker(
-    mut topic_request_receiver: TopicRequestReceiver,
-    subscriber_manager: TopicSubscriber,
-    shutdown_token: CancellationToken,
-) {
-    task::spawn(async move {
-        loop {
-            tokio::select! {
-                biased;
-                
-                _ = shutdown_token.cancelled() => {
-                    log::info!("Topic request worker received shutdown signal");
-                    break;
-                }
-                
-                maybe = async { topic_request_receiver.recv().await } => {
-                    match maybe {
-                        Some(request) => {
-                            let task_id: TaskId = request.task_id.clone();
-                            let topic: String = request.topic.clone();
-                            
-                            match request.request_type {
-                                TopicRequestType::Subscribe => {
-                                    log::info!("New subscribe request for '{}' from task {}", topic, task_id);
-                                    subscriber_manager.add_subscriber(topic.clone(), task_id.clone(), request.response_channel).await;
-                                },
-                                TopicRequestType::Unsubscribe => {
-                                    log::info!("New unsubscribe request for '{}' from task {}", topic, task_id);
-                                    let removed: bool = subscriber_manager.remove_subscriber_by_task(topic.clone(), task_id.clone()).await;
-                                    if removed {
-                                        log::info!("Successfully removed subscriber for task {} from topic '{}'", task_id, topic);
-                                    } else {
-                                        log::warn!("Failed to remove subscriber for task {} from topic '{}'", task_id, topic);
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            log::info!("Topic request receiver closed");
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        log::info!("Topic request worker stopped");
-    });
-}
-
-pub type TaskMessageData = String;
 
 #[derive(Debug, Clone)]
-pub enum ExecutorEventKind {
+pub enum ExecutorEvent {
     Message {
-        message_id: MessageId,
         topic: String,
-        data: TaskMessageData,
+        data: String,
     },
-    SystemResponse {
-        request_id: MessageId,
-        topic: String,
-        data: TaskMessageData,
+    TaskStdout {
+        data: String,
     },
-    SystemError {
-        request_id: MessageId,
-        error: String,
+    TaskStderr {
+        data: String,
     },
-    SystemCommand {
-        command: SystemCommand,
+    SystemControl {
+        key: String,
+        data: String,
     },
     Error {
         error: String,
@@ -973,190 +664,116 @@ pub enum ExecutorEventKind {
     },
 }
 
-#[derive(Debug, Clone)]
-pub struct ExecutorEvent {
-    pub kind: ExecutorEventKind,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub task_id: TaskId,
-}
-
 impl ExecutorEvent {
-    pub fn new_message(topic: String, data: TaskMessageData, task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::Message { 
-                message_id: MessageId::new(),
-                topic, 
-                data 
-            },
-            timestamp: chrono::Utc::now(),
-            task_id,
+    pub fn new_message(topic: String, data: String) -> Self {
+        Self::Message { 
+            topic, 
+            data 
         }
     }
 
+    pub fn new_error(error: String) -> Self {
+        Self::Error { error }
+    }
 
-    pub fn new_error(error: String, task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::Error { error },
-            timestamp: chrono::Utc::now(),
-            task_id,
+    pub fn new_exit(exit_code: i32) -> Self {
+        Self::Exit { exit_code }
+    }
+
+    pub fn new_task_stdout(data: String) -> Self {
+        Self::TaskStdout { data }
+    }
+
+    pub fn new_task_stderr(data: String) -> Self {
+        Self::TaskStderr { data }
+    }
+
+    pub fn new_system_control(key: String, data: String) -> Self {
+        Self::SystemControl { 
+            key, 
+            data 
         }
     }
 
-    pub fn new_exit(exit_code: i32, task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::Exit { exit_code },
-            timestamp: chrono::Utc::now(),
-            task_id,
-        }
-    }
-
-
-    pub fn new_systemcommand(command: SystemCommand, task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::SystemCommand { command },
-            timestamp: chrono::Utc::now(),
-            task_id,
-        }
-    }
-
-    pub fn new_system_response(request_id: MessageId, topic: String, data: TaskMessageData, task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::SystemResponse { 
-                request_id, 
-                topic,
-                data 
-            },
-            timestamp: chrono::Utc::now(),
-            task_id,
-        }
-    }
-
-    pub fn new_system_error(request_id: MessageId, error: String, task_id: TaskId) -> Self {
-        Self {
-            kind: ExecutorEventKind::SystemError { 
-                request_id, 
-                error 
-            },
-            timestamp: chrono::Utc::now(),
-            task_id,
-        }
-    }
-
-
-    pub fn data(&self) -> Option<&TaskMessageData> {
-        match &self.kind {
-            ExecutorEventKind::Message { data, .. } => Some(data),
-            ExecutorEventKind::SystemResponse { data, .. } => Some(data),
-            _ => None,
-        }
-    }
-
-    pub fn message_id(&self) -> Option<&MessageId> {
-        match &self.kind {
-            ExecutorEventKind::Message { message_id, .. } => Some(message_id),
-            ExecutorEventKind::SystemResponse { request_id, .. } => Some(request_id),
-            ExecutorEventKind::SystemError { request_id, .. } => Some(request_id),
+    pub fn data(&self) -> Option<&String> {
+        match self {
+            Self::Message { data, .. } => Some(data),
+            Self::TaskStdout { data } => Some(data),
+            Self::TaskStderr { data } => Some(data),
             _ => None,
         }
     }
 
     pub fn topic(&self) -> Option<&String> {
-        match &self.kind {
-            ExecutorEventKind::Message { topic, .. } => Some(topic),
-            ExecutorEventKind::SystemResponse { topic, .. } => Some(topic),
-            ExecutorEventKind::SystemCommand { command } => {
-                match command {
-                    SystemCommand::SubscribeTopic { topic } | 
-                    SystemCommand::UnsubscribeTopic { topic } => Some(topic),
-                    SystemCommand::Stdout { .. } | 
-                    SystemCommand::Stderr { .. } => None,
-                    _ => None,
-                }
-            },
+        match self {
+            Self::Message { topic, .. } => Some(topic),
             _ => None,
         }
-    }
-
-    pub fn timestamp(&self) -> &chrono::DateTime<chrono::Utc> {
-        &self.timestamp
-    }
-
-    pub fn task_id(&self) -> &TaskId {
-        &self.task_id
     }
 }
 
 pub struct TaskSpawner {
     pub task_id: TaskId,
-    pub topic_request_sender: TopicRequestSender,
-    pub topic_subscriber: TopicSubscriber,
-    pub system_command_sender: SystemCommandSender,
-    pub task_registry: TaskRegistry,
+    pub topic_manager: TopicManager,
+    pub system_control_manager: SystemControlManager,
+    pub task_executor: TaskExecutor,
     pub task_name: String,
+    pub userlog_sender: UserLogSender,
 }
 
 impl TaskSpawner {
     pub fn new(
         task_id: TaskId,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        system_command_sender: SystemCommandSender,
-        task_registry: TaskRegistry,
+        topic_manager: TopicManager,
+        system_control_manager: SystemControlManager,
+        task_executor: TaskExecutor,
         task_name: String,
+        userlog_sender: UserLogSender,
     ) -> Self {
         Self {
             task_id,
-            topic_request_sender,
-            topic_subscriber,
-            system_command_sender,
-            task_registry,
+            topic_manager,
+            system_control_manager,
+            task_executor,
             task_name,
+            userlog_sender,
         }
     }
 
-    pub async fn spawn_executor<E>(
+    pub async fn spawn_backend(
         self,
-        executor: E,
-        config: E::Config,
+        backend: Box<dyn TaskBackend>,
         shutdown_token: CancellationToken,
-        initial_topics: Option<Vec<String>>,
-    ) -> tokio::task::JoinHandle<()>
-    where
-        E: Executor + 'static,
-        E::Event: 'static + Into<ExecutorEvent>,
-        E::Config: 'static,
-    {
+        subscribe_topics: Option<Vec<String>>,
+    ) -> tokio::task::JoinHandle<()> {
         let task_id: TaskId = self.task_id.clone();
-        let topic_request_sender: TopicRequestSender = self.topic_request_sender;
-        let topic_subscriber: TopicSubscriber = self.topic_subscriber;
-        let system_command_sender: SystemCommandSender = self.system_command_sender;
-        let task_registry: TaskRegistry = self.task_registry;
-        let task_name: String = self.task_name;
+        let task_name: String = self.task_name.clone();
+        let topic_manager: TopicManager = self.topic_manager;
+        let system_control_manager: SystemControlManager = self.system_control_manager;
+        let task_executor: TaskExecutor = self.task_executor;
+        let userlog_sender = self.userlog_sender.clone();
 
         tokio::task::spawn(async move {
             let topic_data_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let mut topic_data_receiver = topic_data_channel.receiver;
             
-            let mut executor_handle = match executor.spawn(config, task_id.clone()).await {
+            let mut backend_handle = match backend.spawn(task_id.clone()).await {
                 Ok(handle) => handle,
                 Err(e) => {
-                    log::error!("Failed to spawn executor for task {}: {}", task_id, e);
+                    log::error!("Failed to spawn task backend for task {}: {}", task_id, e);
                     return;
                 }
             };
 
-            if let Some(topics) = initial_topics {
+            if let Some(topics) = subscribe_topics {
                 log::info!("Processing initial topic subscriptions for task {}: {:?}", task_id, topics);
                 for topic in topics {
-                    if let Err(e) = topic_request_sender.send_subscribe_request(
+                    topic_manager.add_subscriber(
                         topic.clone(),
                         task_id.clone(),
                         topic_data_channel.sender.clone()
-                    ) {
-                        log::warn!("Failed to send initial topic request for '{}' (task {}): {}", topic, task_id, e);
-                    } else {
-                        log::info!("Sent initial topic request for '{}' from task {}", topic, task_id);
-                    }
+                    ).await;
+                    log::info!("Added initial topic subscription for '{}' from task {}", topic, task_id);
                 }
             }
 
@@ -1167,19 +784,19 @@ impl TaskSpawner {
                     
                     _ = shutdown_token.cancelled() => {
                         log::info!("Task {} received shutdown signal", task_id);
-                        let _ = executor_handle.shutdown_sender.shutdown();
+                        let _ = backend_handle.shutdown_sender.shutdown();
                         break;
                     },
                     
-                    event = executor_handle.event_receiver.recv() => {
+                    event = backend_handle.event_receiver.recv() => {
                         match event {
-                            Some(executor_event) => {
-                                let event: ExecutorEvent = executor_event;
+                            Some(event) => {
+                                let event: ExecutorEvent = event;
                                 
-                                match &event.kind {
-                                    ExecutorEventKind::Message { message_id, topic, data } => {
-                                        log::info!("Message event {} for task {} on topic '{}': '{}'", message_id, task_id, topic, data);
-                                        match topic_subscriber.broadcast_message(event.clone()).await {
+                                match &event {
+                                    ExecutorEvent::Message { topic, data } => {
+                                        log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
+                                        match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
                                                 log::info!("Broadcasted message from task {} to {} subscribers on topic '{}'", task_id, success_count, topic);
                                             },
@@ -1188,44 +805,58 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorEventKind::SystemResponse { request_id, data, topic: _ } => {
-                                        log::info!("SystemResponse event {} for task {}: '{}'", request_id, task_id, data);
-                                    },
-                                    ExecutorEventKind::SystemError { request_id, error } => {
-                                        log::error!("SystemError event {} for task {}: '{}'", request_id, task_id, error);
-                                    },
-                                    ExecutorEventKind::SystemCommand { command } => {
-                                        log::info!("SystemCommand event for task {}: {:?}", task_id, command);
-                                        
-                                        if let Err(e) = system_command_sender.send_system_command(
-                                            command.clone(),
-                                            task_id.clone(),
-                                            topic_data_channel.sender.clone()
-                                        ) {
-                                            log::warn!("Failed to send system command to worker (task {}): {}", task_id, e);
+                                    ExecutorEvent::SystemControl { .. } => {
+                                        if let Some(system_control_cmd) = system_control_command_to_handler(&event) {
+                                            log::info!("SystemControl detected from task {}", task_id);
+                                            if let Err(e) = system_control_manager.send_system_control_command(
+                                                system_control_cmd,
+                                                task_id.clone(),
+                                                backend_handle.system_response_sender.clone(),
+                                                topic_data_channel.sender.clone()
+                                            ).await {
+                                                log::warn!("Failed to send system control command to worker (task {}): {}", task_id, e);
+                                            } else {
+                                                log::info!("Sent system control command to worker for task {}", task_id);
+                                            }
                                         } else {
-                                            log::info!("Sent system command to worker for task {}", task_id);
+                                            log::warn!("Failed to convert SystemControl event to handler for task {}", task_id);
                                         }
                                     },
-                                    ExecutorEventKind::Error { error } => {
+                                    ExecutorEvent::TaskStdout { data } => {
+                                        let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
+                                        if let Some((view_stdout, _)) = flags {
+                                            if view_stdout {
+                                                let _ = userlog_sender.send(UserLogEvent { task_id: task_id.to_string(), task_name: task_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
+                                            }
+                                        }
+                                    },
+                                    ExecutorEvent::TaskStderr { data } => {
+                                        let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
+                                        if let Some((_, view_stderr)) = flags {
+                                            if view_stderr {
+                                                let _ = userlog_sender.send(UserLogEvent { task_id: task_id.to_string(), task_name: task_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
+                                            }
+                                        }
+                                    },
+                                    ExecutorEvent::Error { error } => {
                                         log::error!("Error event for task {}: '{}'", task_id, error);
                                     },
-                                    ExecutorEventKind::Exit { exit_code } => {
+                                    ExecutorEvent::Exit { exit_code } => {
                                         log::info!("Exit event for task {} with exit code: {}", task_id, exit_code);
                                         
-                                        let removed_topics: Vec<String> = topic_subscriber.remove_all_subscriptions_by_task(task_id.clone()).await;
+                                        let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(task_id.clone()).await;
                                         log::info!("Task {} exited, removed {} topic subscriptions", task_id, removed_topics.len());
                                         
-                                        if let Some(_removed_task) = task_registry.unregister_task(&task_name).await {
-                                            log::info!("Removed task '{}' from registry", task_name);
+                                        if let Some(_removed_task) = task_executor.unregister_task_by_task_id(&task_id).await {
+                                            log::info!("Removed task with TaskId={} (Human name index updated)", task_id);
                                         } else {
-                                            log::warn!("Task '{}' not found in registry during cleanup", task_name);
+                                            log::warn!("Task with TaskId={} not found in executor during cleanup", task_id);
                                         }
                                     }
                                 }
                             },
                             None => {
-                                log::info!("Executor event receiver closed for task {}", task_id);
+                                log::info!("Task backend event receiver closed for task {}", task_id);
                                 break;
                             }
                         }
@@ -1238,10 +869,9 @@ impl TaskSpawner {
                                 if let Some(data) = topic_data.data() {
                                     let lines: Vec<&str> = data.lines().collect();
                                     
-                                    // トピック名は必須
                                     if let Some(topic_name) = topic_data.topic() {
-                                        if let Err(e) = executor_handle.input_channel.sender.send(topic_name.clone()) {
-                                            log::warn!("Failed to send topic name to executor for task {}: {}", task_id, e);
+                                        if let Err(e) = backend_handle.input_sender.send(topic_name.clone()) {
+                                            log::warn!("Failed to send topic name to task backend for task {}: {}", task_id, e);
                                             continue;
                                         }
                                     } else {
@@ -1249,14 +879,14 @@ impl TaskSpawner {
                                         continue;
                                     }
                                     
-                                    if let Err(e) = executor_handle.input_channel.sender.send(lines.len().to_string()) {
-                                        log::warn!("Failed to send line count to executor for task {}: {}", task_id, e);
+                                    if let Err(e) = backend_handle.input_sender.send(lines.len().to_string()) {
+                                        log::warn!("Failed to send line count to task backend for task {}: {}", task_id, e);
                                         continue;
                                     }
                                     
                                     for line in lines {
-                                        if let Err(e) = executor_handle.input_channel.sender.send(line.to_string()) {
-                                            log::warn!("Failed to send line to executor for task {}: {}", task_id, e);
+                                        if let Err(e) = backend_handle.input_sender.send(line.to_string()) {
+                                            log::warn!("Failed to send line to task backend for task {}: {}", task_id, e);
                                             break;
                                         }
                                     }
@@ -1271,233 +901,569 @@ impl TaskSpawner {
                 }
             }
             
-            log::info!("Executor task {} completed", task_id);
+            log::info!("Task {} completed", task_id);
         })
     }
 }
 
-pub struct ExecutorHandle {
+#[derive(Clone)]
+pub struct SystemControlContext {
+    pub topic_manager: TopicManager,
+    pub task_executor: TaskExecutor,
+    pub config: SystemConfig,
+    pub shutdown_token: CancellationToken,
+    pub userlog_sender: UserLogSender,
+    pub system_control_manager: SystemControlManager,
+    pub task_id: TaskId,
+    pub response_channel: SystemResponseSender,
+    pub task_event_sender: ExecutorEventSender,
+}
+
+#[async_trait]
+pub trait SystemControlHandler: Send + Sync {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscribeTopicSystemControl {
+    pub topic: String,
+}
+
+#[async_trait]
+impl SystemControlHandler for SubscribeTopicSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::info!("Processing SubscribeTopic command for task {}: '{}'", context.task_id, self.topic);
+        
+        context.topic_manager.add_subscriber(
+            self.topic.clone(),
+            context.task_id.clone(), 
+            context.task_event_sender.clone()
+        ).await;
+        
+        log::info!("Successfully subscribed to topic '{}'", self.topic);
+        
+        let status = SystemResponseStatus::Success;
+        let response_topic = "system.subscribe-topic".to_string();
+        let success_event = SystemResponseEvent::new_system_response(
+            response_topic,
+            status.to_string(),
+            self.topic.clone(),
+        );
+        let _ = context.response_channel.send(success_event);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsubscribeTopicSystemControl {
+    pub topic: String,
+}
+
+#[async_trait]
+impl SystemControlHandler for UnsubscribeTopicSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::info!("Processing UnsubscribeTopic command for task {}: '{}'", context.task_id, self.topic);
+        
+        let removed = context.topic_manager.remove_subscriber_by_task(
+            self.topic.clone(),
+            context.task_id.clone()
+        ).await;
+        
+        if removed {
+            log::info!("Successfully unsubscribed from topic '{}'", self.topic);
+            
+            let status = SystemResponseStatus::Success;
+            let response_topic = "system.unsubscribe-topic".to_string();
+            let success_event = SystemResponseEvent::new_system_response(
+                response_topic,
+                status.to_string(),
+                self.topic.clone(),
+            );
+            let _ = context.response_channel.send(success_event);
+        } else {
+            log::warn!("Failed to unsubscribe from topic '{}'", self.topic);
+            
+            let status = SystemResponseStatus::Error;
+            let response_topic = "system.unsubscribe-topic".to_string();
+            let error_event = SystemResponseEvent::new_system_error(
+                response_topic,
+                status.to_string(),
+                self.topic.clone(),
+            );
+            let _ = context.response_channel.send(error_event);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartTaskSystemControl {
+    pub task_name: String,
+}
+
+#[async_trait]
+impl SystemControlHandler for StartTaskSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::info!("Processing StartTask command for task {}: '{}'", context.task_id, self.task_name);
+        
+            match context.task_executor.start_single_task(
+                &self.task_name,
+                &context.config,
+                context.topic_manager.clone(),
+                context.system_control_manager.clone(),
+                context.shutdown_token.clone(),
+                context.userlog_sender.clone(),
+            ).await {
+            Ok(_) => {
+                log::info!("Successfully started task '{}'", self.task_name);
+                
+                let status = SystemResponseStatus::Success;
+                let response_topic = "system.start-task".to_string();
+                let success_event = SystemResponseEvent::new_system_response(
+                    response_topic,
+                    status.to_string(),
+                    self.task_name.clone(),
+                );
+                let _ = context.response_channel.send(success_event);
+                Ok(())
+            },
+            Err(e) => {
+                log::error!("Failed to start task '{}': {}", self.task_name, e);
+                
+                let status = SystemResponseStatus::Error;
+                let response_topic = "system.start-task".to_string();
+                let error_event = SystemResponseEvent::new_system_error(
+                    response_topic,
+                    status.to_string(),
+                    self.task_name.clone(),
+                );
+                let _ = context.response_channel.send(error_event);
+                Err(format!("Failed to start task '{}': {}", self.task_name, e))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopTaskSystemControl {
+    pub task_name: String,
+}
+
+#[async_trait]
+impl SystemControlHandler for StopTaskSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::info!("Processing StopTask command for task {}: '{}'", context.task_id, self.task_name);
+        
+        match context.task_executor.stop_task_by_name(&self.task_name).await {
+            Ok(_) => {
+                log::info!("Successfully stopped task '{}'", self.task_name);
+                
+                let status = SystemResponseStatus::Success;
+                let response_topic = "system.stop-task".to_string();
+                let success_event = SystemResponseEvent::new_system_response(
+                    response_topic,
+                    status.to_string(),
+                    self.task_name.clone(),
+                );
+                let _ = context.response_channel.send(success_event);
+                Ok(())
+            },
+            Err(e) => {
+                log::error!("Failed to stop task '{}': {}", self.task_name, e);
+                
+                let status = SystemResponseStatus::Error;
+                let response_topic = "system.stop-task".to_string();
+                let error_event = SystemResponseEvent::new_system_error(
+                    response_topic,
+                    status.to_string(),
+                    self.task_name.clone(),
+                );
+                let _ = context.response_channel.send(error_event);
+                Err(format!("Failed to stop task '{}': {}", self.task_name, e))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddTaskFromTomlSystemControl {
+    pub toml_data: String,
+}
+
+#[async_trait]
+impl SystemControlHandler for AddTaskFromTomlSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::info!("Processing AddTaskFromToml command for task {} with TOML data", context.task_id);
+        
+        match context.task_executor.add_task_from_toml(
+            &self.toml_data,
+            context.topic_manager.clone(),
+            context.system_control_manager.clone(),
+            context.shutdown_token.clone(),
+            context.userlog_sender.clone(),
+        ).await {
+            Ok(_) => {
+                log::info!("Successfully added task to executor from TOML");
+                
+                let status = SystemResponseStatus::Success;
+                let success_event = SystemResponseEvent::new_system_response(
+                    "system.add-task-from-toml".to_string(),
+                    status.to_string(),
+                    String::new(),
+                );
+                let _ = context.response_channel.send(success_event);
+                Ok(())
+            },
+            Err(e) => {
+                log::error!("Failed to add task from TOML: {}", e);
+                
+                let status = SystemResponseStatus::Error;
+                let error_event = SystemResponseEvent::new_system_error(
+                    "system.add-task-from-toml".to_string(),
+                    status.to_string(),
+                    e.to_string(),
+                );
+                let _ = context.response_channel.send(error_event);
+                Err(format!("Failed to add task from TOML: {}", e))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusSystemControl;
+
+#[async_trait]
+impl SystemControlHandler for StatusSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::info!("Processing Status command for task {}", context.task_id);
+        
+        let tasks_info = context.task_executor.get_running_tasks_info().await;
+        let topics_info = context.topic_manager.get_topics_info().await;
+        
+        let mut json_response = String::from("{\n");
+        json_response.push_str("  \"tasks\": [\n");
+        
+        for (i, (task_name, task_id)) in tasks_info.iter().enumerate() {
+            if i > 0 {
+                json_response.push_str(",\n");
+            }
+            json_response.push_str(&format!("    {{\"name\": \"{}\", \"id\": \"{}\"}}", task_name, task_id));
+        }
+        
+        json_response.push_str("\n  ],\n");
+        json_response.push_str("  \"topics\": [\n");
+        
+        for (i, (topic_name, subscriber_count)) in topics_info.iter().enumerate() {
+            if i > 0 {
+                json_response.push_str(",\n");
+            }
+            json_response.push_str(&format!("    {{\"name\": \"{}\", \"subscribers\": {}}}", topic_name, subscriber_count));
+        }
+        
+        json_response.push_str("\n  ]\n");
+        json_response.push_str("}");
+        
+        let status = SystemResponseStatus::Success;
+        let status_event = SystemResponseEvent::new_system_response(
+            "system.status".to_string(),
+            status.to_string(),
+            json_response,
+        );
+        
+        if let Err(e) = context.response_channel.send(status_event) {
+            log::warn!("Failed to send status response to task {}: {}", context.task_id, e);
+            Err(format!("Failed to send status response: {}", e))
+        } else {
+            log::info!("Sent status response to task {}", context.task_id);
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownSystemControl {
+    pub command: String,
+    pub data: String,
+}
+
+#[async_trait]
+impl SystemControlHandler for UnknownSystemControl {
+    async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+        log::warn!("Unknown system control command '{}' with data '{}' from task {}", self.command, self.data, context.task_id);
+        Ok(())
+    }
+}
+
+
+pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<Box<dyn SystemControlHandler>> {
+    let ExecutorEvent::SystemControl { key, data } = event else {
+        return None;
+    };
+    
+    let key_lower = key.to_lowercase();
+    let data_trimmed = data.trim();
+    
+    if data_trimmed.is_empty() && key_lower.as_str() != "system.status" {
+        return None;
+    }
+    
+    let cmd: Box<dyn SystemControlHandler> = match key_lower.as_str() {
+        "system.subscribe-topic" => {
+            Box::new(SubscribeTopicSystemControl { 
+                topic: data_trimmed.to_string() 
+            })
+        },
+        "system.unsubscribe-topic" => {
+            Box::new(UnsubscribeTopicSystemControl { 
+                topic: data_trimmed.to_string() 
+            })
+        },
+        "system.start-task" => {
+            Box::new(StartTaskSystemControl { 
+                task_name: data_trimmed.to_string() 
+            })
+        },
+        "system.stop-task" => {
+            Box::new(StopTaskSystemControl { 
+                task_name: data_trimmed.to_string() 
+            })
+        },
+        "system.add-task-from-toml" => {
+            if data_trimmed.is_empty() {
+                return None;
+            }
+            Box::new(AddTaskFromTomlSystemControl { 
+                toml_data: data_trimmed.to_string() 
+            })
+        },
+        "system.status" => {
+            Box::new(StatusSystemControl)
+        },
+        _ if key_lower.starts_with("system.") => {
+            Box::new(UnknownSystemControl { 
+                command: key_lower.clone(), 
+                data: data_trimmed.to_string() 
+            })
+        },
+        _ => return None,
+    };
+    
+    Some(cmd)
+}
+
+pub struct TaskBackendHandle {
     pub event_receiver: ExecutorEventReceiver,
-    pub input_channel: InputChannel,
+    pub event_sender: ExecutorEventSender,
+    pub system_response_sender: SystemResponseSender,
+    pub input_sender: InputSender,
     pub shutdown_sender: ShutdownSender,
 }
 
 #[async_trait]
-pub trait Executor: Send + Sync {
-    type Event: Send + Clone;
-    type Config: Send + Clone;
-    
-    async fn spawn(&self, config: Self::Config, task_id: TaskId) -> Result<ExecutorHandle, Error>;
+pub trait TaskBackend: Send + Sync {
+    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SystemCommand {
-    SubscribeTopic { topic: String },
-    UnsubscribeTopic { topic: String },
-    Stdout { data: String },
-    Stderr { data: String },
-    StartTask { task_name: String },
-    StopTask { task_name: String },
-    KillServer,
-    AddTaskFromToml { toml_data: String },
-    Status,
-    Unknown { command: String, data: String },
+
+#[derive(Clone)]
+pub struct InteractiveBackend {
+    system_input_topic: String,
 }
 
-impl SystemCommand {
-    fn get_topic_name(&self) -> String {
-        match self {
-            SystemCommand::SubscribeTopic { topic } => format!("system.subscribe-topic.{}", topic),
-            SystemCommand::UnsubscribeTopic { topic } => format!("system.unsubscribe-topic.{}", topic),
-            SystemCommand::Stdout { .. } => "system.stdout".to_string(),
-            SystemCommand::Stderr { .. } => "system.stderr".to_string(),
-            SystemCommand::StartTask { task_name } => format!("system.start-task.{}", task_name),
-            SystemCommand::StopTask { task_name } => format!("system.stop-task.{}", task_name),
-            SystemCommand::KillServer => "system.killserver".to_string(),
-            SystemCommand::AddTaskFromToml { .. } => "system.add-task-from-toml".to_string(),
-            SystemCommand::Status => "system.status".to_string(),
-            SystemCommand::Unknown { command, .. } => command.clone(),
+impl InteractiveBackend {
+    pub fn new(system_input_topic: String) -> Self {
+        Self {
+            system_input_topic,
         }
     }
+}
 
-    fn parse_add_task_from_toml(data: &str) -> Option<Self> {
-        if data.trim().is_empty() {
-            return None;
-        }
-
-        Some(SystemCommand::AddTaskFromToml { 
-            toml_data: data.trim().to_string() 
+#[async_trait]
+impl TaskBackend for InteractiveBackend {
+    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
+        let system_input_topic = self.system_input_topic.clone();
+        
+        let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
+        let input_channel: InputChannel = InputChannel::new();
+        let shutdown_channel = ShutdownChannel::new();
+        let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
+        
+        let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
+        let cancel_token: CancellationToken = CancellationToken::new();
+        let mut shutdown_receiver = shutdown_channel.receiver;
+        
+        task::spawn(async move {
+            let stdin = stdin();
+            let reader = TokioBufReader::new(stdin);
+            let mut lines = reader.lines();
+            
+            loop {
+                tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        log::info!("Interactive mode received shutdown signal for task {}", task_id);
+                        break;
+                    }
+                    _ = shutdown_receiver.recv() => {
+                        log::info!("Interactive mode received shutdown signal via channel for task {}", task_id);
+                        cancel_token.cancel();
+                        break;
+                    }
+                    line_result = lines.next_line() => {
+                        match line_result {
+                            Ok(Some(line)) => {
+                                let trimmed = line.trim();
+                                if trimmed.is_empty() {
+                                    continue;
+                                }
+                                
+                                log::info!("Sending message topic:'{}' data:'{}'", system_input_topic, trimmed);
+                                
+                                let event = ExecutorEvent::new_message(
+                                    system_input_topic.clone(),
+                                    trimmed.to_string(),
+                                );
+                                
+                                if let Err(e) = event_tx_clone.send(event) {
+                                    log::error!("Failed to send event from interactive backend: {}", e);
+                                    break;
+                                }
+                            }
+                            Ok(None) => {
+                                log::info!("Interactive mode stdin closed for task {}", task_id);
+                                break;
+                            }
+                            Err(e) => {
+                                log::error!("Error reading from stdin for task {}: {}", task_id, e);
+                                let _ = event_tx_clone.send_error(format!("Error reading from stdin: {}", e));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            log::info!("Interactive mode task {} completed", task_id);
+        });
+        
+        Ok(TaskBackendHandle {
+            event_receiver: event_channel.receiver,
+            event_sender: event_channel.sender,
+            system_response_sender: system_response_channel.sender,
+            input_sender: input_channel.sender,
+            shutdown_sender: shutdown_channel.sender,
         })
     }
-
-    pub fn parse_from_plaintext(key: &str, data: &str) -> Option<Self> {
-        let key_lower: String = key.to_lowercase();
-        let data_trimmed: &str = data.trim();
-        
-        match key_lower.as_str() {
-            "system.subscribe-topic" => {
-                if !data_trimmed.is_empty() {
-                    Some(SystemCommand::SubscribeTopic { 
-                        topic: data_trimmed.to_lowercase() 
-                    })
-                } else {
-                    None
-                }
-            },
-            "system.unsubscribe-topic" => {
-                if !data_trimmed.is_empty() {
-                    Some(SystemCommand::UnsubscribeTopic { 
-                        topic: data_trimmed.to_lowercase() 
-                    })
-                } else {
-                    None
-                }
-            },
-            "system.stdout" => {
-                Some(SystemCommand::Stdout { 
-                    data: data_trimmed.to_string() 
-                })
-            },
-            "system.stderr" => {
-                Some(SystemCommand::Stderr { 
-                    data: data_trimmed.to_string() 
-                })
-            },
-            "system.start-task" => {
-                if !data_trimmed.is_empty() {
-                    Some(SystemCommand::StartTask { 
-                        task_name: data_trimmed.to_string() 
-                    })
-                } else {
-                    None
-                }
-            },
-            "system.stop-task" => {
-                if !data_trimmed.is_empty() {
-                    Some(SystemCommand::StopTask { 
-                        task_name: data_trimmed.to_string() 
-                    })
-                } else {
-                    None
-                }
-            },
-            "system.killserver" => {
-                Some(SystemCommand::KillServer)
-            },
-            "system.add-task-from-toml" => {
-                Self::parse_add_task_from_toml(data)
-            },
-            "system.status" => {
-                Some(SystemCommand::Status)
-            },
-            _ if key_lower.starts_with("system.") => {
-                Some(SystemCommand::Unknown { 
-                    command: key_lower, 
-                    data: data_trimmed.to_string() 
-                })
-            },
-            _ => None,
-        }
-    }
-    
-    pub fn send_system_command(&self, event_tx: &ExecutorEventSender, task_id: TaskId) {
-        match self {
-            SystemCommand::SubscribeTopic { topic } => {
-                log::info!("Executing system.subscribe-topic with topic: '{}'", topic);
-                let _ = event_tx.send_system_command(SystemCommand::SubscribeTopic { topic: topic.clone() }, task_id.clone());
-            },
-            SystemCommand::UnsubscribeTopic { topic } => {
-                log::info!("Executing system.unsubscribe-topic with topic: '{}'", topic);
-                let _ = event_tx.send_system_command(SystemCommand::UnsubscribeTopic { topic: topic.clone() }, task_id.clone());
-            },
-            SystemCommand::Stdout { data } => {
-                log::info!("Executing system.stdout with data: '{}'", data);
-                let _ = event_tx.send_system_command(SystemCommand::Stdout { data: data.clone() }, task_id.clone());
-            },
-            SystemCommand::Stderr { data } => {
-                log::info!("Executing system.stderr with data: '{}'", data);
-                let _ = event_tx.send_system_command(SystemCommand::Stderr { data: data.clone() }, task_id.clone());
-            },
-            SystemCommand::StartTask { task_name } => {
-                log::info!("Executing system.start-task with task: '{}'", task_name);
-                let _ = event_tx.send_system_command(SystemCommand::StartTask { task_name: task_name.clone() }, task_id.clone());
-            },
-            SystemCommand::StopTask { task_name } => {
-                log::info!("Executing system.stop-task with task: '{}'", task_name);
-                let _ = event_tx.send_system_command(SystemCommand::StopTask { task_name: task_name.clone() }, task_id.clone());
-            },
-            SystemCommand::KillServer => {
-                log::info!("Executing system.killserver - initiating server shutdown");
-                let _ = event_tx.send_system_command(SystemCommand::KillServer, task_id.clone());
-            },
-            SystemCommand::AddTaskFromToml { toml_data } => {
-                log::info!("Executing system.add-task-from-toml with TOML data");
-                let _ = event_tx.send_system_command(SystemCommand::AddTaskFromToml {
-                    toml_data: toml_data.clone(),
-                }, task_id.clone());
-            },
-            SystemCommand::Status => {
-                log::info!("Executing system.status");
-                let _ = event_tx.send_system_command(SystemCommand::Status, task_id.clone());
-            },
-            SystemCommand::Unknown { command, data } => {
-                log::warn!("Unknown system command: '{}' with data: '{}'", command, data);
-            },
-        }
-    }
 }
 
-#[derive(Debug, Clone)]
-pub struct CommandConfig {
-    pub command: String,
-    pub args: Vec<String>,
-    pub working_directory: Option<String>,
-    pub environment_vars: Option<HashMap<String, String>>,
+#[derive(Clone)]
+pub struct CommandBackend {
+    command: String,
+    args: Vec<String>,
+    working_directory: Option<String>,
+    environment_vars: Option<HashMap<String, String>>,
+    stdout_topic: String,
+    stderr_topic: String,
+    view_stdout: bool,
+    view_stderr: bool,
 }
 
-impl CommandConfig {
-    pub fn new(command: String, args: Vec<String>) -> Self {
+impl CommandBackend {
+    pub fn new(
+        command: String,
+        args: Vec<String>,
+        working_directory: Option<String>,
+        environment_vars: Option<HashMap<String, String>>,
+        stdout_topic: String,
+        stderr_topic: String,
+        view_stdout: bool,
+        view_stderr: bool,
+    ) -> Self {
         Self {
             command,
             args,
-            working_directory: None,
-            environment_vars: None,
+            working_directory,
+            environment_vars,
+            stdout_topic,
+            stderr_topic,
+            view_stdout,
+            view_stderr,
         }
     }
 
+    pub fn parse_system_control_command_from_plaintext(key: &str, data: &str) -> Option<ExecutorEvent> {
+        let key_lower = key.to_lowercase();
+        let data_trimmed = data.trim();
+        
+        if data_trimmed.is_empty() && key_lower.as_str() != "system.status" {
+            return None;
+        }
+        
+        let is_system_command = key_lower.starts_with("system.") || (key_lower.is_empty() && data_trimmed.starts_with("system."));
+        
+        if is_system_command {
+            let actual_key = if key_lower.is_empty() {
+                let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    parts[0].to_string()
+                } else {
+                    data_trimmed.to_string()
+                }
+            } else {
+                key_lower.clone()
+            };
+            
+            let actual_data = if key_lower.is_empty() && actual_key != data_trimmed {
+                let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
+                if parts.len() == 2 {
+                    parts[1].to_string()
+                } else {
+                    String::new()
+                }
+            } else {
+                data_trimmed.to_string()
+            };
+            
+            return Some(ExecutorEvent::new_system_control(actual_key, actual_data));
+        }
+        
+        None
+    }
 }
 
-pub struct CommandExecutor;
-
 #[async_trait]
-impl Executor for CommandExecutor {
-    type Event = ExecutorEvent;
-    type Config = CommandConfig;
-    
-    async fn spawn(&self, config: CommandConfig, task_id: TaskId) -> Result<ExecutorHandle, Error> {
-        let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
-        let input_channel: InputChannel = InputChannel::new();
-        let mut shutdown_channel = ShutdownChannel::new();
-        
-        let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
-        let input_sender: InputSender = input_channel.sender;
-        let input_receiver_task = input_channel.receiver;
+impl TaskBackend for CommandBackend {
+    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
+        let command = self.command.clone();
+        let args = self.args.clone();
+        let working_directory = self.working_directory.clone();
+        let environment_vars = self.environment_vars.clone();
+        let stdout_topic = self.stdout_topic.clone();
+        let stderr_topic = self.stderr_topic.clone();
+        let view_stdout = self.view_stdout;
+        let view_stderr = self.view_stderr;
 
-        let _input_sender_clone: InputSender = input_sender.clone();
-        let mut input_receiver_task_clone = input_receiver_task;
+            let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
+            let input_channel: InputChannel = InputChannel::new();
+            let mut shutdown_channel = ShutdownChannel::new();
+            let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
+            
+            let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
+            let mut input_receiver = input_channel.receiver;
+            let input_sender_clone = input_channel.sender.clone();
 
         task::spawn(async move {
-            let mut command_builder = TokioCommand::new(&config.command);
+            let mut command_builder = TokioCommand::new(&command);
             
-            for arg in &config.args {
+            for arg in &args {
                 command_builder.arg(arg);
             }
             
-            if let Some(working_dir) = &config.working_directory {
+            if let Some(working_dir) = &working_directory {
                 command_builder.current_dir(working_dir);
             }
 
-            if let Some(env_vars) = &config.environment_vars {
+            if let Some(env_vars) = &environment_vars {
                 for (key, value) in env_vars {
                     command_builder.env(key, value);
                 }
@@ -1514,8 +1480,7 @@ impl Executor for CommandExecutor {
                 Ok(child) => child,
                 Err(e) => {
                     let _ = event_tx_clone.send(ExecutorEvent::new_error(
-                        format!("Failed to start process '{}': {}", config.command, e),
-                        task_id.clone(),
+                        format!("Failed to start process '{}': {}", command, e),
                     ));
                     return;
                 }
@@ -1530,39 +1495,75 @@ impl Executor for CommandExecutor {
 
             let stdout_handle = spawn_stream_reader(
                 TokioBufReader::new(stdout),
-                "stdout",
+                stdout_topic.clone(),
                 event_tx_clone.clone(),
                 cancel_token.clone(),
                 task_id.clone(),
+                if view_stdout { Some(ExecutorEvent::new_task_stdout as fn(String) -> ExecutorEvent) } else { None },
             );
 
             let stderr_handle = spawn_stream_reader(
                 TokioBufReader::new(stderr),
-                "stderr",
+                stderr_topic.clone(),
                 event_tx_clone.clone(),
                 cancel_token.clone(),
                 task_id.clone(),
+                if view_stderr { Some(ExecutorEvent::new_task_stderr as fn(String) -> ExecutorEvent) } else { None },
             );
 
             
             let cancel_input: CancellationToken = cancel_token.clone();
             let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
-            let task_id_input: TaskId = task_id.clone();
             let input_handle = task::spawn(async move {
                 loop {
                     tokio::select! {
                         _ = cancel_input.cancelled() => { break; }
-                        input_data = input_receiver_task_clone.recv() => {
+                        input_data = input_receiver.recv() => {
                             match input_data {
                                 Some(input_data) => {
                                     let bytes: Vec<u8> = if input_data.ends_with('\n') { input_data.into_bytes() } else { format!("{}\n", input_data).into_bytes() };
                                     if let Err(e) = stdin_writer.write_all(&bytes).await {
-                                        let _ = event_tx_input.send_error(format!("Failed to write to stdin: {}", e), task_id_input.clone());
+                                        let _ = event_tx_input.send_error(format!("Failed to write to stdin: {}", e));
                                         break;
                                     }
                                     if let Err(e) = stdin_writer.flush().await {
-                                        let _ = event_tx_input.send_error(format!("Failed to flush stdin: {}", e), task_id_input.clone());
+                                        let _ = event_tx_input.send_error(format!("Failed to flush stdin: {}", e));
                                         break;
+                                    }
+                                },
+                                None => break,
+                            }
+                        }
+                    }
+                }
+            });
+
+            let mut system_response_receiver_for_stdin = system_response_channel.receiver;
+            let cancel_system_response: CancellationToken = cancel_token.clone();
+            let task_id_system_response: TaskId = task_id.clone();
+            let _system_response_handle = task::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel_system_response.cancelled() => { break; }
+                        system_response = system_response_receiver_for_stdin.recv() => {
+                            match system_response {
+                                Some(SystemResponseEvent::SystemResponse { topic, status, data }) => {
+                                    log::info!("SystemResponse event for task {}: topic='{}', status='{}', data='{}'", task_id_system_response, topic, status, data);
+                                    let _ = input_sender_clone.send(topic.clone());
+                                    let lines: Vec<&str> = data.lines().collect();
+                                    let _ = input_sender_clone.send((lines.len() + 1).to_string());
+                                    let _ = input_sender_clone.send(status.clone());
+                                    for line in lines {
+                                        let _ = input_sender_clone.send(line.to_string());
+                                    }
+                                },
+                                Some(SystemResponseEvent::SystemError { topic, status, error }) => {
+                                    log::error!("SystemError event for task {}: topic='{}', status='{}', error='{}'", task_id_system_response, topic, status, error);
+                                    let _ = input_sender_clone.send(topic.clone());
+                                    let lines: Vec<&str> = error.lines().collect();
+                                    let _ = input_sender_clone.send(lines.len().to_string());
+                                    for line in lines {
+                                        let _ = input_sender_clone.send(line.to_string());
                                     }
                                 },
                                 None => break,
@@ -1576,32 +1577,108 @@ impl Executor for CommandExecutor {
             let status_cancel: CancellationToken = cancel_token.clone();
             let task_id_status: TaskId = task_id.clone();
             let status_handle = task::spawn(async move {
+                let notify = |res: Result<std::process::ExitStatus, anyhow::Error>| {
+                    match res {
+                        Ok(exit_status) => {
+                            let code: i32 = exit_status.code().unwrap_or(-1);
+                            let _ = event_tx_status.send_exit(code);
+                        }
+                        Err(e) => {
+                            log::error!("Error waiting for process: {}", e);
+                            let _ = event_tx_status
+                                .send_error(format!("Error waiting for process: {}", e));
+                        }
+                    }
+                };
                 tokio::select! {
                     _ = shutdown_channel.receiver.recv() => {
-                        let _ = child.kill().await;
-                        match child.wait().await {
-                            Ok(exit_status) => {
-                                let code: i32 = exit_status.code().unwrap_or(-1);
-                                let _ = event_tx_status.send_exit(code, task_id_status.clone());
-                            },
-                            Err(e) => {
-                                log::error!("Error waiting for process: {}", e);
-                                let _ = event_tx_status.send_error(format!("Error waiting for process: {}", e), task_id_status.clone());
+                        log::info!("Shutdown signal received for task {}, attempting graceful termination", task_id_status);
+                        
+                        #[cfg(unix)]
+                        let pid_opt = child.id().map(|id| Pid::from_raw(id as i32));
+                        #[cfg(not(unix))]
+                        let pid_opt: Option<()> = None;
+                        
+                        #[cfg(unix)]
+                        let graceful_shutdown_attempted = if let Some(pid) = pid_opt {
+                            match kill(pid, Signal::SIGTERM) {
+                                Ok(_) => {
+                                    log::info!("Sent SIGTERM to child process {} (task {}), waiting for graceful shutdown", pid, task_id_status);
+                                    true
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to send SIGTERM to child process {} (task {}): {}, will use SIGKILL", pid, task_id_status, e);
+                                    false
+                                }
                             }
+                        } else {
+                            false
+                        };
+                        #[cfg(not(unix))]
+                        let graceful_shutdown_attempted = false;
+                        
+                        if graceful_shutdown_attempted {
+                            let graceful_timeout = tokio::time::Duration::from_secs(3);
+                            
+                            let mut wait_handle = tokio::spawn(async move {
+                                child.wait().await.map_err(anyhow::Error::from)
+                            });
+                            
+                            tokio::select! {
+                                result = &mut wait_handle => {
+                                    match result {
+                                        Ok(Ok(exit_status)) => {
+                                            #[cfg(unix)]
+                                            if let Some(pid) = pid_opt {
+                                                log::info!("Child process {} (task {}) exited gracefully after SIGTERM", pid, task_id_status);
+                                            }
+                                            notify(Ok(exit_status));
+                                            status_cancel.cancel();
+                                            return;
+                                        }
+                                        Ok(Err(e)) => {
+                                            notify(Err(e));
+                                            status_cancel.cancel();
+                                            return;
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Error waiting for child process (task {}): {}", task_id_status, e);
+                                            notify(Err(anyhow::Error::from(e)));
+                                            status_cancel.cancel();
+                                            return;
+                                        }
+                                    }
+                                }
+                                _ = tokio::time::sleep(graceful_timeout) => {
+                                    #[cfg(unix)]
+                                    if let Some(pid) = pid_opt {
+                                        log::warn!("Child process {} (task {}) did not exit within timeout, sending SIGKILL", pid, task_id_status);
+                                        let _ = kill(pid, Signal::SIGKILL);
+                                    }
+                                    match wait_handle.await {
+                                        Ok(Ok(exit_status)) => {
+                                            notify(Ok(exit_status));
+                                        }
+                                        Ok(Err(e)) => {
+                                            notify(Err(e));
+                                        }
+                                        Err(e) => {
+                                            notify(Err(anyhow::anyhow!("Child process terminated by SIGKILL: {}", e)));
+                                        }
+                                    }
+                                    status_cancel.cancel();
+                                    return;
+                                }
+                            }
+                        } else {
+                            log::info!("Forcing termination of child process for task {}", task_id_status);
+                            let _ = child.kill().await;
+                            notify(child.wait().await.map_err(anyhow::Error::from));
+                            status_cancel.cancel();
                         }
-                        status_cancel.cancel();
                     }
                     status = child.wait() => {
-                        match status {
-                            Ok(exit_status) => {
-                                let code: i32 = exit_status.code().unwrap_or(-1);
-                                let _ = event_tx_status.send_exit(code, task_id_status.clone());
-                            },
-                            Err(e) => {
-                                log::error!("Error waiting for process: {}", e);
-                                let _ = event_tx_status.send_error(format!("Error waiting for process: {}", e), task_id_status.clone());
-                            }
-                        }
+                        notify(status.map_err(anyhow::Error::from));
                     }
                 }
             });
@@ -1613,12 +1690,11 @@ impl Executor for CommandExecutor {
             let _ = input_handle.await;
         });
         
-        Ok(ExecutorHandle {
+        Ok(TaskBackendHandle {
             event_receiver: event_channel.receiver,
-            input_channel: InputChannel {
-                sender: input_sender,
-                receiver: InputReceiver::new(mpsc::unbounded_channel::<String>().1),
-            },
+            event_sender: event_channel.sender,
+            system_response_sender: system_response_channel.sender,
+            input_sender: input_channel.sender,
             shutdown_sender: shutdown_channel.sender,
         })
     }
@@ -1626,71 +1702,72 @@ impl Executor for CommandExecutor {
 
 fn spawn_stream_reader<R>(
     mut reader: R,
-    label: &'static str,
+    topic_name: String,
     event_tx: ExecutorEventSender,
     cancel_token: CancellationToken,
     task_id: TaskId,
-) -> task::JoinHandle<()>
+    emit_func: Option<fn(String) -> ExecutorEvent>,
+) -> task::JoinHandle<()> 
 where
-    R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
+    R: tokio::io::AsyncBufRead + Unpin + Send + 'static
 {
     task::spawn(async move {
         let mut buffer_manager = InputBufferManager::new();
         let mut line = String::new();
         let task_id_str = task_id.to_string();
         
+        let process_stream_outcome = |outcome: Result<StreamOutcome, String>, line_content: &str| {
+            match outcome {
+                Ok(StreamOutcome::Emit { topic, data }) => {
+                    if let Some(system_control_cmd_event) = CommandBackend::parse_system_control_command_from_plaintext(&topic, &data) {
+                        let _ = event_tx.send(system_control_cmd_event);
+                    } else {
+                        let _ = event_tx.send_message(topic, data);
+                    }
+                }
+                Ok(StreamOutcome::Plain(output)) => {
+                    let _ = event_tx.send_message(topic_name.clone(), output.clone());
+                    if let Some(emit) = emit_func {
+                        let _ = event_tx.send(emit(output));
+                    }
+                }
+                Ok(StreamOutcome::None) => {}
+                Err(e) => {
+                    let _ = event_tx.send_error(e.clone());
+                    let output = crate::buffer::strip_crlf(line_content).to_string();
+                    let _ = event_tx.send_message(topic_name.clone(), output.clone());
+                    if let Some(emit) = emit_func {
+                        let _ = event_tx.send(emit(output));
+                    }
+                }
+            }
+        };
+
         loop {
             tokio::select! {
-                _ = cancel_token.cancelled() => { 
-                    // キャンセル時に未完了のバッファをフラッシュ
+                _ = cancel_token.cancelled() => {
                     let unfinished = buffer_manager.flush_all_unfinished();
-                    for (_, key, data) in unfinished {
-                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
-                            let _ = event_tx.send_system_command(system_cmd, task_id.clone());
-                        } else {
-                            let _ = event_tx.send_message(key, data, task_id.clone());
-                        }
+                    for (_, topic, data) in unfinished {
+                        process_stream_outcome(Ok(StreamOutcome::Emit { topic, data }), "");
                     }
-                    break; 
+                    break;
                 }
                 result = reader.read_line(&mut line) => {
                     match result {
                         Ok(0) => {
-                            // EOF時に未完了のバッファをフラッシュ
                             let unfinished = buffer_manager.flush_all_unfinished();
-                            for (_, key, data) in unfinished {
-                                if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
-                                    let _ = event_tx.send_system_command(system_cmd, task_id.clone());
-                                } else {
-                                    let _ = event_tx.send_message(key, data, task_id.clone());
-                                }
+                            for (_, topic, data) in unfinished {
+                                process_stream_outcome(Ok(StreamOutcome::Emit { topic, data }), "");
                             }
                             break;
                         }
                         Ok(_) => {
-                            match buffer_manager.consume_stream_line(&task_id_str, &line) {
-                                Ok(StreamOutcome::Emit { key, data }) => {
-                                    if let Some(system_cmd) = SystemCommand::parse_from_plaintext(&key, &data) {
-                                        let _ = event_tx.send_system_command(system_cmd, task_id.clone());
-                                    } else {
-                                        let _ = event_tx.send_message(key, data, task_id.clone());
-                                    }
-                                }
-                                Ok(StreamOutcome::Plain(output)) => {
-                                    let _ = event_tx.send_message(label.to_string(), output, task_id.clone());
-                                }
-                                Ok(StreamOutcome::None) => {}
-                                Err(e) => {
-                                    let _ = event_tx.send_error(e, task_id.clone());
-                                    let output = crate::buffer::strip_crlf(&line).to_string();
-                                    let _ = event_tx.send_message(label.to_string(), output, task_id.clone());
-                                }
-                            }
+                            process_stream_outcome(buffer_manager.consume_stream_line(&task_id_str, &line), &line);
                             line.clear();
                         },
                         Err(e) => {
-                            log::error!("Error reading from {}: {}", label, e);
-                            let _ = event_tx.send_error(format!("Error reading from {}: {}", label, e), task_id.clone());
+                            log::error!("Error reading from {}: {}", topic_name, e);
+                            let _ = event_tx.send_error(format!("Error reading from {}: {}", topic_name, e));
                             break;
                         }
                     }
@@ -1708,16 +1785,17 @@ pub struct TaskConfig {
     pub args: Vec<String>,
     pub working_directory: Option<String>,
     pub environment_vars: Option<HashMap<String, String>>,
-    pub auto_start: Option<bool>,
-    pub initial_topics: Option<Vec<String>>,
-}
-
-impl TaskConfig {
-    // TaskConfig::from_toml は削除（ServerConfig::from_toml を使用）
+    pub subscribe_topics: Option<Vec<String>>,
+    pub stdout_topic: Option<String>,
+    pub stderr_topic: Option<String>,
+    #[serde(default)]
+    pub view_stdout: bool,
+    #[serde(default)]
+    pub view_stderr: bool,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-pub struct ServerConfig {
+pub struct SystemConfig {
     #[serde(skip)]
     pub config_file: Option<String>,
     pub tasks: Vec<TaskConfig>,
@@ -1725,10 +1803,11 @@ pub struct ServerConfig {
     pub include_paths: Vec<String>,
 }
 
-impl ServerConfig {
+impl SystemConfig {
     pub fn from_toml(toml_content: &str) -> Result<Self> {
-        let mut config: ServerConfig = toml::from_str(toml_content)?;
-        config.config_file = None; // ファイルパスなしで初期化
+        let mut config: SystemConfig = toml::from_str(toml_content)?;
+        config.config_file = None;
+        config.normalize_defaults();
         config.validate()?;
         Ok(config)
     }
@@ -1738,16 +1817,14 @@ impl ServerConfig {
         let mut config = Self::from_toml(&config_content)?;
         config.config_file = Some(config_file.clone());
         
-        // includeファイルを読み込む
         config.load_includes(&config_file)?;
+        config.validate()?;
         
         Ok(config)
     }
     
-    pub fn get_auto_start_tasks(&self) -> Vec<&TaskConfig> {
-        self.tasks.iter()
-            .filter(|task| task.auto_start.unwrap_or(true))
-            .collect()
+    pub fn get_all_tasks(&self) -> Vec<&TaskConfig> {
+        self.tasks.iter().collect()
     }
     
     pub fn validate(&self) -> Result<()> {
@@ -1770,8 +1847,8 @@ impl ServerConfig {
                 }
             }
             
-            if let Some(initial_topics) = &task.initial_topics {
-                for (topic_index, topic) in initial_topics.iter().enumerate() {
+            if let Some(subscribe_topics) = &task.subscribe_topics {
+                for (topic_index, topic) in subscribe_topics.iter().enumerate() {
                     if topic.is_empty() {
                         return Err(anyhow::anyhow!("Task '{}' has empty initial topic at index {}", task.name, topic_index));
                     }
@@ -1780,25 +1857,39 @@ impl ServerConfig {
                     }
                 }
             }
+
+            if let Some(stdout_topic) = &task.stdout_topic {
+                if stdout_topic.is_empty() {
+                    return Err(anyhow::anyhow!("Task '{}' stdout_topic is empty", task.name));
+                }
+                if stdout_topic.contains(' ') {
+                    return Err(anyhow::anyhow!("Task '{}' stdout_topic '{}' contains spaces (not allowed)", task.name, stdout_topic));
+                }
+            }
+            if let Some(stderr_topic) = &task.stderr_topic {
+                if stderr_topic.is_empty() {
+                    return Err(anyhow::anyhow!("Task '{}' stderr_topic is empty", task.name));
+                }
+                if stderr_topic.contains(' ') {
+                    return Err(anyhow::anyhow!("Task '{}' stderr_topic '{}' contains spaces (not allowed)", task.name, stderr_topic));
+                }
+            }
         }
         
         Ok(())
     }
     
-    /// includeファイルを再帰的に読み込む（循環参照を防止）
     fn load_includes(&mut self, base_config_path: &str) -> Result<()> {
         let mut loaded_files = std::collections::HashSet::new();
         let base_dir = std::path::Path::new(base_config_path)
             .parent()
             .unwrap_or(std::path::Path::new("."));
         
-        // include_pathsをクローンして借用の問題を回避
         let include_paths = self.include_paths.clone();
         self.load_includes_recursive(&mut loaded_files, base_dir, &include_paths)?;
         Ok(())
     }
     
-    /// 再帰的にincludeファイルを読み込む内部メソッド
     fn load_includes_recursive(
         &mut self,
         loaded_files: &mut std::collections::HashSet<String>,
@@ -1806,38 +1897,30 @@ impl ServerConfig {
         include_paths: &[String],
     ) -> Result<()> {
         for include_path in include_paths {
-            // 相対パスを絶対パスに変換
             let full_path = if std::path::Path::new(include_path).is_absolute() {
                 include_path.clone()
             } else {
                 base_dir.join(include_path).to_string_lossy().to_string()
             };
             
-            // 循環参照をチェック
             if loaded_files.contains(&full_path) {
                 log::warn!("Circular include detected for file: {}", full_path);
                 continue;
             }
             
-            // ファイルが存在するかチェック
             if !std::path::Path::new(&full_path).exists() {
                 log::warn!("Include file not found: {}", full_path);
                 continue;
             }
             
-            // ファイルを読み込む
             match std::fs::read_to_string(&full_path) {
                 Ok(content) => {
                     loaded_files.insert(full_path.clone());
                     log::info!("Loading include file: {}", full_path);
                     
-                    // TOMLを解析
                     match Self::from_toml(&content) {
                         Ok(included_config) => {
-                            // タスクをマージ
                             self.tasks.extend(included_config.tasks);
-                            
-                            // 再帰的にincludeファイルを読み込む
                             if !included_config.include_paths.is_empty() {
                                 let include_dir = std::path::Path::new(&full_path)
                                     .parent()
@@ -1863,124 +1946,155 @@ impl ServerConfig {
         
         Ok(())
     }
+
+    fn normalize_defaults(&mut self) {
+        for task in self.tasks.iter_mut() {
+            if task.stdout_topic.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                task.stdout_topic = Some("stdout".to_string());
+            }
+            if task.stderr_topic.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                task.stderr_topic = Some("stderr".to_string());
+            }
+            if task.working_directory.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                task.working_directory = Some("./".to_string());
+            }
+            if task.view_stdout != true {
+                task.view_stdout = false;
+            }
+            if task.view_stderr != true {
+                task.view_stderr = false;
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct RunningTask {
     pub task_id: TaskId,
-    pub task_name: String,
     pub shutdown_sender: ShutdownSender,
     pub task_handle: tokio::task::JoinHandle<()>,
+    pub view_stdout: bool,
+    pub view_stderr: bool,
 }
 
 #[derive(Clone)]
-pub struct TaskRegistry {
-    running_tasks: Arc<RwLock<HashMap<String, RunningTask>>>,
+pub struct TaskExecutor {
+    running_tasks: Arc<RwLock<HashMap<TaskId, RunningTask>>>,
+    name_to_id: Arc<RwLock<HashMap<String, TaskId>>>,
 }
 
-impl TaskRegistry {
+impl TaskExecutor {
     pub fn new() -> Self {
         Self {
             running_tasks: Arc::new(RwLock::new(HashMap::new())),
+            name_to_id: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-
-    pub async fn register_task(&self, task_name: String, task: RunningTask) {
-        let mut running_tasks = self.running_tasks.write().await;
-        running_tasks.insert(task_name, task);
-    }
-
 
     pub async fn try_register_task(&self, task_name: String, task: RunningTask) -> Result<(), String> {
         let mut running_tasks = self.running_tasks.write().await;
-        let is_running = running_tasks.contains_key(&task_name);
-        log::info!("Task '{}' is_running={}", task_name, is_running);
-        
-        if is_running {
+        let mut name_to_id = self.name_to_id.write().await;
+        let task_id = task.task_id.clone();
+        if name_to_id.contains_key(&task_name) {
             log::warn!("Task '{}' is already running - cancelling new task start", task_name);
-            Err(format!("Task '{}' is already running", task_name))
+            return Err(format!("Task '{}' is already running", task_name));
+        }
+        running_tasks.insert(task_id.clone(), task);
+        name_to_id.insert(task_name, task_id);
+        Ok(())
+    }
+
+    pub async fn unregister_task_by_task_id(&self, task_id: &TaskId) -> Option<RunningTask> {
+        let mut running_tasks = self.running_tasks.write().await;
+        let mut name_to_id = self.name_to_id.write().await;
+        if let Some(task) = running_tasks.remove(task_id) {
+            name_to_id.retain(|_name, id| id != task_id);
+            Some(task)
         } else {
-            running_tasks.insert(task_name.clone(), task);
-            log::info!("Registered new task '{}'", task_name);
-            Ok(())
+            None
+        }
+    }
+    pub async fn unregister_task_by_name(&self, task_name: &str) -> Option<RunningTask> {
+        let id = {
+            let name_to_id = self.name_to_id.read().await;
+            name_to_id.get(task_name).cloned()
+        };
+        if let Some(tid) = id {
+            self.unregister_task_by_task_id(&tid).await
+        } else {
+            None
         }
     }
 
-    pub async fn unregister_task(&self, task_name: &str) -> Option<RunningTask> {
-        let mut running_tasks = self.running_tasks.write().await;
-        running_tasks.remove(task_name)
-    }
-
-    pub async fn stop_task(&self, task_name: &str) -> Result<()> {
+    pub async fn stop_task_by_task_id(&self, task_id: &TaskId) -> Result<()> {
         let running_task = {
             let mut running_tasks = self.running_tasks.write().await;
-            running_tasks.remove(task_name)
+            running_tasks.remove(task_id)
         };
-        
         match running_task {
             Some(task) => {
-                log::info!("Attempting to stop task '{}' (ID: {})", task_name, task.task_id);
-                
-                if task.task_handle.is_finished() {
-                    log::info!("Task '{}' already finished, skipping shutdown signal", task_name);
-                } else {
-                    if let Err(e) = task.shutdown_sender.shutdown() {
-                        log::debug!("Task '{}' already terminated, shutdown signal not needed: {}", task_name, e);
-                    }
-                }
-                
+                log::info!("Stopped task with TaskId={} (Human name index updated)", task_id);
+                let mut name_to_id = self.name_to_id.write().await;
+                name_to_id.retain(|_name, id| id != task_id);
                 task.task_handle.abort();
-                
-                info!("Successfully stopped task '{}' (ID: {})", task_name, task.task_id);
                 Ok(())
             },
             None => {
-                log::warn!("Attempted to stop non-running task '{}'", task_name);
-                Err(anyhow::anyhow!("Task '{}' is not running", task_name))
+                log::warn!("Attempted to stop non-running task TaskId={}", task_id);
+                Err(anyhow::anyhow!("TaskId '{}' is not running", task_id))
             }
         }
     }
 
-
-    pub async fn cleanup_finished_tasks(&self) -> Vec<String> {
-        let mut finished_tasks = Vec::new();
-        let mut running_tasks = self.running_tasks.write().await;
-        
-        running_tasks.retain(|name, task| {
-            if task.shutdown_sender.is_closed() {
-                finished_tasks.push(name.clone());
-                false
-            } else {
-                true
-            }
-        });
-        
-        if !finished_tasks.is_empty() {
-            log::info!("Cleaned up {} finished tasks: {:?}", finished_tasks.len(), finished_tasks);
+    pub async fn stop_task_by_name(&self, task_name: &str) -> Result<()> {
+        let id = {
+            let name_to_id = self.name_to_id.read().await;
+            name_to_id.get(task_name).cloned()
+        };
+        if let Some(tid) = id {
+            self.stop_task_by_task_id(&tid).await
+        } else {
+            Err(anyhow::anyhow!("Task name '{}' not found", task_name))
         }
-        
-        finished_tasks
-    }
-
-    pub async fn get_task_count(&self) -> usize {
-        let running_tasks = self.running_tasks.read().await;
-        running_tasks.len()
     }
 
     pub async fn get_running_tasks_info(&self) -> Vec<(String, TaskId)> {
-        let running_tasks = self.running_tasks.read().await;
-        running_tasks.iter()
-            .map(|(name, task)| (name.clone(), task.task_id.clone()))
-            .collect()
+        let name_to_id = self.name_to_id.read().await;
+        name_to_id.iter().map(|(name, task_id)| (name.clone(), task_id.clone())).collect()
+    }
+
+    pub async fn get_view_flags_by_task_id(&self, task_id: &TaskId) -> Option<(bool, bool)> {
+        let running_tasks_guard = self.running_tasks.read().await;
+        running_tasks_guard.get(task_id).map(|t| (t.view_stdout, t.view_stderr))
+    }
+
+    pub async fn graceful_shutdown_all(&self, timeout: std::time::Duration) {
+        let tasks: Vec<(TaskId, RunningTask)> = {
+            let mut running_tasks = self.running_tasks.write().await;
+            let drained: Vec<(TaskId, RunningTask)> = running_tasks.drain().collect();
+            drained
+        };
+        {
+            let mut name_to_id = self.name_to_id.write().await;
+            name_to_id.clear();
+        }
+
+        for (_tid, task) in &tasks {
+            let _ = task.shutdown_sender.shutdown();
+        }
+
+        for (_tid, task) in tasks {
+            let _ = tokio::time::timeout(timeout, task.task_handle).await;
+        }
     }
 
     pub async fn start_task_from_config(
         &self,
         task_config: &TaskConfig,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        system_command_sender: SystemCommandSender,
+        topic_manager: TopicManager,
+        system_control_manager: SystemControlManager,
         shutdown_token: CancellationToken,
+        userlog_sender: UserLogSender,
     ) -> Result<()> {
         log::info!("Starting task '{}'", task_config.name);
         
@@ -1998,37 +2112,39 @@ impl TaskRegistry {
         let task_id_new = TaskId::new();
         let shutdown_channel = ShutdownChannel::new();
         
-        let command_config = CommandConfig {
-            command: task_config.command.clone(),
-            args: task_config.args.clone(),
-            working_directory: task_config.working_directory.clone(),
-            environment_vars: task_config.environment_vars.clone(),
-        };
-        
-        let executor = CommandExecutor;
-        let initial_topics = task_config.initial_topics.clone();
+        let backend: Box<dyn TaskBackend> = Box::new(CommandBackend::new(
+            task_config.command.clone(),
+            task_config.args.clone(),
+            task_config.working_directory.clone(),
+            task_config.environment_vars.clone(),
+            task_config.stdout_topic.clone().unwrap(),
+            task_config.stderr_topic.clone().unwrap(),
+            task_config.view_stdout,
+            task_config.view_stderr,
+        ));
+        let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
             task_id_new.clone(),
-            topic_request_sender,
-            topic_subscriber,
-            system_command_sender,
+            topic_manager,
+            system_control_manager,
             self.clone(),
             task_config.name.clone(),
+            userlog_sender,
         );
         
-        let task_handle = task_spawner.spawn_executor(
-            executor,
-            command_config,
+        let task_handle = task_spawner.spawn_backend(
+            backend,
             shutdown_token,
-            initial_topics,
+            subscribe_topics,
         ).await;
         
         let running_task = RunningTask {
             task_id: task_id_new.clone(),
-            task_name: task_config.name.clone(),
             shutdown_sender: shutdown_channel.sender,
             task_handle,
+            view_stdout: task_config.view_stdout,
+            view_stderr: task_config.view_stderr,
         };
         
         if let Err(e) = self.try_register_task(task_config.name.clone(), running_task).await {
@@ -2042,21 +2158,21 @@ impl TaskRegistry {
     pub async fn start_single_task(
         &self,
         task_name: &str,
-        config: &ServerConfig,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        system_command_sender: SystemCommandSender,
+        config: &SystemConfig,
+        topic_manager: TopicManager,
+        system_control_manager: SystemControlManager,
         shutdown_token: CancellationToken,
+        userlog_sender: UserLogSender,
     ) -> Result<()> {
         let task_config = config.tasks.iter().find(|t| t.name == task_name);
         match task_config {
             Some(task_config) => {
                 self.start_task_from_config(
                     task_config,
-                    topic_request_sender,
-                    topic_subscriber,
-                    system_command_sender,
+                    topic_manager,
+                    system_control_manager,
                     shutdown_token,
+                    userlog_sender,
                 ).await
             },
             None => Err(anyhow::anyhow!("Task '{}' not found in configuration", task_name))
@@ -2066,34 +2182,27 @@ impl TaskRegistry {
     pub async fn add_task_from_toml(
         &self,
         toml_data: &str,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        system_command_sender: SystemCommandSender,
+        topic_manager: TopicManager,
+        system_control_manager: SystemControlManager,
         shutdown_token: CancellationToken,
+        userlog_sender: UserLogSender,
     ) -> Result<()> {
-        // ServerConfig形式でTOMLを解析（config.tomlと同じ形式）
-        let server_config = ServerConfig::from_toml(toml_data)?;
+        let system_config = SystemConfig::from_toml(toml_data)?;
         
-        if server_config.tasks.is_empty() {
+        if system_config.tasks.is_empty() {
             return Err(anyhow::anyhow!("No tasks found in TOML data"));
         }
         
-        // すべてのタスクを処理
-        for task_config in &server_config.tasks {
-            if task_config.auto_start.unwrap_or(false) {
-                log::info!("Auto-starting task '{}' from TOML", task_config.name);
-                if let Err(e) = self.start_task_from_config(
-                    task_config,
-                    topic_request_sender.clone(),
-                    topic_subscriber.clone(),
-                    system_command_sender.clone(),
-                    shutdown_token.clone(),
-                ).await {
-                    log::error!("Failed to start task '{}': {}", task_config.name, e);
-                    // エラーが発生しても他のタスクの処理は続行
-                }
-            } else {
-                log::info!("Task '{}' added to registry from TOML (auto_start=false, waiting for start command)", task_config.name);
+        for task_config in &system_config.tasks {
+            log::info!("Starting task '{}' from TOML", task_config.name);
+            if let Err(e) = self.start_task_from_config(
+                task_config,
+                topic_manager.clone(),
+                system_control_manager.clone(),
+                shutdown_token.clone(),
+                userlog_sender.clone(),
+            ).await {
+                log::error!("Failed to start task '{}': {}", task_config.name, e);
             }
         }
         
@@ -2102,303 +2211,211 @@ impl TaskRegistry {
 
 }
 
-pub struct MiclowServer {
-    pub config: ServerConfig,
-    topic_channel: TopicChannel,
-    topic_subscriber: TopicSubscriber,
-    system_command_channel: SystemCommandChannel,
-    task_registry: TaskRegistry,
-    shutdown_token: CancellationToken,
+#[derive(Default)]
+pub struct BackgroundTaskManager {
+    handles: Vec<(String, JoinHandle<()>)>,
 }
 
-impl MiclowServer {
-    pub fn new(config: ServerConfig) -> Self {
-        let topic_channel: TopicChannel = TopicChannel::new();
-        let topic_subscriber: TopicSubscriber = TopicSubscriber::new();
-        let system_command_channel: SystemCommandChannel = SystemCommandChannel::new();
-        let shutdown_token: CancellationToken = CancellationToken::new();
-        let task_registry: TaskRegistry = TaskRegistry::new();
-        
-        Self {
-            config,
-            topic_channel,
-            topic_subscriber,
-            system_command_channel,
-            task_registry,
-            shutdown_token,
+impl BackgroundTaskManager {
+    pub fn new() -> Self { Self { handles: Vec::new() } }
+    pub fn register(&mut self, name: &str, handle: JoinHandle<()>) {
+        self.handles.push((name.to_string(), handle));
+    }
+    pub async fn shutdown_all(&mut self, timeout: std::time::Duration) {
+        let mut handles = std::mem::take(&mut self.handles);
+        for (idx, (name, mut h)) in handles.drain(..).enumerate() {
+            log::info!("Waiting background task {} ({}) up to {:?}", idx, name, timeout);
+            let finished_in_time = tokio::time::timeout(timeout, &mut h).await.is_ok();
+            if !finished_in_time {
+                log::warn!("Background task {} ({}) did not finish in {:?}, aborting", idx, name, timeout);
+                h.abort();
+                let _ = h.await;
+            }
         }
     }
 
-    fn start_topic_request_worker(
-        topic_request_receiver: TopicRequestReceiver,
-        subscriber_manager: TopicSubscriber,
-        shutdown_token: CancellationToken,
-    ) {
-        log::info!("Starting topic request worker");
-        start_topic_request_worker(topic_request_receiver, subscriber_manager, shutdown_token);
+    pub async fn abort_all(&mut self) {
+        let mut handles = std::mem::take(&mut self.handles);
+        for (_name, h) in handles.drain(..) {
+            h.abort();
+            let _ = h.await;
+        }
     }
+}
 
-    fn start_system_command_worker(
-        system_command_receiver: SystemCommandReceiver,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        task_registry: TaskRegistry,
-        config: ServerConfig,
-        system_command_sender: SystemCommandSender,
-        shutdown_token: CancellationToken,
-    ) {
-        log::info!("Starting system command worker");
-        start_system_command_worker(system_command_receiver, topic_request_sender, topic_subscriber, task_registry, config, system_command_sender, shutdown_token);
+pub struct MiclowSystem {
+    pub config: SystemConfig,
+    topic_manager: TopicManager,
+    system_control_manager: SystemControlManager,
+    task_executor: TaskExecutor,
+    shutdown_token: CancellationToken,
+    background_tasks: BackgroundTaskManager,
+}
+
+impl MiclowSystem {
+    pub fn new(config: SystemConfig) -> Self {
+        let topic_manager: TopicManager = TopicManager::new();
+        let shutdown_token: CancellationToken = CancellationToken::new();
+        let system_control_manager: SystemControlManager = SystemControlManager::new(shutdown_token.clone());
+        let task_executor: TaskExecutor = TaskExecutor::new();
+        Self {
+            config,
+            topic_manager,
+            system_control_manager,
+            task_executor,
+            shutdown_token,
+            background_tasks: BackgroundTaskManager::new(),
+        }
     }
-
 
     async fn start_user_tasks(
-        config: &ServerConfig,
-        task_registry: &TaskRegistry,
-        topic_request_sender: TopicRequestSender,
-        topic_subscriber: TopicSubscriber,
-        system_command_sender: SystemCommandSender,
+        config: &SystemConfig,
+        task_executor: &TaskExecutor,
+        topic_manager: TopicManager,
+        system_control_manager: SystemControlManager,
         shutdown_token: CancellationToken,
+        userlog_sender: UserLogSender,
     ) {
-        let auto_start_tasks: Vec<&TaskConfig> = config.get_auto_start_tasks();
-        
-        for task_config in auto_start_tasks.iter() {
+        let tasks: Vec<&TaskConfig> = config.get_all_tasks();
+
+        for task_config in tasks.iter() {
             let task_name: String = task_config.name.clone();
-            
-            match task_registry.start_single_task(
+
+            match task_executor.start_single_task(
                 &task_name,
                 config,
-                topic_request_sender.clone(),
-                topic_subscriber.clone(),
-                system_command_sender.clone(),
+                topic_manager.clone(),
+                system_control_manager.clone(),
                 shutdown_token.clone(),
+                userlog_sender.clone(),
             ).await {
                 Ok(_) => {
-                    info!("Started user task {} with command: {} {}", 
-                          task_name, 
-                          task_config.command, 
+                    log::info!("Started user task {} with command: {} {}",
+                          task_name,
+                          task_config.command,
                           task_config.args.join(" "));
                 },
                 Err(e) => {
-                    log::error!("Failed to start auto-start task '{}': {}", task_name, e);
+                    log::error!("Failed to start task '{}': {}", task_name, e);
                     continue;
                 }
             }
         }
-        
-        if auto_start_tasks.is_empty() {
-            info!("No auto-start tasks configured");
+
+        if tasks.is_empty() {
+            log::info!("No tasks configured");
         } else {
-            info!("Started {} user tasks from configuration", auto_start_tasks.len());
+            log::info!("Started {} user tasks from configuration", tasks.len());
         }
     }
 
-    pub async fn start_server_with_interactive(
-        self,
+    pub async fn start_system_with_interactive(
+        mut self,
     ) -> Result<()> {
-        let topic_req_receiver: TopicRequestReceiver = self.topic_channel.receiver;
-        let topic_sender: TopicRequestSender = self.topic_channel.sender;
-        let topic_subscriber: TopicSubscriber = self.topic_subscriber.clone();
-        let system_command_receiver: SystemCommandReceiver = self.system_command_channel.receiver;
-        let system_command_sender: SystemCommandSender = self.system_command_channel.sender;
+        let topic_manager: TopicManager = self.topic_manager.clone();
 
-        Self::start_topic_request_worker(topic_req_receiver, topic_subscriber.clone(), self.shutdown_token.clone());
-        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
+        let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
+        let _ = set_channel_logger(log_tx, level_from_env());
+        let logging_shutdown = CancellationToken::new();
+        let h_log = spawn_log_aggregator(log_rx, logging_shutdown.clone());
+        self.background_tasks.register("log_aggregator", h_log);
+
+        let (userlog_tx, userlog_rx) = mpsc::unbounded_channel::<UserLogEvent>();
+        let userlog_sender = UserLogSender::new(userlog_tx);
+        let h_userlog = spawn_user_log_aggregator(userlog_rx, logging_shutdown.clone());
+        self.background_tasks.register("user_log_aggregator", h_userlog);
+
+        let h_sys = start_system_control_worker(
+            self.system_control_manager.clone(),
+            topic_manager.clone(),
+            self.task_executor.clone(),
+            self.config.clone(),
+            self.shutdown_token.clone(),
+            userlog_sender.clone(),
+        );
+        self.background_tasks.register("system_control_worker", h_sys);
 
         Self::start_user_tasks(
             &self.config,
-            &self.task_registry,
-            topic_sender.clone(),
-            topic_subscriber.clone(),
-            system_command_sender.clone(),
+            &self.task_executor,
+            topic_manager.clone(),
+            self.system_control_manager.clone(),
             self.shutdown_token.clone(),
-        ).await;
-
-        info!("All workers and user tasks started successfully");
-        
-        let topic_request_sender: TopicRequestSender = topic_sender.clone();
-        
-        log::info!("Server running. Press Ctrl+C to stop.");
-        println!("Server running. Press Ctrl+C to stop.");
-        
-        Self::start_interactive_mode(
-            system_command_sender.clone(), 
-            topic_subscriber.clone(),
-            self.shutdown_token.clone()
+            userlog_sender.clone(),
         ).await;
         
-        log::info!("Received shutdown signal, stopping all workers...");
+        log::info!("System running. Press Ctrl+C to stop.");
+        println!("System running. Press Ctrl+C to stop.");
         
-        Self::shutdown_workers(
-            topic_request_sender,
-            self.task_registry,
-            self.shutdown_token,
-        ).await;
-        
-        log::info!("Server shutdown completed");
-        println!("Graceful shutdown completed");
-        
-        Ok(())
-    }
-
-    pub async fn start_server(
-        self,
-    ) -> Result<()> {
-        let topic_req_receiver: TopicRequestReceiver = self.topic_channel.receiver;
-        let topic_sender: TopicRequestSender = self.topic_channel.sender;
-        let topic_subscriber: TopicSubscriber = self.topic_subscriber.clone();
-        let system_command_receiver: SystemCommandReceiver = self.system_command_channel.receiver;
-        let system_command_sender: SystemCommandSender = self.system_command_channel.sender;
-
-        Self::start_topic_request_worker(topic_req_receiver, topic_subscriber.clone(), self.shutdown_token.clone());
-        Self::start_system_command_worker(system_command_receiver, topic_sender.clone(), topic_subscriber.clone(), self.task_registry.clone(), self.config.clone(), system_command_sender.clone(), self.shutdown_token.clone());
-
-        Self::start_user_tasks(
-            &self.config,
-            &self.task_registry,
-            topic_sender.clone(),
-            topic_subscriber,
-            system_command_sender,
-            self.shutdown_token.clone(),
-        ).await;
-
-        info!("All workers and user tasks started successfully");
-        
-        let topic_request_sender: TopicRequestSender = topic_sender;
-        
-        log::info!("Server running. Press Ctrl+C to stop.");
-        println!("Server running. Press Ctrl+C to stop.");
-        
-        let mut sigint = signal(SignalKind::interrupt()).expect("Failed to create SIGINT signal handler");
-        sigint.recv().await;
-        
-        log::info!("Received shutdown signal, stopping all workers...");
-        
-        Self::shutdown_workers(
-            topic_request_sender,
-            self.task_registry,
-            self.shutdown_token,
-        ).await;
-        
-        log::info!("Server shutdown completed");
-        println!("Graceful shutdown completed");
-        
-        Ok(())
-    }
-
-    async fn start_interactive_mode(
-        system_command_sender: SystemCommandSender,
-        topic_subscriber: TopicSubscriber,
-        shutdown_token: CancellationToken
-    ) {
-        let stdin = stdin();
-        let reader = TokioBufReader::new(stdin);
-        let mut lines = reader.lines();
-        
+        let shutdown_token = self.shutdown_token.clone();
         let interactive_task_id = TaskId::new();
+        let interactive_backend: Box<dyn TaskBackend> = Box::new(InteractiveBackend::new("system".to_string()));
+        let interactive_task_spawner = TaskSpawner::new(
+            interactive_task_id.clone(),
+            topic_manager.clone(),
+            self.system_control_manager.clone(),
+            self.task_executor.clone(),
+            "interactive".to_string(),
+            userlog_sender.clone(),
+        );
+        let mut interactive_handle = interactive_task_spawner.spawn_backend(
+            interactive_backend,
+            self.shutdown_token.clone(),
+            None,
+        ).await;
         
-        let interactive_event_channel = ExecutorEventChannel::new();
-        let interactive_event_sender = interactive_event_channel.sender;
-        
-        loop {
-            if shutdown_token.is_cancelled() {
-                log::info!("Interactive mode received shutdown signal");
-                break;
+        let ctrlc_fut = async {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                log::error!("Ctrl+C signal error: {}", e);
+            } else {
+                log::info!("Received Ctrl+C. Requesting graceful shutdown...");
+                shutdown_token.cancel();
             }
-            
-            print!("> ");
-            std::io::Write::flush(&mut std::io::stdout()).unwrap();
-            
-            tokio::select! {
-                _ = shutdown_token.cancelled() => {
-                    log::info!("Interactive mode received shutdown signal");
-                    break;
-                }
-                line_result = lines.next_line() => {
-                    if let Some(line) = line_result.unwrap_or_default() {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-                        
-                        if let Some(system_cmd) = SystemCommand::parse_from_plaintext("", trimmed) {
-                            log::info!("Sending system command from interactive mode: {:?}", system_cmd);
-                            
-                            let system_command_message = SystemCommandMessage::new(
-                                system_cmd,
-                                interactive_task_id.clone(),
-                                interactive_event_sender.clone()
-                            );
-                            
-                            if let Err(e) = system_command_sender.send(system_command_message) {
-                                log::error!("Failed to send system command: {}", e);
-                                eprintln!("Failed to send system command: {}", e);
-                            } else {
-                                log::info!("Successfully sent system command from interactive mode");
-                            }
-                        } else {
-                            log::info!("Sending message to stdout topic: '{}'", trimmed);
-                            
-                            let executor_event = ExecutorEvent::new_message(
-                                "stdout".to_string(),
-                                trimmed.to_string(),
-                                interactive_task_id.clone()
-                            );
-                            
-                            match topic_subscriber.broadcast_message(executor_event).await {
-                                Ok(success_count) => {
-                                    log::info!("Successfully broadcasted message to {} subscribers on stdout topic", success_count);
-                                },
-                                Err(e) => {
-                                    log::error!("Failed to broadcast message to stdout topic: {}", e);
-                                    eprintln!("Failed to broadcast message to stdout topic: {}", e);
-                                }
-                            }
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
+        };
+        tokio::select! {
+            _ = &mut interactive_handle => {
+                log::info!("Interactive mode terminated");
+            },
+            _ = ctrlc_fut => {
+                log::info!("Ctrl+C signal received, proceeding with shutdown");
+            },
         }
-    }
 
-    pub async fn trigger_graceful_shutdown(
-        topic_request_sender: TopicRequestSender,
-        task_registry: TaskRegistry,
-        shutdown_token: CancellationToken,
-    ) {
-        Self::shutdown_workers(topic_request_sender, task_registry, shutdown_token).await;
+        log::info!("Received shutdown signal, stopping all workers...");
+        
+        Self::shutdown_workers(
+            self.task_executor,
+            self.shutdown_token,
+        ).await;
+
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        logging_shutdown.cancel();
+        if !interactive_handle.is_finished() {
+            interactive_handle.abort();
+            let _ = interactive_handle.await;
+        }
+        self.background_tasks.abort_all().await;
+        log::logger().flush();
+
+        log::info!("Graceful shutdown completed");
+        println!("Graceful shutdown completed");
+        return Ok(());
     }
 
     async fn shutdown_workers(
-        topic_request_sender: TopicRequestSender,
-        task_registry: TaskRegistry,
+        task_executor: TaskExecutor,
         shutdown_token: CancellationToken,
     ) {
         log::info!("Starting graceful shutdown...");
-        
-        let running_tasks = task_registry.running_tasks.read().await;
-        let task_names: Vec<String> = running_tasks.keys().cloned().collect();
-        drop(running_tasks);
-        
-        for task_name in task_names {
-            if let Err(e) = task_registry.stop_task(&task_name).await {
-                log::warn!("Failed to stop task '{}': {}", task_name, e);
-            }
-        }
-        
-        log::info!("Cancelling all tasks...");
+
+        log::info!("Cancelling shutdown token");
         shutdown_token.cancel();
-        
-        log::info!("Closing all communication channels...");
-        
-        drop(topic_request_sender);
-        
-        log::info!("All channels closed, waiting for workers to finish...");
-        
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        
-        log::info!("Graceful shutdown completed");
+
+        log::info!("Waiting for running tasks to finish...");
+        task_executor.graceful_shutdown_all(std::time::Duration::from_secs(5)).await;
+
+        log::info!("All user tasks stopped");
     }
 }
+
+// TODO function機能を追加する。system.function.{task_name}としてレスポンスを取得できるようにする。
