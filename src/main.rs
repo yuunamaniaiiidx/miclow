@@ -4,14 +4,17 @@ mod input_channel;
 mod system_response_channel;
 mod shutdown_channel;
 mod user_log_sender;
+mod system_control_command;
+mod system_control_message;
+mod spawn_backend_result;
+mod config;
 mod miclow;
 mod buffer;
 mod logging;
 
 use anyhow::Result;
-use miclow::{
-    SystemConfig, MiclowSystem
-};
+use crate::config::SystemConfig;
+use miclow::MiclowSystem;
 use clap::Parser;
 use std::process::exit;
 
