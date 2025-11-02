@@ -123,11 +123,44 @@ impl ExecutorEventChannel {
     }
 }
 
-// InputDataトレイト：stdinに入力可能なデータを表す
-pub trait InputData: Send + Sync {
+// StdinProtocolトレイト：stdinに入力可能なデータを表す
+pub trait StdinProtocol: Send + Sync {
     /// stdinに入力する形式の文字列のベクターを返す
     /// 各行がstdinに送信される順序で返される
-    fn to_input_lines(&self) -> Vec<String>;
+    /// 
+    /// デフォルト実装では以下のバリデーションを行います：
+    /// - 1行目がStringであること（常に満たされる）
+    /// - 2行目が数値であること
+    /// - 3行目以降の行数が2行目の数値と一致すること
+    fn to_input_lines(&self) -> Vec<String> {
+        let lines = self.to_input_lines_raw();
+        
+        // バリデーション: 少なくとも2行あることを確認
+        if lines.len() < 2 {
+            panic!("StdinProtocol validation failed: must have at least 2 lines, got {}", lines.len());
+        }
+        
+        // バリデーション: 2行目が数値であることを確認
+        let line_count: usize = lines[1].parse()
+            .unwrap_or_else(|_| {
+                panic!("StdinProtocol validation failed: line 2 must be a number, got '{}'", lines[1]);
+            });
+        
+        // バリデーション: 3行目以降の行数が2行目の数値と一致することを確認
+        let data_line_count = lines.len() - 2;
+        if data_line_count != line_count {
+            panic!(
+                "StdinProtocol validation failed: expected {} data lines (from line 2), but got {} (total lines: {})",
+                line_count, data_line_count, lines.len()
+            );
+        }
+        
+        lines
+    }
+    
+    /// 内部実装メソッド: バリデーションなしで行のベクターを返す
+    /// 各実装ではこのメソッドを実装する
+    fn to_input_lines_raw(&self) -> Vec<String>;
 }
 
 // TopicMessage: トピック経由のメッセージ
@@ -137,8 +170,8 @@ pub struct TopicMessage {
     pub data: String,
 }
 
-impl InputData for TopicMessage {
-    fn to_input_lines(&self) -> Vec<String> {
+impl StdinProtocol for TopicMessage {
+    fn to_input_lines_raw(&self) -> Vec<String> {
         let mut lines = vec![self.topic.clone()];
         let data_lines: Vec<&str> = self.data.lines().collect();
         lines.push(data_lines.len().to_string());
@@ -155,8 +188,8 @@ pub struct SystemResponseMessage {
     pub data: String,
 }
 
-impl InputData for SystemResponseMessage {
-    fn to_input_lines(&self) -> Vec<String> {
+impl StdinProtocol for SystemResponseMessage {
+    fn to_input_lines_raw(&self) -> Vec<String> {
         let mut lines = vec![self.topic.clone()];
         let data_lines: Vec<&str> = self.data.lines().collect();
         lines.push((data_lines.len() + 1).to_string()); // +1 for status line
@@ -172,8 +205,8 @@ pub struct ReturnMessage {
     pub data: String,
 }
 
-impl InputData for ReturnMessage {
-    fn to_input_lines(&self) -> Vec<String> {
+impl StdinProtocol for ReturnMessage {
+    fn to_input_lines_raw(&self) -> Vec<String> {
         let data_lines: Vec<&str> = self.data.lines().collect();
         let mut lines = vec!["system.return".to_string(), data_lines.len().to_string()];
         lines.extend(data_lines.iter().map(|s| s.to_string()));
@@ -189,12 +222,12 @@ pub enum InputDataMessage {
     Return(ReturnMessage),
 }
 
-impl InputData for InputDataMessage {
-    fn to_input_lines(&self) -> Vec<String> {
+impl StdinProtocol for InputDataMessage {
+    fn to_input_lines_raw(&self) -> Vec<String> {
         match self {
-            InputDataMessage::Topic(msg) => msg.to_input_lines(),
-            InputDataMessage::SystemResponse(msg) => msg.to_input_lines(),
-            InputDataMessage::Return(msg) => msg.to_input_lines(),
+            InputDataMessage::Topic(msg) => msg.to_input_lines_raw(),
+            InputDataMessage::SystemResponse(msg) => msg.to_input_lines_raw(),
+            InputDataMessage::Return(msg) => msg.to_input_lines_raw(),
         }
     }
 }
