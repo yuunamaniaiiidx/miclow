@@ -1430,7 +1430,6 @@ impl SystemControlCommand {
     }
 }
 
-
 pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<SystemControlCommand> {
     let ExecutorEvent::SystemControl { key, data } = event else {
         return None;
@@ -1616,7 +1615,7 @@ impl TaskBackend for InteractiveBackend {
 }
 
 #[derive(Clone)]
-pub struct CommandBackend {
+pub struct ShellBackend {
     command: String,
     args: Vec<String>,
     working_directory: Option<String>,
@@ -1627,7 +1626,7 @@ pub struct CommandBackend {
     view_stderr: bool,
 }
 
-impl CommandBackend {
+impl ShellBackend {
     pub fn new(
         command: String,
         args: Vec<String>,
@@ -1705,7 +1704,7 @@ impl CommandBackend {
 }
 
 #[async_trait]
-impl TaskBackend for CommandBackend {
+impl TaskBackend for ShellBackend {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         let command = self.command.clone();
         let args = self.args.clone();
@@ -1970,9 +1969,9 @@ where
             match outcome {
                 Ok(StreamOutcome::Emit { topic, data }) => {
                     // system.returnのチェック（ReturnMessage）
-                    if let Some(return_message_event) = CommandBackend::parse_return_message_from_outcome(&topic, &data) {
+                    if let Some(return_message_event) = ShellBackend::parse_return_message_from_outcome(&topic, &data) {
                         let _ = event_tx.send(return_message_event);
-                    } else if let Some(system_control_cmd_event) = CommandBackend::parse_system_control_command_from_outcome(&topic, &data) {
+                    } else if let Some(system_control_cmd_event) = ShellBackend::parse_system_control_command_from_outcome(&topic, &data) {
                         // SystemControlコマンドのチェック
                         let _ = event_tx.send(system_control_cmd_event);
                     } else {
@@ -2392,7 +2391,7 @@ impl TaskExecutor {
         
         let task_id_new = TaskId::new();
         
-        let backend: Box<dyn TaskBackend> = Box::new(CommandBackend::new(
+        let backend: Box<dyn TaskBackend> = Box::new(ShellBackend::new(
             task_config.command.clone(),
             task_config.args.clone(),
             task_config.working_directory.clone(),
