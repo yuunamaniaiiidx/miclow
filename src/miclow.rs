@@ -54,9 +54,6 @@ impl SystemControlMessage {
     }
 }
 
-
-
-
 #[derive(Clone, Debug)]
 pub struct SystemControlManager {
     commands: Arc<RwLock<Vec<SystemControlMessage>>>,
