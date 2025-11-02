@@ -11,6 +11,7 @@ pub mod spawn_backend_result;
 pub mod task_backend_handle;
 pub mod task_backend;
 pub mod interactive_backend;
+pub mod shell_backend;
 pub mod running_task;
 pub mod start_context_variant;
 pub mod system_control_manager;
