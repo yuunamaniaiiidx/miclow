@@ -18,7 +18,6 @@ use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
  
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TaskId(Uuid);
 
@@ -33,7 +32,6 @@ impl std::fmt::Display for TaskId {
         write!(f, "{}", self.0)
     }
 }
-
 
 pub struct SystemControlMessage {
     pub command: SystemControlCommand,
@@ -88,7 +86,6 @@ impl ExecutorEventSender {
         self.send(ExecutorEvent::new_error(error))
     }
 
-
     pub fn send_exit(&self, code: i32) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
         self.send(ExecutorEvent::new_exit(code))
     }
@@ -123,30 +120,19 @@ impl ExecutorEventChannel {
     }
 }
 
-// StdinProtocolトレイト：stdinに入力可能なデータを表す
 pub trait StdinProtocol: Send + Sync {
-    /// stdinに入力する形式の文字列のベクターを返す
-    /// 各行がstdinに送信される順序で返される
-    /// 
-    /// デフォルト実装では以下のバリデーションを行います：
-    /// - 1行目がStringであること（常に満たされる）
-    /// - 2行目が数値であること
-    /// - 3行目以降の行数が2行目の数値と一致すること
     fn to_input_lines(&self) -> Vec<String> {
         let lines = self.to_input_lines_raw();
         
-        // バリデーション: 少なくとも2行あることを確認
         if lines.len() < 2 {
             panic!("StdinProtocol validation failed: must have at least 2 lines, got {}", lines.len());
         }
         
-        // バリデーション: 2行目が数値であることを確認
         let line_count: usize = lines[1].parse()
             .unwrap_or_else(|_| {
                 panic!("StdinProtocol validation failed: line 2 must be a number, got '{}'", lines[1]);
             });
         
-        // バリデーション: 3行目以降の行数が2行目の数値と一致することを確認
         let data_line_count = lines.len() - 2;
         if data_line_count != line_count {
             panic!(
@@ -158,12 +144,9 @@ pub trait StdinProtocol: Send + Sync {
         lines
     }
     
-    /// 内部実装メソッド: バリデーションなしで行のベクターを返す
-    /// 各実装ではこのメソッドを実装する
     fn to_input_lines_raw(&self) -> Vec<String>;
 }
 
-// TopicMessage: トピック経由のメッセージ
 #[derive(Clone, Debug)]
 pub struct TopicMessage {
     pub topic: String,
@@ -180,7 +163,6 @@ impl StdinProtocol for TopicMessage {
     }
 }
 
-// SystemResponseMessage: SystemResponseイベントからのメッセージ
 #[derive(Clone, Debug)]
 pub struct SystemResponseMessage {
     pub topic: String,
@@ -192,14 +174,13 @@ impl StdinProtocol for SystemResponseMessage {
     fn to_input_lines_raw(&self) -> Vec<String> {
         let mut lines = vec![self.topic.clone()];
         let data_lines: Vec<&str> = self.data.lines().collect();
-        lines.push((data_lines.len() + 1).to_string()); // +1 for status line
+        lines.push((data_lines.len() + 1).to_string());
         lines.push(self.status.clone());
         lines.extend(data_lines.iter().map(|s| s.to_string()));
         lines
     }
 }
 
-// ReturnMessage: system.returnで返されるメッセージ
 #[derive(Clone, Debug)]
 pub struct ReturnMessage {
     pub data: String,
@@ -214,7 +195,6 @@ impl StdinProtocol for ReturnMessage {
     }
 }
 
-// InputDataMessage: 各種メッセージ型をまとめるenum
 #[derive(Clone, Debug)]
 pub enum InputDataMessage {
     Topic(TopicMessage),
@@ -276,7 +256,6 @@ impl InputChannel {
     }
 }
 
-// SystemControl コマンドの応答ステータス
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemResponseStatus {
     Success,
@@ -462,7 +441,6 @@ impl SystemControlManager {
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct TopicManager {
@@ -708,22 +686,17 @@ pub fn start_system_control_worker(
                                 let handle = tokio::spawn(async move {
                                     log::info!("Executing SystemControl for task {}", task_id_clone);
                                     
-                                    // contextをクローンして、キャンセル分岐でも使用できるようにする
                                     let context_for_cancel = context.clone();
                                     
-                                    // executeをspawnして別タスクで実行することで、
-                                    // ブロッキングしてもキャンセルが機能するようにする
                                     let execute_handle = tokio::spawn(async move {
                                         message.command.execute(&context).await
                                     });
                                     
-                                    // abort_handleを取得して、tokio::select!の両方の分岐で使用できるようにする
                                     let execute_abort_handle = execute_handle.abort_handle();
                                     
                                     tokio::select! {
                                         _ = command_shutdown_token.cancelled() => {
                                             log::info!("SystemControl for task {} cancelled due to shutdown", task_id_clone);
-                                            // executeタスクを中断
                                             execute_abort_handle.abort();
                                             
                                             let status = SystemResponseStatus::Error;
@@ -741,7 +714,6 @@ pub fn start_system_control_worker(
                                                 }
                                                 Ok(Err(e)) => {
                                                     log::error!("Failed to execute SystemControl for task {}: {}", task_id_clone, e);
-                                                    // エラー時にもレスポンスを送信（execute内で送信していない場合に備える）
                                                     let status = SystemResponseStatus::Error;
                                                     let error_event = SystemResponseEvent::new_system_error(
                                                         "system.error".to_string(),
@@ -751,7 +723,6 @@ pub fn start_system_control_worker(
                                                     let _ = context_for_cancel.response_channel.send(error_event);
                                                 }
                                                 Err(e) => {
-                                                    // executeタスクがパニックした場合、またはabortされた場合
                                                     if e.is_cancelled() {
                                                         log::info!("SystemControl execution was cancelled for task {}", task_id_clone);
                                                     } else {
@@ -788,7 +759,6 @@ pub fn start_system_control_worker(
             log::info!("SystemControl worker stopped");
     })
 }
-
 
 #[derive(Debug, Clone)]
 pub enum ExecutorEvent {
@@ -916,7 +886,6 @@ impl TaskSpawner {
             Ok(handle) => handle,
             Err(e) => {
                 log::error!("Failed to spawn task backend for task {}: {}", task_id, e);
-                // エラー時はダミーのチャネルを作成して返す
                 let input_channel: InputChannel = InputChannel::new();
                 let shutdown_channel = ShutdownChannel::new();
                 return SpawnBackendResult {
@@ -927,12 +896,10 @@ impl TaskSpawner {
             }
         };
 
-        // Executor側でsystem_response_senderを設定
         let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
         let mut system_response_receiver = system_response_channel.receiver;
         backend_handle.system_response_sender = system_response_channel.sender;
 
-        // 外部に公開するためのinput_senderとshutdown_senderをクローン
         let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
 
@@ -951,7 +918,6 @@ impl TaskSpawner {
                     log::info!("Added initial topic subscription for '{}' from task {}", topic, task_id);
                 }
             }
-
 
             let return_message_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let mut return_message_receiver = return_message_channel.receiver;
@@ -1003,7 +969,6 @@ impl TaskSpawner {
                                     },
                                     ExecutorEvent::ReturnMessage { data } => {
                                         log::info!("ReturnMessage received from task {}: '{}'", task_id, data);
-                                        // 外部から注入されたother_return_message_senderに送信
                                         if let Some(ref sender) = other_return_message_sender {
                                             if let Err(e) = sender.send(ExecutorEvent::new_return_message(data.clone())) {
                                                 log::warn!("Failed to send return message to other_return_message_sender for task {}: {}", task_id, e);
@@ -1475,12 +1440,10 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
             SystemControlCommand::Status
         },
         _ if key_lower.starts_with("system.function.") => {
-            // system.function.{task_name}の形式をパース
             let function_name = key_lower.strip_prefix("system.function.").unwrap_or("");
             if function_name.is_empty() {
                 return None;
             }
-            // dataが空でない場合、それを初期インプットとして使用
             let initial_input = if data_trimmed.is_empty() {
                 None
             } else {
@@ -1511,7 +1474,6 @@ pub struct TaskBackendHandle {
     pub shutdown_sender: ShutdownSender,
 }
 
-/// spawn_backendの戻り値。JoinHandleと外部からアクセス可能なハンドルを含む
 pub struct SpawnBackendResult {
     pub task_handle: tokio::task::JoinHandle<()>,
     pub input_sender: InputSender,
@@ -1522,7 +1484,6 @@ pub struct SpawnBackendResult {
 pub trait TaskBackend: Send + Sync {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error>;
 }
-
 
 #[derive(Clone)]
 pub struct InteractiveBackend {
@@ -1692,7 +1653,6 @@ impl ShellBackend {
         let topic_lower = topic.to_lowercase();
         let data_trimmed = data.trim();
         
-        // topicが"system.return"の場合、ReturnMessageとして処理
         if topic_lower == "system.return" {
             if !data_trimmed.is_empty() {
                 return Some(ExecutorEvent::new_return_message(data_trimmed.to_string()));
@@ -1718,9 +1678,6 @@ impl TaskBackend for ShellBackend {
             let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let input_channel: InputChannel = InputChannel::new();
             let mut shutdown_channel = ShutdownChannel::new();
-            // system_response_channelはExecutor側で作成されるため、ここでは作成しない
-            // Executor側から渡されたsenderを使用する（TaskBackendHandleに含まれる）
-            // Backend側ではsystem_response_channelを作成するが、receiverは使用しない
             let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
             
             let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
@@ -1764,7 +1721,6 @@ impl TaskBackend for ShellBackend {
             let stderr: tokio::process::ChildStderr = child.stderr.take().unwrap();
             let mut stdin_writer = child.stdin.take().unwrap();
 
-
             let cancel_token: CancellationToken = CancellationToken::new();
 
             let stdout_handle = spawn_stream_reader(
@@ -1785,7 +1741,6 @@ impl TaskBackend for ShellBackend {
                 if view_stderr { Some(ExecutorEvent::new_task_stderr as fn(String) -> ExecutorEvent) } else { None },
             );
 
-            
             let cancel_input: CancellationToken = cancel_token.clone();
             let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
             let input_handle = task::spawn(async move {
@@ -1818,9 +1773,6 @@ impl TaskBackend for ShellBackend {
                     }
                 }
             });
-
-            // SystemResponseの処理はExecutor側で行うため、Backend側では不要
-            // system_response_channel.receiverは使用しない（Executor側で処理される）
 
             let event_tx_status: ExecutorEventSender = event_tx_clone.clone();
             let status_cancel: CancellationToken = cancel_token.clone();
@@ -1968,19 +1920,15 @@ where
         let process_stream_outcome = |outcome: Result<StreamOutcome, String>, line_content: &str| {
             match outcome {
                 Ok(StreamOutcome::Emit { topic, data }) => {
-                    // system.returnのチェック（ReturnMessage）
                     if let Some(return_message_event) = ShellBackend::parse_return_message_from_outcome(&topic, &data) {
                         let _ = event_tx.send(return_message_event);
                     } else if let Some(system_control_cmd_event) = ShellBackend::parse_system_control_command_from_outcome(&topic, &data) {
-                        // SystemControlコマンドのチェック
                         let _ = event_tx.send(system_control_cmd_event);
                     } else {
-                        // 通常のメッセージとして送信
                         let _ = event_tx.send_message(topic, data);
                     }
                 }
                 Ok(StreamOutcome::Plain(output)) => {
-                    // Plain形式は通常のメッセージとして送信
                     let _ = event_tx.send_message(topic_name.clone(), output.clone());
                     if let Some(emit) = emit_func {
                         let _ = event_tx.send(emit(output));
@@ -2050,13 +1998,11 @@ pub struct TaskConfig {
 }
 
 impl TaskConfig {
-    /// stdout_topicの値を取得（Noneの場合はタスク名ベースのデフォルト値を返す）
     pub fn get_stdout_topic(&self) -> String {
         self.stdout_topic.clone()
             .unwrap_or_else(|| format!("{}.stdout", self.name))
     }
 
-    /// stderr_topicの値を取得（Noneの場合はタスク名ベースのデフォルト値を返す）
     pub fn get_stderr_topic(&self) -> String {
         self.stderr_topic.clone()
             .unwrap_or_else(|| format!("{}.stderr", self.name))
@@ -2095,7 +2041,6 @@ impl SystemConfig {
     }
     
     pub fn get_all_tasks(&self) -> Vec<&TaskConfig> {
-        // tasksとfunctionsを統一的に扱う
         self.tasks.iter().chain(self.functions.iter()).collect()
     }
     
@@ -2220,7 +2165,6 @@ impl SystemConfig {
     }
 
     fn normalize_defaults(&mut self) {
-        // tasksとfunctionsの両方を処理
         for task in self.tasks.iter_mut().chain(self.functions.iter_mut()) {
             if task.working_directory.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
                 task.working_directory = Some("./".to_string());
@@ -2231,8 +2175,6 @@ impl SystemConfig {
             if task.view_stderr != true {
                 task.view_stderr = false;
             }
-            // stdout_topicとstderr_topicは、使用時にタスク名ベースのデフォルト値を設定する
-            // （TaskConfig::get_stdout_topic()とTaskConfig::get_stderr_topic()を使用）
         }
     }
 }
@@ -2272,15 +2214,13 @@ impl TaskExecutor {
     }
 
     pub async fn try_register_task(&self, task_name: String, task: RunningTask) -> Result<(), String> {
-        // 重複チェックを行い、重複していない場合のみ登録
         let name_to_id = self.name_to_id.read().await;
         if name_to_id.contains_key(&task_name) {
             log::warn!("Task '{}' is already running - cancelling new task start", task_name);
             return Err(format!("Task '{}' is already running", task_name));
         }
-        drop(name_to_id); // ロックを解放
+        drop(name_to_id);
         
-        // 重複していないので登録
         self.register_task(task_name, task).await
     }
 
@@ -2378,7 +2318,6 @@ impl TaskExecutor {
         let initial_input = context.initial_input();
         log::info!("Starting task '{}'", task_config.name);
         
-        
         if !std::path::Path::new(&task_config.command).exists() && !which::which(&task_config.command).is_ok() {
             return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", task_config.command));
         }
@@ -2416,7 +2355,7 @@ impl TaskExecutor {
             backend,
             context.shutdown_token,
             subscribe_topics,
-            return_message_sender, // other_return_message_sender
+            return_message_sender,
         ).await;
         
         let running_task = RunningTask {
@@ -2428,7 +2367,6 @@ impl TaskExecutor {
             view_stderr: task_config.view_stderr,
         };
 
-        // 初期インプットを送信（is_functionの場合のみ、プロセス起動後に短い待機を入れる）
         if is_function {
             if let Some(initial_input) = initial_input {
                 let input_sender_for_initial = spawn_result.input_sender.clone();
@@ -2437,11 +2375,8 @@ impl TaskExecutor {
                 let function_name = task_config.name.clone();
                 let task_id_for_log = task_id_new.clone();
                 tokio::task::spawn(async move {
-                    // プロセス起動を待つ（短い待機）
                     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                     
-                    // 初期インプットの各行を個別に送信
-                    // TopicMessageを使う場合、topicはfunction名にして、各行をdataとして送信
                     for line in initial_input_lines {
                         let topic_msg = TopicMessage {
                             topic: function_name.clone(),
@@ -2459,7 +2394,6 @@ impl TaskExecutor {
             }
         }
         
-        // functionsの場合は重複許可（register_taskを直接呼ぶ）、tasksの場合は重複チェック（try_register_taskを呼ぶ）
         if is_function {
             if let Err(e) = self.register_task(task_config.name.clone(), running_task).await {
                 return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
@@ -2507,8 +2441,6 @@ pub struct StartFromConfigContext {
 }
 
 impl StartContext {
-    /// StartContextからStartFromConfigContextへの変換
-    /// task_configは外部から提供する必要がある（StartContextには含まれていないため）
     pub fn to_config_context(&self, task_config: TaskConfig) -> StartFromConfigContext {
         StartFromConfigContext {
             task_config,
@@ -2522,7 +2454,6 @@ impl StartContext {
 }
 
 impl StartFromConfigContext {
-    /// StartFromConfigContextから必要な値を取得するヘルパーメソッド
     pub fn is_function(&self) -> bool {
         matches!(self.variant, StartContextVariant::Functions { .. })
     }
@@ -2549,14 +2480,12 @@ impl TaskExecutor {
     ) -> Result<()> {
         match context.variant {
             StartContextVariant::Tasks => {
-                // tasksから検索
                 if let Some(task_config) = context.config.tasks.iter().find(|t| t.name == context.task_name) {
                     let config_context = context.to_config_context(task_config.clone());
                     return self.start_task_from_config(config_context).await;
                 }
             }
             StartContextVariant::Functions { .. } => {
-                // functionsから検索
                 if let Some(task_config) = context.config.functions.iter().find(|t| t.name == context.task_name) {
                     let config_context = context.to_config_context(task_config.clone());
                     return self.start_task_from_config(config_context).await;
@@ -2564,7 +2493,6 @@ impl TaskExecutor {
             }
         }
 
-        // どちらにも見つからなかった場合
         Err(anyhow::anyhow!("Task '{}' not found in configuration", context.task_name))
     }
 
@@ -2756,7 +2684,7 @@ impl MiclowSystem {
             interactive_backend,
             self.shutdown_token.clone(),
             None,
-            None, // other_return_message_sender
+            None,
         ).await;
         
         let mut interactive_handle = interactive_result.task_handle;
