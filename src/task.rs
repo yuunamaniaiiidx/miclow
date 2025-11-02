@@ -2788,4 +2788,4 @@ impl MiclowSystem {
     }
 }
 
-// TODO function機能を追加する。system.function.{task_name}としてレスポンスを取得できるようにする。
+// TODO function機能を追加のリファクタが必要、かなり難しそう
