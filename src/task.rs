@@ -1242,16 +1242,17 @@ impl SystemControlHandler for StartTaskSystemControl {
     async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
         log::info!("Processing StartTask command for task {}: '{}'", context.task_id, self.task_name);
         
-            match context.task_executor.start_single_task(
-                &self.task_name,
-                &context.config,
-                context.topic_manager.clone(),
-                context.system_control_manager.clone(),
-                context.shutdown_token.clone(),
-                context.userlog_sender.clone(),
-                None, // system.start-taskではreturn_message_senderは不要
-                None, // system.start-taskではinitial_inputは不要
-            ).await {
+        let start_context = StartContext {
+            task_name: self.task_name.clone(),
+            config: context.config.clone(),
+            topic_manager: context.topic_manager.clone(),
+            system_control_manager: context.system_control_manager.clone(),
+            shutdown_token: context.shutdown_token.clone(),
+            userlog_sender: context.userlog_sender.clone(),
+            variant: StartContextVariant::Tasks,
+        };
+        
+        match context.task_executor.start_single_task(start_context).await {
             Ok(_) => {
                 log::info!("Successfully started task '{}'", self.task_name);
                 
@@ -1379,16 +1380,20 @@ impl SystemControlHandler for CallFunctionSystemControl {
     async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
         log::info!("Processing CallFunction command for task {}: '{}'", context.task_id, self.task_name);
         
-        match context.task_executor.start_single_task(
-            &self.task_name,
-            &context.config,
-            context.topic_manager.clone(),
-            context.system_control_manager.clone(),
-            context.shutdown_token.clone(),
-            context.userlog_sender.clone(),
-            Some(context.return_message_sender.clone()), // function呼び出し時はreturn_message_senderを渡す
-            self.initial_input.clone(), // 初期インプットを渡す
-        ).await {
+        let start_context = StartContext {
+            task_name: self.task_name.clone(),
+            config: context.config.clone(),
+            topic_manager: context.topic_manager.clone(),
+            system_control_manager: context.system_control_manager.clone(),
+            shutdown_token: context.shutdown_token.clone(),
+            userlog_sender: context.userlog_sender.clone(),
+            variant: StartContextVariant::Functions {
+                return_message_sender: context.return_message_sender.clone(),
+                initial_input: self.initial_input.clone(),
+            },
+        };
+        
+        match context.task_executor.start_single_task(start_context).await {
             Ok(_) => {
                 log::info!("Successfully called function '{}'", self.task_name);
                 
@@ -2530,48 +2535,68 @@ impl TaskExecutor {
         log::info!("Successfully started task '{}' (ID: {})", task_config.name, task_id_new);
         Ok(())
     }
+}
 
+#[derive(Clone)]
+pub struct StartContext {
+    pub task_name: String,
+    pub config: SystemConfig,
+    pub topic_manager: TopicManager,
+    pub system_control_manager: SystemControlManager,
+    pub shutdown_token: CancellationToken,
+    pub userlog_sender: UserLogSender,
+    pub variant: StartContextVariant,
+}
+
+#[derive(Clone)]
+pub enum StartContextVariant {
+    Tasks,
+    Functions {
+        return_message_sender: ExecutorEventSender,
+        initial_input: Option<String>,
+    },
+}
+
+impl TaskExecutor {
     pub async fn start_single_task(
         &self,
-        task_name: &str,
-        config: &SystemConfig,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
-        shutdown_token: CancellationToken,
-        userlog_sender: UserLogSender,
-        return_message_sender: Option<ExecutorEventSender>,
-        initial_input: Option<String>,
+        context: StartContext,
     ) -> Result<()> {
-        // tasksから検索（優先）
-        if let Some(task_config) = config.tasks.iter().find(|t| t.name == task_name) {
-            return self.start_task_from_config(
-                task_config,
-                topic_manager,
-                system_control_manager,
-                shutdown_token,
-                userlog_sender,
-                return_message_sender,
-                false, // is_function = false
-                initial_input,
-            ).await;
-        }
-
-        // functionsから検索
-        if let Some(task_config) = config.functions.iter().find(|t| t.name == task_name) {
-            return self.start_task_from_config(
-                task_config,
-                topic_manager,
-                system_control_manager,
-                shutdown_token,
-                userlog_sender,
-                return_message_sender,
-                true, // is_function = true
-                initial_input,
-            ).await;
+        match context.variant {
+            StartContextVariant::Tasks => {
+                // tasksから検索
+                if let Some(task_config) = context.config.tasks.iter().find(|t| t.name == context.task_name) {
+                    return self.start_task_from_config(
+                        task_config,
+                        context.topic_manager,
+                        context.system_control_manager,
+                        context.shutdown_token,
+                        context.userlog_sender,
+                        None, // Tasksではreturn_message_senderは不要
+                        false, // is_function = false
+                        None, // Tasksではinitial_inputは不要
+                    ).await;
+                }
+            }
+            StartContextVariant::Functions { return_message_sender, initial_input } => {
+                // functionsから検索
+                if let Some(task_config) = context.config.functions.iter().find(|t| t.name == context.task_name) {
+                    return self.start_task_from_config(
+                        task_config,
+                        context.topic_manager,
+                        context.system_control_manager,
+                        context.shutdown_token,
+                        context.userlog_sender,
+                        Some(return_message_sender),
+                        true, // is_function = true
+                        initial_input,
+                    ).await;
+                }
+            }
         }
 
         // どちらにも見つからなかった場合
-        Err(anyhow::anyhow!("Task '{}' not found in configuration", task_name))
+        Err(anyhow::anyhow!("Task '{}' not found in configuration", context.task_name))
     }
 
     pub async fn add_task_from_toml(
@@ -2679,16 +2704,17 @@ impl MiclowSystem {
         for task_config in tasks.iter() {
             let task_name: String = task_config.name.clone();
 
-            match task_executor.start_single_task(
-                &task_name,
-                config,
-                topic_manager.clone(),
-                system_control_manager.clone(),
-                shutdown_token.clone(),
-                userlog_sender.clone(),
-                None, // 起動時はreturn_message_senderは不要
-                None, // 起動時はinitial_inputは不要
-            ).await {
+            let start_context = StartContext {
+                task_name: task_name.clone(),
+                config: config.clone(),
+                topic_manager: topic_manager.clone(),
+                system_control_manager: system_control_manager.clone(),
+                shutdown_token: shutdown_token.clone(),
+                userlog_sender: userlog_sender.clone(),
+                variant: StartContextVariant::Tasks,
+            };
+
+            match task_executor.start_single_task(start_context).await {
                 Ok(_) => {
                     log::info!("Started user task {} with command: {} {}",
                           task_name,
