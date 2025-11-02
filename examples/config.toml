@@ -1,0 +1,7 @@
+[[tasks]]
+task_name = "json-generator"
+command = "bash"
+args = ["-c", "echo '{\"name\": \"Alice\", \"age\": 30, \"city\": \"Tokyo\"}';"]
+subscribe_topics = ["json-data", "user-info"]
+view_stdout = true
+view_stderr = true
