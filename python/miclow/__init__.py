@@ -23,7 +23,7 @@ __version__ = "0.1.0"
 __all__ = [
     "MiclowClient", "get_client", "send_message",
     "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
-    "start_task", "stop_task", "get_status", "add_task_from_toml", "add_task",
+    "start_task", "stop_task", "get_status",
     "call_function", "wait_for_topic", "receive_message", "MessageType"
 ]
 
@@ -490,75 +490,6 @@ class MiclowClient:
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
-    def add_task_from_toml(self, toml_data: str) -> SystemResponse:
-        """
-        Add a task from TOML configuration.
-
-        Args:
-            toml_data: TOML configuration data
-
-        Returns:
-            SystemResponse with the result
-        """
-
-        print('"system.add-task-from-toml"::')
-        print(toml_data)
-        print('::"system.add-task-from-toml"')
-        sys.stdout.flush()
-
-        expected_topic = "system.add-task-from-toml"
-        response = self.wait_for_topic(expected_topic)
-        if isinstance(response, SystemResponse):
-            return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
-    def add_task(
-        self,
-        task_name: str,
-        command: str,
-        args: list[str],
-        working_directory: str | None = None,
-        environment_vars: dict[str, str] | None = None,
-        subscribe_topics: list[str] | None = None
-    ) -> SystemResponse:
-        """
-        Add a task by constructing TOML configuration from parameters.
-
-        Args:
-            task_name: Name of the task
-            command: Command to execute
-            args: List of command arguments
-            working_directory: Working directory for the task
-            environment_vars: Environment variables as key-value pairs
-            subscribe_topics: List of topics to subscribe to initially
-
-        Returns:
-            SystemResponse with the result
-        """
-        toml_lines = ['[[tasks]]']
-        toml_lines.append(f'task_name = "{task_name}"')
-        toml_lines.append(f'command = "{command}"')
-
-        if args:
-            args_str = ', '.join(f'"{arg}"' for arg in args)
-            toml_lines.append(f'args = [{args_str}]')
-        else:
-            toml_lines.append('args = []')
-
-        if working_directory is not None:
-            toml_lines.append(f'working_directory = "{working_directory}"')
-
-        if environment_vars:
-            env_str = ', '.join(f'{k} = "{v}"' for k, v in environment_vars.items())
-            toml_lines.append(f'environment_vars = {{ {env_str} }}')
-
-        if subscribe_topics:
-            topics_str = ', '.join(f'"{topic}"' for topic in subscribe_topics)
-            toml_lines.append(f'subscribe_topics = [{topics_str}]')
-
-        toml_data = '\n'.join(toml_lines)
-
-        return self.add_task_from_toml(toml_data)
 
     def call_function(self, function_name: str, data: str = "") -> str:
         """
@@ -691,28 +622,6 @@ def get_status() -> SystemResponse:
     return get_client().get_status()
 
 
-def add_task_from_toml(toml_data: str) -> SystemResponse:
-    """Add a task from TOML configuration."""
-    return get_client().add_task_from_toml(toml_data)
-
-
-def add_task(
-    task_name: str,
-    command: str,
-    args: list[str],
-    working_directory: str | None = None,
-    environment_vars: dict[str, str] | None = None,
-    subscribe_topics: list[str] | None = None
-) -> SystemResponse:
-    """Add a task by constructing TOML configuration from parameters."""
-    return get_client().add_task(
-        task_name=task_name,
-        command=command,
-        args=args,
-        working_directory=working_directory,
-        environment_vars=environment_vars,
-        subscribe_topics=subscribe_topics
-    )
 
 
 def call_function(function_name: str, data: str = "") -> str:
