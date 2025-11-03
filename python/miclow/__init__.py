@@ -7,15 +7,11 @@ This module can only be imported within miclow-managed Python processes.
 
 import os
 import sys
-import threading
-import time
 import uuid
 from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 if not os.environ.get('MICLOW_TASK_ID'):
     raise ImportError(
@@ -28,13 +24,74 @@ __all__ = [
     "MiclowClient", "get_client", "send_message",
     "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
     "start_task", "stop_task", "get_status", "add_task_from_toml", "add_task",
-    "call_function", "wait_for_topic", "receive_message"
+    "call_function", "wait_for_topic", "receive_message", "MessageType"
 ]
 
 class SystemResponseType(Enum):
     """System response types."""
     SUCCESS = "success"
     ERROR = "error"
+
+
+class MessageType(Enum):
+    """Message type enumeration."""
+    TOPIC = "topic"
+    SYSTEM_RESPONSE = "system_response"
+    FUNCTION = "function"
+    RETURN = "return"
+
+    @classmethod
+    def from_topic_and_message(cls, topic: str, message: str) -> "MessageType":
+        """
+        Determine the message type from topic and message.
+
+        Args:
+            topic: Topic name
+            message: Message content
+
+        Returns:
+            MessageType enum value
+        """
+        topic_lower = topic.lower()
+
+        # Check for specific system topics first (受信時の想定)
+        if topic_lower == "system.return":
+            return cls.RETURN
+        elif topic_lower == "system.function":
+            # 関数への入力メッセージ（FunctionMessage）は "system.function" というトピックで来る
+            return cls.FUNCTION
+        elif topic_lower.startswith("system."):
+            # system.function.{function_name} などの関数呼び出し応答は SystemResponse として扱う
+            return cls.SYSTEM_RESPONSE
+        else:
+            return cls.TOPIC
+
+    def to_message(self, topic: str, message: str) -> "TopicMessage | SystemResponse | FunctionMessage":
+        """
+        Convert topic and message pair to appropriate message object.
+
+        Args:
+            topic: Topic name
+            message: Message content
+
+        Returns:
+            TopicMessage, SystemResponse, or FunctionMessage object
+
+        Raises:
+            ValueError: If message type is not supported
+        """
+        if self == MessageType.TOPIC:
+            return TopicMessage(topic, message)
+        elif self == MessageType.SYSTEM_RESPONSE:
+            return SystemResponse.from_message(topic, message)
+        elif self == MessageType.FUNCTION:
+            return FunctionMessage.from_message(topic, message)
+        elif self == MessageType.RETURN:
+            # ReturnMessage is treated as a TopicMessage for now
+            # since there's no ReturnMessage class in Python side
+            return TopicMessage(topic, message)
+        else:
+            raise ValueError(f"Unsupported message type: {self}")
 
 
 class TopicMessage:
@@ -118,6 +175,37 @@ class SystemResponse:
         """Return string representation of SystemResponse."""
         return self.__str__()
 
+class FunctionMessage:
+    """Function message."""
+
+    def __init__(
+        self,
+        caller_task_name: str,
+        data: str
+    ):
+        """Initialize FunctionMessage."""
+        self.topic = "system.function"
+        self.caller_task_name = caller_task_name
+        self.data = data
+
+    @classmethod
+    def from_message(cls, topic: str, message: str) -> "FunctionMessage":
+        """Create a FunctionMessage from a message."""
+        lines = message.split('\n')
+        if lines:
+            caller_task_name = lines[0].strip()
+            data = '\n'.join(lines[1:]) if len(lines) > 1 else ''
+            return cls(caller_task_name, data)
+        else:
+            raise RuntimeError(f"Expected FunctionMessage but got {type(message)}")
+
+    def __str__(self) -> str:
+        """Return string representation of FunctionMessage."""
+        return f"FunctionMessage(caller_task_name='{self.caller_task_name}', data='{self.data}')"
+
+    def __repr__(self) -> str:
+        """Return string representation of FunctionMessage."""
+        return self.__str__()
 
 class Buffer:
     """
@@ -129,7 +217,7 @@ class Buffer:
 
     def __init__(self) -> None:
         """Initialize the buffer."""
-        self.store: dict[str, TopicMessage | SystemResponse] = {}
+        self.store: dict[str, TopicMessage | SystemResponse | FunctionMessage] = {}
         self.topic_index: dict[str, deque[str]] = {}
         self.time_index: deque[str] = deque()
 
@@ -158,10 +246,8 @@ class Buffer:
             message: Message content
         """
         uuid_key = self._generate_uuid()
-        if self._is_system_response(topic):
-            value: TopicMessage | SystemResponse = SystemResponse.from_message(topic, message)
-        else:
-            value = TopicMessage(topic, message)
+        message_type = MessageType.from_topic_and_message(topic, message)
+        value: TopicMessage | SystemResponse | FunctionMessage = message_type.to_message(topic, message)
         self.store[uuid_key] = value
         if topic not in self.topic_index:
             self.topic_index[topic] = deque()
@@ -170,7 +256,7 @@ class Buffer:
 
     def wait_for_topic(
         self, topic: str
-    ) -> TopicMessage | SystemResponse | None:
+    ) -> TopicMessage | SystemResponse | FunctionMessage | None:
         """
         Retrieve a message for the specified topic from the buffer.
 
@@ -196,7 +282,7 @@ class Buffer:
 
     def get_oldest(
         self
-    ) -> TopicMessage | SystemResponse | None:
+    ) -> TopicMessage | SystemResponse | FunctionMessage | None:
         """
         Get the oldest message across all topics.
 
@@ -262,14 +348,14 @@ class MiclowClient:
 
         return key, value
 
-    def receive_message(self) -> TopicMessage | SystemResponse | None:
+    def receive_message(self) -> TopicMessage | SystemResponse | FunctionMessage | None:
         """
         Receive the oldest message across all topics based on arrival order.
         Returns buffered message if available, otherwise waits until received from stdin.
         Regular messages return TopicMessage objects, system responses return SystemResponse objects.
 
         Returns:
-            A tuple of (topic, TopicMessage/SystemResponse), or None if no message is available
+            TopicMessage/SystemResponse/FunctionMessage, or None if no message is available
         """
         result = self._buffer.get_oldest()
         if result is not None:
@@ -278,7 +364,7 @@ class MiclowClient:
         self._internal_receive_message()
         return self._buffer.get_oldest()
 
-    def wait_for_topic(self, topic: str) -> TopicMessage | SystemResponse:
+    def wait_for_topic(self, topic: str) -> TopicMessage | SystemResponse | FunctionMessage:
         """
         Wait for and retrieve a message for the specified topic.
         Returns buffered message if available, otherwise waits until received from stdin.
@@ -288,7 +374,7 @@ class MiclowClient:
             topic: Topic name to wait for
 
         Returns:
-            TopicMessage/SystemResponse
+            TopicMessage/SystemResponse/FunctionMessage
         """
 
         message = self._buffer.wait_for_topic(topic)
@@ -519,7 +605,7 @@ class MiclowClient:
             topic: The topic to listen to
 
         Yields:
-            Generator of TopicMessage or SystemResponse objects
+            Generator of TopicMessage, SystemResponse, or FunctionMessage objects
         """
         self.subscribe_topic(topic)
         try:
@@ -529,7 +615,7 @@ class MiclowClient:
 
     def _message_generator(
         self, target_topic: str
-    ) -> Generator[TopicMessage | SystemResponse, None, None]:
+    ) -> Generator[TopicMessage | SystemResponse | FunctionMessage, None, None]:
         """Generate messages for a specific topic."""
         while True:
             message = self.wait_for_topic(target_topic)
@@ -563,19 +649,19 @@ def unsubscribe_topic(topic: str) -> SystemResponse:
     return get_client().unsubscribe_topic(topic)
 
 
-def receive_message() -> TopicMessage | SystemResponse | None:
+def receive_message() -> TopicMessage | SystemResponse | FunctionMessage | None:
     """
     Receive the oldest message across all topics based on arrival order.
     Returns buffered message if available, otherwise waits until received from stdin.
     Regular messages return TopicMessage objects, system responses return SystemResponse objects.
 
     Returns:
-        A tuple of (topic, TopicMessage/SystemResponse), or None if no message is available
+        TopicMessage/SystemResponse/FunctionMessage, or None if no message is available
     """
     return get_client().receive_message()
 
 
-def wait_for_topic(topic: str) -> TopicMessage | SystemResponse:
+def wait_for_topic(topic: str) -> TopicMessage | SystemResponse | FunctionMessage:
     """
     Wait for and retrieve a message for the specified topic.
     Returns buffered message if available, otherwise waits until received from stdin.
@@ -585,7 +671,7 @@ def wait_for_topic(topic: str) -> TopicMessage | SystemResponse:
         topic: Topic name to wait for
 
     Returns:
-        TopicMessage/SystemResponse
+        TopicMessage/SystemResponse/FunctionMessage
     """
     return get_client().wait_for_topic(topic)
 

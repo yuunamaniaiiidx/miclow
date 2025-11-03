@@ -77,10 +77,27 @@ impl StdinProtocol for ReturnMessage {
 }
 
 #[derive(Clone, Debug)]
+pub struct FunctionMessage {
+    pub task_name: String,
+    pub data: String,
+}
+
+impl StdinProtocol for FunctionMessage {
+    fn to_input_lines_raw(&self) -> Vec<String> {
+        let data_lines: Vec<&str> = self.data.lines().collect();
+        let mut lines = vec!["system.function".to_string(), (data_lines.len() + 1).to_string()];
+        lines.push(self.task_name.clone());
+        lines.extend(data_lines.iter().map(|s| s.to_string()));
+        lines
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum InputDataMessage {
     Topic(TopicMessage),
     SystemResponse(SystemResponseMessage),
     Return(ReturnMessage),
+    Function(FunctionMessage),
 }
 
 impl StdinProtocol for InputDataMessage {
@@ -89,6 +106,7 @@ impl StdinProtocol for InputDataMessage {
             InputDataMessage::Topic(msg) => msg.to_input_lines_raw(),
             InputDataMessage::SystemResponse(msg) => msg.to_input_lines_raw(),
             InputDataMessage::Return(msg) => msg.to_input_lines_raw(),
+            InputDataMessage::Function(msg) => msg.to_input_lines_raw(),
         }
     }
 }

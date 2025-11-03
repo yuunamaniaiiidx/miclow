@@ -13,7 +13,7 @@ use std::process::Stdio;
 use crate::buffer::{InputBufferManager, StreamOutcome};
 use crate::logging::{UserLogEvent, UserLogKind, spawn_user_log_aggregator, LogEvent, spawn_log_aggregator, set_channel_logger, level_from_env};
 use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, ExecutorEventReceiver, ExecutorEventChannel};
-use crate::input_channel::{InputChannel, InputSender, InputReceiver, InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, StdinProtocol};
+use crate::input_channel::{InputChannel, InputSender, InputReceiver, InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage, StdinProtocol};
 use crate::system_response_channel::{SystemResponseChannel, SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
 use crate::shutdown_channel::{ShutdownChannel, ShutdownSender};
 use crate::user_log_sender::UserLogSender;
@@ -40,7 +40,7 @@ pub fn start_system_control_worker(
     system_control_manager: SystemControlManager,
     topic_manager: TopicManager,
     task_executor: TaskExecutor,
-    config: SystemConfig,
+    system_config: SystemConfig,
     shutdown_token: CancellationToken,
     userlog_sender: UserLogSender,
 ) -> tokio::task::JoinHandle<()> {
@@ -70,37 +70,46 @@ pub fn start_system_control_worker(
                                 
                                 log::info!("Spawning SystemControl for task {} (parallel execution)", task_id);
                                 
-                                let context = SystemControlContext {
-                                    topic_manager: topic_manager.clone(),
-                                    task_executor: task_executor.clone(),
-                                    config: config.clone(),
-                                    shutdown_token: shutdown_token.clone(),
-                                    userlog_sender: userlog_sender.clone(),
-                                    system_control_manager: system_control_manager.clone(),
-                                    task_id: task_id.clone(),
-                                    response_channel: message.response_channel.clone(),
-                                    task_event_sender: message.task_event_sender.clone(),
-                                    return_message_sender: message.return_message_sender.clone(),
-                                };
-                                
                                 let command_shutdown_token = shutdown_token.clone();
                                 let running_commands_clone = running_commands.clone();
                                 let task_id_clone = task_id.clone();
+                                let topic_manager_clone = topic_manager.clone();
+                                let task_executor_clone = task_executor.clone();
+                                let system_config_clone = system_config.clone();
+                                let shutdown_token_clone = shutdown_token.clone();
+                                let userlog_sender_clone = userlog_sender.clone();
+                                let system_control_manager_clone = system_control_manager.clone();
+                                let response_channel_clone = message.response_channel.clone();
+                                let task_event_sender_clone = message.task_event_sender.clone();
+                                let return_message_sender_clone = message.return_message_sender.clone();
+                                let response_channel_for_cancel = message.response_channel.clone();
+                                let command_clone = message.command.clone();
                                 
                                 let handle = tokio::spawn(async move {
-                                    log::info!("Executing SystemControl for task {}", task_id_clone);
-                                    
-                                    let context_for_cancel = context.clone();
+                                    let task_id_for_log = task_id_clone.clone();
+                                    log::info!("Executing SystemControl for task {}", task_id_for_log);
                                     
                                     let execute_handle = tokio::spawn(async move {
-                                        message.command.execute(&context).await
+                                        command_clone.execute(
+                                            &topic_manager_clone,
+                                            &task_executor_clone,
+                                            &system_config_clone,
+                                            &shutdown_token_clone,
+                                            &userlog_sender_clone,
+                                            &system_control_manager_clone,
+                                            &task_id_clone,
+                                            &response_channel_clone,
+                                            &task_event_sender_clone,
+                                            &return_message_sender_clone,
+                                        ).await
                                     });
                                     
                                     let execute_abort_handle = execute_handle.abort_handle();
+                                    let task_id_for_select = task_id_for_log.clone();
                                     
                                     tokio::select! {
                                         _ = command_shutdown_token.cancelled() => {
-                                            log::info!("SystemControl for task {} cancelled due to shutdown", task_id_clone);
+                                            log::info!("SystemControl for task {} cancelled due to shutdown", task_id_for_select);
                                             execute_abort_handle.abort();
                                             
                                             let status = SystemResponseStatus::Error;
@@ -109,35 +118,35 @@ pub fn start_system_control_worker(
                                                 status.to_string(),
                                                 "cancelled".to_string(),
                                             );
-                                            let _ = context_for_cancel.response_channel.send(cancel_error);
+                                            let _ = response_channel_for_cancel.send(cancel_error);
                                         }
                                         result = execute_handle => {
                                             match result {
                                                 Ok(Ok(_)) => {
-                                                    log::info!("Successfully executed SystemControl for task {}", task_id_clone);
+                                                    log::info!("Successfully executed SystemControl for task {}", task_id_for_select);
                                                 }
                                                 Ok(Err(e)) => {
-                                                    log::error!("Failed to execute SystemControl for task {}: {}", task_id_clone, e);
+                                                    log::error!("Failed to execute SystemControl for task {}: {}", task_id_for_select, e);
                                                     let status = SystemResponseStatus::Error;
                                                     let error_event = SystemResponseEvent::new_system_error(
                                                         "system.error".to_string(),
                                                         status.to_string(),
                                                         e.clone(),
                                                     );
-                                                    let _ = context_for_cancel.response_channel.send(error_event);
+                                                    let _ = response_channel_for_cancel.send(error_event);
                                                 }
                                                 Err(e) => {
                                                     if e.is_cancelled() {
-                                                        log::info!("SystemControl execution was cancelled for task {}", task_id_clone);
+                                                        log::info!("SystemControl execution was cancelled for task {}", task_id_for_select);
                                                     } else {
-                                                        log::error!("SystemControl execution task panicked for task {}: {:?}", task_id_clone, e);
+                                                        log::error!("SystemControl execution task panicked for task {}: {:?}", task_id_for_select, e);
                                                         let status = SystemResponseStatus::Error;
                                                         let error_event = SystemResponseEvent::new_system_error(
                                                             "system.error".to_string(),
                                                             status.to_string(),
                                                             format!("Task panicked: {:?}", e),
                                                         );
-                                                        let _ = context_for_cancel.response_channel.send(error_event);
+                                                        let _ = response_channel_for_cancel.send(error_event);
                                                     }
                                                 }
                                             }
@@ -145,7 +154,7 @@ pub fn start_system_control_worker(
                                     }
                                     
                                     let mut commands = running_commands_clone.write().await;
-                                    commands.remove(&task_id_clone);
+                                    commands.remove(&task_id_for_select);
                                 });
                                 
                                 let mut commands = running_commands.write().await;
@@ -430,30 +439,28 @@ impl TaskSpawner {
     }
 }
 
-#[derive(Clone)]
-pub struct SystemControlContext {
-    pub topic_manager: TopicManager,
-    pub task_executor: TaskExecutor,
-    pub config: SystemConfig,
-    pub shutdown_token: CancellationToken,
-    pub userlog_sender: UserLogSender,
-    pub system_control_manager: SystemControlManager,
-    pub task_id: TaskId,
-    pub response_channel: SystemResponseSender,
-    pub task_event_sender: ExecutorEventSender,
-    pub return_message_sender: ExecutorEventSender,
-}
-
 impl SystemControlCommand {
-    pub async fn execute(&self, context: &SystemControlContext) -> Result<(), String> {
+    pub async fn execute(
+        &self,
+        topic_manager: &TopicManager,
+        task_executor: &TaskExecutor,
+        system_config: &SystemConfig,
+        shutdown_token: &CancellationToken,
+        userlog_sender: &UserLogSender,
+        system_control_manager: &SystemControlManager,
+        task_id: &TaskId,
+        response_channel: &SystemResponseSender,
+        task_event_sender: &ExecutorEventSender,
+        return_message_sender: &ExecutorEventSender,
+    ) -> Result<(), String> {
         match self {
             SystemControlCommand::SubscribeTopic { topic } => {
-                log::info!("Processing SubscribeTopic command for task {}: '{}'", context.task_id, topic);
+                log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
                 
-                context.topic_manager.add_subscriber(
+                topic_manager.add_subscriber(
                     topic.clone(),
-                    context.task_id.clone(), 
-                    context.task_event_sender.clone()
+                    task_id.clone(), 
+                    task_event_sender.clone()
                 ).await;
                 
                 log::info!("Successfully subscribed to topic '{}'", topic);
@@ -465,15 +472,15 @@ impl SystemControlCommand {
                     status.to_string(),
                     topic.clone(),
                 );
-                let _ = context.response_channel.send(success_event);
+                let _ = response_channel.send(success_event);
                 Ok(())
             },
             SystemControlCommand::UnsubscribeTopic { topic } => {
-                log::info!("Processing UnsubscribeTopic command for task {}: '{}'", context.task_id, topic);
+                log::info!("Processing UnsubscribeTopic command for task {}: '{}'", task_id, topic);
                 
-                let removed = context.topic_manager.remove_subscriber_by_task(
+                let removed = topic_manager.remove_subscriber_by_task(
                     topic.clone(),
-                    context.task_id.clone()
+                    task_id.clone()
                 ).await;
                 
                 if removed {
@@ -486,7 +493,7 @@ impl SystemControlCommand {
                         status.to_string(),
                         topic.clone(),
                     );
-                    let _ = context.response_channel.send(success_event);
+                    let _ = response_channel.send(success_event);
                 } else {
                     log::warn!("Failed to unsubscribe from topic '{}'", topic);
                     
@@ -497,24 +504,24 @@ impl SystemControlCommand {
                         status.to_string(),
                         topic.clone(),
                     );
-                    let _ = context.response_channel.send(error_event);
+                    let _ = response_channel.send(error_event);
                 }
                 Ok(())
             },
             SystemControlCommand::StartTask { task_name } => {
-                log::info!("Processing StartTask command for task {}: '{}'", context.task_id, task_name);
+                log::info!("Processing StartTask command for task {}: '{}'", task_id, task_name);
                 
                 let start_context = StartContext {
                     task_name: task_name.clone(),
-                    config: context.config.clone(),
-                    topic_manager: context.topic_manager.clone(),
-                    system_control_manager: context.system_control_manager.clone(),
-                    shutdown_token: context.shutdown_token.clone(),
-                    userlog_sender: context.userlog_sender.clone(),
+                    config: system_config.clone(),
+                    topic_manager: topic_manager.clone(),
+                    system_control_manager: system_control_manager.clone(),
+                    shutdown_token: shutdown_token.clone(),
+                    userlog_sender: userlog_sender.clone(),
                     variant: StartContextVariant::Tasks,
                 };
                 
-                match context.task_executor.start_single_task(start_context).await {
+                match task_executor.start_single_task(start_context).await {
                     Ok(_) => {
                         log::info!("Successfully started task '{}'", task_name);
                         
@@ -525,7 +532,7 @@ impl SystemControlCommand {
                             status.to_string(),
                             task_name.clone(),
                         );
-                        let _ = context.response_channel.send(success_event);
+                        let _ = response_channel.send(success_event);
                         Ok(())
                     },
                     Err(e) => {
@@ -538,15 +545,15 @@ impl SystemControlCommand {
                             status.to_string(),
                             task_name.clone(),
                         );
-                        let _ = context.response_channel.send(error_event);
+                        let _ = response_channel.send(error_event);
                         Err(format!("Failed to start task '{}': {}", task_name, e))
                     }
                 }
             },
             SystemControlCommand::StopTask { task_name } => {
-                log::info!("Processing StopTask command for task {}: '{}'", context.task_id, task_name);
+                log::info!("Processing StopTask command for task {}: '{}'", task_id, task_name);
                 
-                match context.task_executor.stop_task_by_name(task_name).await {
+                match task_executor.stop_task_by_name(task_name).await {
                     Ok(_) => {
                         log::info!("Successfully stopped task '{}'", task_name);
                         
@@ -557,7 +564,7 @@ impl SystemControlCommand {
                             status.to_string(),
                             task_name.clone(),
                         );
-                        let _ = context.response_channel.send(success_event);
+                        let _ = response_channel.send(success_event);
                         Ok(())
                     },
                     Err(e) => {
@@ -570,20 +577,20 @@ impl SystemControlCommand {
                             status.to_string(),
                             task_name.clone(),
                         );
-                        let _ = context.response_channel.send(error_event);
+                        let _ = response_channel.send(error_event);
                         Err(format!("Failed to stop task '{}': {}", task_name, e))
                     }
                 }
             },
             SystemControlCommand::AddTaskFromToml { toml_data } => {
-                log::info!("Processing AddTaskFromToml command for task {} with TOML data", context.task_id);
+                log::info!("Processing AddTaskFromToml command for task {} with TOML data", task_id);
                 
-                match context.task_executor.add_task_from_toml(
+                match task_executor.add_task_from_toml(
                     toml_data,
-                    context.topic_manager.clone(),
-                    context.system_control_manager.clone(),
-                    context.shutdown_token.clone(),
-                    context.userlog_sender.clone(),
+                    topic_manager.clone(),
+                    system_control_manager.clone(),
+                    shutdown_token.clone(),
+                    userlog_sender.clone(),
                 ).await {
                     Ok(_) => {
                         log::info!("Successfully added task to executor from TOML");
@@ -594,7 +601,7 @@ impl SystemControlCommand {
                             status.to_string(),
                             String::new(),
                         );
-                        let _ = context.response_channel.send(success_event);
+                        let _ = response_channel.send(success_event);
                         Ok(())
                     },
                     Err(e) => {
@@ -606,16 +613,16 @@ impl SystemControlCommand {
                             status.to_string(),
                             e.to_string(),
                         );
-                        let _ = context.response_channel.send(error_event);
+                        let _ = response_channel.send(error_event);
                         Err(format!("Failed to add task from TOML: {}", e))
                     }
                 }
             },
             SystemControlCommand::Status => {
-                log::info!("Processing Status command for task {}", context.task_id);
+                log::info!("Processing Status command for task {}", task_id);
                 
-                let tasks_info = context.task_executor.get_running_tasks_info().await;
-                let topics_info = context.topic_manager.get_topics_info().await;
+                let tasks_info = task_executor.get_running_tasks_info().await;
+                let topics_info = topic_manager.get_topics_info().await;
                 
                 let mut json_response = String::from("{\n");
                 json_response.push_str("  \"tasks\": [\n");
@@ -647,34 +654,34 @@ impl SystemControlCommand {
                     json_response,
                 );
                 
-                if let Err(e) = context.response_channel.send(status_event) {
-                    log::warn!("Failed to send status response to task {}: {}", context.task_id, e);
+                if let Err(e) = response_channel.send(status_event) {
+                    log::warn!("Failed to send status response to task {}: {}", task_id, e);
                     Err(format!("Failed to send status response: {}", e))
                 } else {
-                    log::info!("Sent status response to task {}", context.task_id);
+                    log::info!("Sent status response to task {}", task_id);
                     Ok(())
                 }
             },
             SystemControlCommand::CallFunction { task_name, initial_input } => {
-                log::info!("Processing CallFunction command for task {}: '{}'", context.task_id, task_name);
+                log::info!("Processing CallFunction command for task {}: '{}'", task_id, task_name);
                 
-                let caller_task_name = context.task_executor.get_task_name_by_id(&context.task_id).await;
+                let caller_task_name = task_executor.get_task_name_by_id(task_id).await;
                 
                 let start_context = StartContext {
                     task_name: task_name.clone(),
-                    config: context.config.clone(),
-                    topic_manager: context.topic_manager.clone(),
-                    system_control_manager: context.system_control_manager.clone(),
-                    shutdown_token: context.shutdown_token.clone(),
-                    userlog_sender: context.userlog_sender.clone(),
+                    config: system_config.clone(),
+                    topic_manager: topic_manager.clone(),
+                    system_control_manager: system_control_manager.clone(),
+                    shutdown_token: shutdown_token.clone(),
+                    userlog_sender: userlog_sender.clone(),
                     variant: StartContextVariant::Functions {
-                        return_message_sender: context.return_message_sender.clone(),
+                        return_message_sender: return_message_sender.clone(),
                         initial_input: initial_input.clone(),
                         caller_task_name: caller_task_name.clone(),
                     },
                 };
                 
-                match context.task_executor.start_single_task(start_context).await {
+                match task_executor.start_single_task(start_context).await {
                     Ok(_) => {
                         log::info!("Successfully called function '{}'", task_name);
                         
@@ -685,7 +692,7 @@ impl SystemControlCommand {
                             status.to_string(),
                             task_name.clone(),
                         );
-                        let _ = context.response_channel.send(success_event);
+                        let _ = response_channel.send(success_event);
                         Ok(())
                     },
                     Err(e) => {
@@ -697,13 +704,13 @@ impl SystemControlCommand {
                             status.to_string(),
                             e.to_string(),
                         );
-                        let _ = context.response_channel.send(error_event);
+                        let _ = response_channel.send(error_event);
                         Err(e.to_string())
                     }
                 }
             },
             SystemControlCommand::Unknown { command, data } => {
-                log::warn!("Unknown system control command '{}' with data '{}' from task {}", command, data, context.task_id);
+                log::warn!("Unknown system control command '{}' with data '{}' from task {}", command, data, task_id);
                 Ok(())
             },
         }
@@ -998,26 +1005,22 @@ impl TaskExecutor {
             StartContextVariant::Functions { initial_input, caller_task_name, .. } => {
                 if let Some(initial_input) = initial_input {
                     let input_sender_for_initial = spawn_result.input_sender.clone();
-                    let initial_input_lines: Vec<String> = initial_input.lines().map(|s| s.to_string()).collect();
                     let initial_input_for_log = initial_input.clone();
-                    let topic_name = caller_task_name.clone().unwrap_or_else(|| task_config.name.clone());
+                    let caller_name = caller_task_name.clone().unwrap_or_else(|| "unknown".to_string());
                     let task_id_for_log = task_id_new.clone();
                     tokio::task::spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                         
-                        for line in initial_input_lines {
-                            let topic_msg = TopicMessage {
-                                topic: topic_name.clone(),
-                                data: line.clone(),
-                            };
-                            
-                            if let Err(e) = input_sender_for_initial.send(InputDataMessage::Topic(topic_msg)) {
-                                log::warn!("Failed to send initial input line to task {}: {}", task_id_for_log, e);
-                                break;
-                            }
+                        let function_msg = FunctionMessage {
+                            task_name: caller_name.clone(),
+                            data: initial_input_for_log.clone(),
+                        };
+                        
+                        if let Err(e) = input_sender_for_initial.send(InputDataMessage::Function(function_msg)) {
+                            log::warn!("Failed to send function message to task {}: {}", task_id_for_log, e);
                         }
                         
-                        log::info!("Sent initial input to function {}: '{}'", task_id_for_log, initial_input_for_log);
+                        log::info!("Sent function message to {}: caller='{}', data='{}'", task_id_for_log, caller_name, initial_input_for_log);
                     });
                 }
                 
