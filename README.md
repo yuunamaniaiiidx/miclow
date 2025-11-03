@@ -121,15 +121,6 @@ topics = ["購読するトピック1", "トピック2"]
 - `system.subscribe-topic:トピック名` - 新しいトピックを購読開始
 - `system.unsubscribe-topic:トピック名` - トピックの購読を解除
 
-#### 出力制御
-- `system.stdout:メッセージ` - 標準出力にメッセージを出力
-- `system.stderr:メッセージ` - 標準エラー出力にメッセージを出力
-
-#### タスク管理
-- `system.start-task:タスク名` - 指定されたタスクを開始
-- `system.stop-task:タスク名` - 指定されたタスクを停止
-- `system.add-task-from-toml:TOMLデータ` - TOML形式のデータから新しいタスクを動的追加
-
 #### システム制御
 - `system.status` - システムの状態を取得
 
@@ -137,12 +128,6 @@ topics = ["購読するトピック1", "トピック2"]
 ```python
 # トピックの購読開始
 print("system.subscribe-topic:new_topic")
-
-# 標準出力への出力
-print("system.stdout:処理が完了しました")
-
-# タスクの開始
-print("system.start-task:worker_task")
 ```
 
 ### メッセージ形式
