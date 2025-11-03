@@ -136,19 +136,33 @@ impl SystemControlCommand {
                 
                 let caller_task_name = task_executor.get_task_name_by_id(task_id).await;
                 
-                let start_context = StartContext {
-                    task_name: task_name.clone(),
-                    config: system_config.clone(),
-                    topic_manager: topic_manager.clone(),
-                    system_control_manager: system_control_manager.clone(),
-                    shutdown_token: shutdown_token.clone(),
-                    userlog_sender: userlog_sender.clone(),
-                    return_message_sender: Some(return_message_sender.clone()),
-                    initial_input: initial_input.clone(),
-                    caller_task_name: caller_task_name.clone(),
+                let ready_context = match StartContext::from_task_name(
+                    task_name.clone(),
+                    system_config,
+                    topic_manager.clone(),
+                    system_control_manager.clone(),
+                    shutdown_token.clone(),
+                    userlog_sender.clone(),
+                    Some(return_message_sender.clone()),
+                    initial_input.clone(),
+                    caller_task_name.clone(),
+                ) {
+                    Ok(ctx) => ctx,
+                    Err(e) => {
+                        log::error!("Failed to find task '{}': {}", task_name, e);
+                        let status = SystemResponseStatus::Error;
+                        let response_topic = format!("system.function.{}", task_name);
+                        let error_event = SystemResponseEvent::new_system_error(
+                            response_topic,
+                            status.to_string(),
+                            e.to_string(),
+                        );
+                        let _ = response_channel.send(error_event);
+                        return Err(format!("Task '{}' not found", task_name));
+                    }
                 };
                 
-                match task_executor.start_single_task(start_context).await {
+                match task_executor.start_task_from_config(ready_context).await {
                     Ok(_) => {
                         log::info!("Successfully called function '{}'", task_name);
                         

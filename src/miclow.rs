@@ -20,7 +20,7 @@ use crate::system_control_command::{SystemControlCommand, system_control_command
 use crate::spawn_backend_result::SpawnBackendResult;
 use crate::task_backend_handle::TaskBackendHandle;
 use crate::running_task::RunningTask;
-use crate::start_context::{StartContext, ReadyStartContext};
+use crate::start_context::StartContext;
 use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
@@ -577,7 +577,7 @@ impl TaskExecutor {
 
     pub async fn start_task_from_config(
         &self,
-        context: ReadyStartContext,
+        context: StartContext,
     ) -> Result<()> {
         let task_config = &context.task_config;
         log::info!("Starting task '{}'", task_config.name);
@@ -671,25 +671,6 @@ impl TaskExecutor {
     }
 }
 
-impl TaskExecutor {
-    pub async fn start_single_task(
-        &self,
-        context: StartContext,
-    ) -> Result<()> {
-        // Try to find task in tasks or functions (both are searched)
-        let task_config = context.config.tasks.iter()
-            .chain(context.config.functions.iter())
-            .find(|t| t.name == context.task_name);
-        
-        if let Some(task_config) = task_config {
-            let config_context = context.to_ready_context(task_config.clone());
-            return self.start_task_from_config(config_context).await;
-        }
-
-        Err(anyhow::anyhow!("Task '{}' not found in configuration", context.task_name))
-    }
-
-}
 
 pub struct MiclowSystem {
     pub config: SystemConfig,
@@ -729,19 +710,19 @@ impl MiclowSystem {
         for task_config in tasks.iter() {
             let task_name: String = task_config.name.clone();
 
-            let start_context = StartContext {
-                task_name: task_name.clone(),
-                config: config.clone(),
-                topic_manager: topic_manager.clone(),
-                system_control_manager: system_control_manager.clone(),
-                shutdown_token: shutdown_token.clone(),
-                userlog_sender: userlog_sender.clone(),
-                return_message_sender: None,
-                initial_input: None,
-                caller_task_name: None,
-            };
+            // TaskConfigを既に持っているので、StartContextを直接作成
+            let ready_context = StartContext::new(
+                (*task_config).clone(),
+                topic_manager.clone(),
+                system_control_manager.clone(),
+                shutdown_token.clone(),
+                userlog_sender.clone(),
+                None,
+                None,
+                None,
+            );
 
-            match task_executor.start_single_task(start_context).await {
+            match task_executor.start_task_from_config(ready_context).await {
                 Ok(_) => {
                     log::info!("Started user task {} with command: {} {}",
                           task_name,
