@@ -230,9 +230,6 @@ class MiclowClient:
         self.task_id: str = os.environ['MICLOW_TASK_ID']
         self.stdin = sys.stdin
         self.stdout = sys.stdout
-        self._subscribed_topics: set[str] = set()
-        self._response_handlers: dict[str, deque[SystemResponse]] = {}
-        self._response_lock: threading.Lock = threading.Lock()
         self._buffer: Buffer = Buffer()
 
     def send_message(self, topic: str, message: str) -> None:
@@ -305,27 +302,6 @@ class MiclowClient:
                 if value is not None:
                     return value
 
-    def _handle_system_response(self, topic: str, message: str) -> None:
-        """Handle system response messages."""
-        if topic.startswith("system.error."):
-            with self._response_lock:
-                if topic not in self._response_handlers:
-                    self._response_handlers[topic] = deque()
-                self._response_handlers[topic].append(SystemResponse(
-                    response_type=SystemResponseType.ERROR,
-                    topic=topic,
-                    data=message
-                ))
-        elif topic.startswith("system."):
-            with self._response_lock:
-                if topic not in self._response_handlers:
-                    self._response_handlers[topic] = deque()
-                self._response_handlers[topic].append(SystemResponse(
-                    response_type=SystemResponseType.SUCCESS,
-                    topic=topic,
-                    data=message
-                ))
-
     def subscribe_topic(self, topic: str) -> SystemResponse:
         """
         Subscribe to a topic.
@@ -340,7 +316,6 @@ class MiclowClient:
         print(topic)
         print('::"system.subscribe-topic"')
         sys.stdout.flush()
-        self._subscribed_topics.add(topic)
 
         expected_topic = "system.subscribe-topic"
         response = self.wait_for_topic(expected_topic)
@@ -362,7 +337,6 @@ class MiclowClient:
         print(topic)
         print('::"system.unsubscribe-topic"')
         sys.stdout.flush()
-        self._subscribed_topics.discard(topic)
 
         expected_topic = "system.unsubscribe-topic"
         response = self.wait_for_topic(expected_topic)
