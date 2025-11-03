@@ -536,20 +536,6 @@ impl TaskExecutor {
         }
     }
 
-    pub async fn stop_task_by_name(&self, task_name: &str) -> Result<()> {
-        let id = {
-            let name_to_id = self.name_to_id.read().await;
-            name_to_id.get(task_name)
-                .and_then(|ids| ids.last())
-                .cloned()
-        };
-        if let Some(tid) = id {
-            self.stop_task_by_task_id(&tid).await
-        } else {
-            Err(anyhow::anyhow!("Task name '{}' not found", task_name))
-        }
-    }
-
     pub async fn get_running_tasks_info(&self) -> Vec<(String, TaskId)> {
         let name_to_id = self.name_to_id.read().await;
         name_to_id.iter()

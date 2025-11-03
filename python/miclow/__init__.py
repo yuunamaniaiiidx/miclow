@@ -23,7 +23,7 @@ __version__ = "0.1.0"
 __all__ = [
     "MiclowClient", "get_client", "send_message",
     "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
-    "start_task", "stop_task", "get_status",
+    "get_status",
     "call_function", "wait_for_topic", "receive_message", "MessageType"
 ]
 
@@ -430,48 +430,6 @@ class MiclowClient:
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
-    def start_task(self, task_name: str) -> SystemResponse:
-        """
-        Start a task.
-
-        Args:
-            task_name: The name of the task to start
-
-        Returns:
-            SystemResponse with the result
-        """
-        print('"system.start-task"::')
-        print(task_name)
-        print('::"system.start-task"')
-        sys.stdout.flush()
-
-        expected_topic = "system.start-task"
-        response = self.wait_for_topic(expected_topic)
-        if isinstance(response, SystemResponse):
-            return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
-    def stop_task(self, task_name: str) -> SystemResponse:
-        """
-        Stop a task.
-
-        Args:
-            task_name: The name of the task to stop
-
-        Returns:
-            SystemResponse with the result
-        """
-        print('"system.stop-task"::')
-        print(task_name)
-        print('::"system.stop-task"')
-        sys.stdout.flush()
-
-        expected_topic = "system.stop-task"
-        response = self.wait_for_topic(expected_topic)
-        if isinstance(response, SystemResponse):
-            return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
     def get_status(self) -> SystemResponse:
         """
         Get the system status.
@@ -605,16 +563,6 @@ def wait_for_topic(topic: str) -> TopicMessage | SystemResponse | FunctionMessag
         TopicMessage/SystemResponse/FunctionMessage
     """
     return get_client().wait_for_topic(topic)
-
-
-def start_task(task_name: str) -> SystemResponse:
-    """Start a task."""
-    return get_client().start_task(task_name)
-
-
-def stop_task(task_name: str) -> SystemResponse:
-    """Stop a task."""
-    return get_client().stop_task(task_name)
 
 
 def get_status() -> SystemResponse:

@@ -13,8 +13,6 @@ use crate::start_context::{StartContext, StartContextVariant};
 pub enum SystemControlCommand {
     SubscribeTopic { topic: String },
     UnsubscribeTopic { topic: String },
-    StartTask { task_name: String },
-    StopTask { task_name: String },
     Status,
     CallFunction { task_name: String, initial_input: Option<String> },
     Unknown { command: String, data: String },
@@ -88,80 +86,6 @@ impl SystemControlCommand {
                     let _ = response_channel.send(error_event);
                 }
                 Ok(())
-            },
-            SystemControlCommand::StartTask { task_name } => {
-                log::info!("Processing StartTask command for task {}: '{}'", task_id, task_name);
-                
-                let start_context = StartContext {
-                    task_name: task_name.clone(),
-                    config: system_config.clone(),
-                    topic_manager: topic_manager.clone(),
-                    system_control_manager: system_control_manager.clone(),
-                    shutdown_token: shutdown_token.clone(),
-                    userlog_sender: userlog_sender.clone(),
-                    variant: StartContextVariant::Tasks,
-                };
-                
-                match task_executor.start_single_task(start_context).await {
-                    Ok(_) => {
-                        log::info!("Successfully started task '{}'", task_name);
-                        
-                        let status = SystemResponseStatus::Success;
-                        let response_topic = "system.start-task".to_string();
-                        let success_event = SystemResponseEvent::new_system_response(
-                            response_topic,
-                            status.to_string(),
-                            task_name.clone(),
-                        );
-                        let _ = response_channel.send(success_event);
-                        Ok(())
-                    },
-                    Err(e) => {
-                        log::error!("Failed to start task '{}': {}", task_name, e);
-                        
-                        let status = SystemResponseStatus::Error;
-                        let response_topic = "system.start-task".to_string();
-                        let error_event = SystemResponseEvent::new_system_error(
-                            response_topic,
-                            status.to_string(),
-                            task_name.clone(),
-                        );
-                        let _ = response_channel.send(error_event);
-                        Err(format!("Failed to start task '{}': {}", task_name, e))
-                    }
-                }
-            },
-            SystemControlCommand::StopTask { task_name } => {
-                log::info!("Processing StopTask command for task {}: '{}'", task_id, task_name);
-                
-                match task_executor.stop_task_by_name(task_name).await {
-                    Ok(_) => {
-                        log::info!("Successfully stopped task '{}'", task_name);
-                        
-                        let status = SystemResponseStatus::Success;
-                        let response_topic = "system.stop-task".to_string();
-                        let success_event = SystemResponseEvent::new_system_response(
-                            response_topic,
-                            status.to_string(),
-                            task_name.clone(),
-                        );
-                        let _ = response_channel.send(success_event);
-                        Ok(())
-                    },
-                    Err(e) => {
-                        log::error!("Failed to stop task '{}': {}", task_name, e);
-                        
-                        let status = SystemResponseStatus::Error;
-                        let response_topic = "system.stop-task".to_string();
-                        let error_event = SystemResponseEvent::new_system_error(
-                            response_topic,
-                            status.to_string(),
-                            task_name.clone(),
-                        );
-                        let _ = response_channel.send(error_event);
-                        Err(format!("Failed to stop task '{}': {}", task_name, e))
-                    }
-                }
             },
             SystemControlCommand::Status => {
                 log::info!("Processing Status command for task {}", task_id);
@@ -283,16 +207,6 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
         "system.unsubscribe-topic" => {
             SystemControlCommand::UnsubscribeTopic { 
                 topic: data_trimmed.to_string() 
-            }
-        },
-        "system.start-task" => {
-            SystemControlCommand::StartTask { 
-                task_name: data_trimmed.to_string() 
-            }
-        },
-        "system.stop-task" => {
-            SystemControlCommand::StopTask { 
-                task_name: data_trimmed.to_string() 
             }
         },
         "system.status" => {
