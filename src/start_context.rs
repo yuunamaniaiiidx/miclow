@@ -11,6 +11,7 @@ pub enum StartContextVariant {
     Functions {
         return_message_sender: ExecutorEventSender,
         initial_input: Option<String>,
+        caller_task_name: Option<String>,
     },
 }
 
@@ -49,10 +50,6 @@ impl StartContext {
 }
 
 impl ReadyStartContext {
-    pub fn is_function(&self) -> bool {
-        matches!(self.variant, StartContextVariant::Functions { .. })
-    }
-
     pub fn return_message_sender(&self) -> Option<ExecutorEventSender> {
         match &self.variant {
             StartContextVariant::Tasks => None,
@@ -64,6 +61,13 @@ impl ReadyStartContext {
         match &self.variant {
             StartContextVariant::Tasks => None,
             StartContextVariant::Functions { initial_input, .. } => initial_input.clone(),
+        }
+    }
+
+    pub fn caller_task_name(&self) -> Option<String> {
+        match &self.variant {
+            StartContextVariant::Tasks => None,
+            StartContextVariant::Functions { caller_task_name, .. } => caller_task_name.clone(),
         }
     }
 }
