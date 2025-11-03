@@ -48,27 +48,3 @@ impl StartContext {
         }
     }
 }
-
-impl ReadyStartContext {
-    pub fn return_message_sender(&self) -> Option<ExecutorEventSender> {
-        match &self.variant {
-            StartContextVariant::Tasks => None,
-            StartContextVariant::Functions { return_message_sender, .. } => Some(return_message_sender.clone()),
-        }
-    }
-
-    pub fn initial_input(&self) -> Option<String> {
-        match &self.variant {
-            StartContextVariant::Tasks => None,
-            StartContextVariant::Functions { initial_input, .. } => initial_input.clone(),
-        }
-    }
-
-    pub fn caller_task_name(&self) -> Option<String> {
-        match &self.variant {
-            StartContextVariant::Tasks => None,
-            StartContextVariant::Functions { caller_task_name, .. } => caller_task_name.clone(),
-        }
-    }
-}
-
