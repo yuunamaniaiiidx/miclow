@@ -5,7 +5,6 @@ mod system_response_channel;
 mod shutdown_channel;
 mod user_log_sender;
 mod system_control_command;
-mod system_control_message;
 mod spawn_backend_result;
 mod task_backend_handle;
 mod task_backend;

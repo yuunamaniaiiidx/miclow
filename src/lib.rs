@@ -6,7 +6,6 @@ pub mod system_response_channel;
 pub mod shutdown_channel;
 pub mod user_log_sender;
 pub mod system_control_command;
-pub mod system_control_message;
 pub mod spawn_backend_result;
 pub mod task_backend_handle;
 pub mod task_backend;

@@ -18,7 +18,6 @@ use crate::system_response_channel::{SystemResponseChannel, SystemResponseSender
 use crate::shutdown_channel::{ShutdownChannel, ShutdownSender};
 use crate::user_log_sender::UserLogSender;
 use crate::system_control_command::SystemControlCommand;
-use crate::system_control_message::SystemControlMessage;
 use crate::spawn_backend_result::SpawnBackendResult;
 use crate::task_backend_handle::TaskBackendHandle;
 use crate::running_task::RunningTask;
