@@ -13,7 +13,6 @@ pub struct StartContext {
     pub system_control_manager: SystemControlManager,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
-    // Function call specific fields (None for regular tasks)
     pub return_message_sender: Option<ExecutorEventSender>,
     pub initial_input: Option<String>,
     pub caller_task_name: Option<String>,
@@ -26,7 +25,6 @@ pub struct ReadyStartContext {
     pub system_control_manager: SystemControlManager,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
-    // Function call specific fields (None for regular tasks)
     pub return_message_sender: Option<ExecutorEventSender>,
     pub initial_input: Option<String>,
     pub caller_task_name: Option<String>,
