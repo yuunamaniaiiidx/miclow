@@ -16,6 +16,11 @@ pub struct TaskConfig {
     pub view_stdout: bool,
     #[serde(default)]
     pub view_stderr: bool,
+    // Internal flags (not exposed in config file)
+    #[serde(skip)]
+    pub allow_duplicate: bool,
+    #[serde(skip)]
+    pub auto_start: bool,
 }
 
 impl TaskConfig {
@@ -61,15 +66,20 @@ impl SystemConfig {
         Ok(config)
     }
     
-    pub fn get_all_tasks(&self) -> Vec<&TaskConfig> {
-        self.tasks.iter().chain(self.functions.iter()).collect()
+    pub fn get_autostart_tasks(&self) -> Vec<&TaskConfig> {
+        self.tasks.iter().chain(self.functions.iter())
+            .filter(|task| task.auto_start)
+            .collect()
     }
     
     pub fn validate(&self) -> Result<()> {
-        if self.tasks.is_empty() {
-            return Err(anyhow::anyhow!("No tasks configured"));
+        let autostart_count = self.tasks.iter().filter(|t| t.auto_start).count()
+            + self.functions.iter().filter(|t| t.auto_start).count();
+        if autostart_count == 0 {
+            return Err(anyhow::anyhow!("No autostart tasks configured"));
         }
         
+        // Validate tasks
         for (index, task) in self.tasks.iter().enumerate() {
             if task.name.is_empty() {
                 return Err(anyhow::anyhow!("Task {} has empty name", index));
@@ -110,6 +120,51 @@ impl SystemConfig {
                 }
                 if stderr_topic.contains(' ') {
                     return Err(anyhow::anyhow!("Task '{}' stderr_topic '{}' contains spaces (not allowed)", task.name, stderr_topic));
+                }
+            }
+        }
+        
+        // Validate functions
+        for (index, task) in self.functions.iter().enumerate() {
+            if task.name.is_empty() {
+                return Err(anyhow::anyhow!("Function {} has empty name", index));
+            }
+            
+            if task.command.is_empty() {
+                return Err(anyhow::anyhow!("Function '{}' has empty command", task.name));
+            }
+            
+            if let Some(working_dir) = &task.working_directory {
+                if !std::path::Path::new(working_dir).exists() {
+                    return Err(anyhow::anyhow!("Function '{}' working directory '{}' does not exist", task.name, working_dir));
+                }
+            }
+            
+            if let Some(subscribe_topics) = &task.subscribe_topics {
+                for (topic_index, topic) in subscribe_topics.iter().enumerate() {
+                    if topic.is_empty() {
+                        return Err(anyhow::anyhow!("Function '{}' has empty initial topic at index {}", task.name, topic_index));
+                    }
+                    if topic.contains(' ') {
+                        return Err(anyhow::anyhow!("Function '{}' initial topic '{}' contains spaces (not allowed)", task.name, topic));
+                    }
+                }
+            }
+
+            if let Some(stdout_topic) = &task.stdout_topic {
+                if stdout_topic.is_empty() {
+                    return Err(anyhow::anyhow!("Function '{}' stdout_topic is empty", task.name));
+                }
+                if stdout_topic.contains(' ') {
+                    return Err(anyhow::anyhow!("Function '{}' stdout_topic '{}' contains spaces (not allowed)", task.name, stdout_topic));
+                }
+            }
+            if let Some(stderr_topic) = &task.stderr_topic {
+                if stderr_topic.is_empty() {
+                    return Err(anyhow::anyhow!("Function '{}' stderr_topic is empty", task.name));
+                }
+                if stderr_topic.contains(' ') {
+                    return Err(anyhow::anyhow!("Function '{}' stderr_topic '{}' contains spaces (not allowed)", task.name, stderr_topic));
                 }
             }
         }
@@ -157,8 +212,11 @@ impl SystemConfig {
                     log::info!("Loading include file: {}", full_path);
                     
                     match Self::from_toml(&content) {
-                        Ok(included_config) => {
+                        Ok(mut included_config) => {
+                            // Normalize defaults for included config
+                            included_config.normalize_defaults();
                             self.tasks.extend(included_config.tasks);
+                            self.functions.extend(included_config.functions);
                             if !included_config.include_paths.is_empty() {
                                 let include_dir = std::path::Path::new(&full_path)
                                     .parent()
@@ -186,7 +244,8 @@ impl SystemConfig {
     }
 
     fn normalize_defaults(&mut self) {
-        for task in self.tasks.iter_mut().chain(self.functions.iter_mut()) {
+        // Tasks: allow_duplicate = false, auto_start = true
+        for task in self.tasks.iter_mut() {
             if task.working_directory.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
                 task.working_directory = Some("./".to_string());
             }
@@ -196,6 +255,23 @@ impl SystemConfig {
             if task.view_stderr != true {
                 task.view_stderr = false;
             }
+            task.allow_duplicate = false;
+            task.auto_start = true;
+        }
+        
+        // Functions: allow_duplicate = true, auto_start = false
+        for task in self.functions.iter_mut() {
+            if task.working_directory.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
+                task.working_directory = Some("./".to_string());
+            }
+            if task.view_stdout != true {
+                task.view_stdout = false;
+            }
+            if task.view_stderr != true {
+                task.view_stderr = false;
+            }
+            task.allow_duplicate = true;
+            task.auto_start = false;
         }
     }
 }

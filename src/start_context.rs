@@ -6,16 +6,6 @@ use crate::user_log_sender::UserLogSender;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
-pub enum StartContextVariant {
-    Tasks,
-    Functions {
-        return_message_sender: ExecutorEventSender,
-        initial_input: Option<String>,
-        caller_task_name: Option<String>,
-    },
-}
-
-#[derive(Clone)]
 pub struct StartContext {
     pub task_name: String,
     pub config: SystemConfig,
@@ -23,7 +13,10 @@ pub struct StartContext {
     pub system_control_manager: SystemControlManager,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
-    pub variant: StartContextVariant,
+    // Function call specific fields (None for regular tasks)
+    pub return_message_sender: Option<ExecutorEventSender>,
+    pub initial_input: Option<String>,
+    pub caller_task_name: Option<String>,
 }
 
 #[derive(Clone)]
@@ -33,7 +26,10 @@ pub struct ReadyStartContext {
     pub system_control_manager: SystemControlManager,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
-    pub variant: StartContextVariant,
+    // Function call specific fields (None for regular tasks)
+    pub return_message_sender: Option<ExecutorEventSender>,
+    pub initial_input: Option<String>,
+    pub caller_task_name: Option<String>,
 }
 
 impl StartContext {
@@ -44,7 +40,9 @@ impl StartContext {
             system_control_manager: self.system_control_manager.clone(),
             shutdown_token: self.shutdown_token.clone(),
             userlog_sender: self.userlog_sender.clone(),
-            variant: self.variant.clone(),
+            return_message_sender: self.return_message_sender.clone(),
+            initial_input: self.initial_input.clone(),
+            caller_task_name: self.caller_task_name.clone(),
         }
     }
 }

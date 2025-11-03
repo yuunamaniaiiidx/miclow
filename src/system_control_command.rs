@@ -7,7 +7,7 @@ use crate::user_log_sender::UserLogSender;
 use crate::system_control_manager::SystemControlManager;
 use crate::system_response_channel::{SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
 use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender};
-use crate::start_context::{StartContext, StartContextVariant};
+use crate::start_context::StartContext;
 
 #[derive(Debug, Clone)]
 pub enum SystemControlCommand {
@@ -143,11 +143,9 @@ impl SystemControlCommand {
                     system_control_manager: system_control_manager.clone(),
                     shutdown_token: shutdown_token.clone(),
                     userlog_sender: userlog_sender.clone(),
-                    variant: StartContextVariant::Functions {
-                        return_message_sender: return_message_sender.clone(),
-                        initial_input: initial_input.clone(),
-                        caller_task_name: caller_task_name.clone(),
-                    },
+                    return_message_sender: Some(return_message_sender.clone()),
+                    initial_input: initial_input.clone(),
+                    caller_task_name: caller_task_name.clone(),
                 };
                 
                 match task_executor.start_single_task(start_context).await {

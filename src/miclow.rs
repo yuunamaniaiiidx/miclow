@@ -20,7 +20,7 @@ use crate::system_control_command::{SystemControlCommand, system_control_command
 use crate::spawn_backend_result::SpawnBackendResult;
 use crate::task_backend_handle::TaskBackendHandle;
 use crate::running_task::RunningTask;
-use crate::start_context::{StartContext, ReadyStartContext, StartContextVariant};
+use crate::start_context::{StartContext, ReadyStartContext};
 use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
@@ -615,16 +615,11 @@ impl TaskExecutor {
             context.userlog_sender,
         );
         
-        let return_message_sender = match &context.variant {
-            StartContextVariant::Tasks => None,
-            StartContextVariant::Functions { return_message_sender, .. } => Some(return_message_sender.clone()),
-        };
-        
         let spawn_result = task_spawner.spawn_backend(
             backend,
             context.shutdown_token,
             subscribe_topics,
-            return_message_sender,
+            context.return_message_sender.clone(),
         ).await;
         
         let running_task = RunningTask {
@@ -636,39 +631,39 @@ impl TaskExecutor {
             view_stderr: task_config.view_stderr,
         };
 
-        match &context.variant {
-            StartContextVariant::Functions { initial_input, caller_task_name, .. } => {
-                if let Some(initial_input) = initial_input {
-                    let input_sender_for_initial = spawn_result.input_sender.clone();
-                    let initial_input_for_log = initial_input.clone();
-                    let caller_name = caller_task_name.clone().unwrap_or_else(|| "unknown".to_string());
-                    let task_id_for_log = task_id_new.clone();
-                    tokio::task::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                        
-                        let function_msg = FunctionMessage {
-                            task_name: caller_name.clone(),
-                            data: initial_input_for_log.clone(),
-                        };
-                        
-                        if let Err(e) = input_sender_for_initial.send(InputDataMessage::Function(function_msg)) {
-                            log::warn!("Failed to send function message to task {}: {}", task_id_for_log, e);
-                        }
-                        
-                        log::info!("Sent function message to {}: caller='{}', data='{}'", task_id_for_log, caller_name, initial_input_for_log);
-                    });
+        // Handle function message if this is a function call
+        if let Some(initial_input) = &context.initial_input {
+            let input_sender_for_initial = spawn_result.input_sender.clone();
+            let initial_input_for_log = initial_input.clone();
+            let caller_name = context.caller_task_name.clone().unwrap_or_else(|| "unknown".to_string());
+            let task_id_for_log = task_id_new.clone();
+            tokio::task::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                
+                let function_msg = FunctionMessage {
+                    task_name: caller_name.clone(),
+                    data: initial_input_for_log.clone(),
+                };
+                
+                if let Err(e) = input_sender_for_initial.send(InputDataMessage::Function(function_msg)) {
+                    log::warn!("Failed to send function message to task {}: {}", task_id_for_log, e);
                 }
                 
-                if let Err(e) = self.register_task(task_config.name.clone(), running_task).await {
-                    return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
-                }
-                log::debug!("Registered function '{}' (ID: {}) - duplicate instances allowed", task_config.name, task_id_new);
+                log::info!("Sent function message to {}: caller='{}', data='{}'", task_id_for_log, caller_name, initial_input_for_log);
+            });
+        }
+        
+        // Register task based on allow_duplicate flag
+        if task_config.allow_duplicate {
+            if let Err(e) = self.register_task(task_config.name.clone(), running_task).await {
+                return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
             }
-            StartContextVariant::Tasks => {
-                if let Err(e) = self.try_register_task(task_config.name.clone(), running_task).await {
-                    return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
-                }
+            log::debug!("Registered task '{}' (ID: {}) - duplicate instances allowed", task_config.name, task_id_new);
+        } else {
+            if let Err(e) = self.try_register_task(task_config.name.clone(), running_task).await {
+                return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
             }
+            log::debug!("Registered task '{}' (ID: {}) - duplicate instances not allowed", task_config.name, task_id_new);
         }
         
         log::info!("Successfully started task '{}' (ID: {})", task_config.name, task_id_new);
@@ -681,19 +676,14 @@ impl TaskExecutor {
         &self,
         context: StartContext,
     ) -> Result<()> {
-        match context.variant {
-            StartContextVariant::Tasks => {
-                if let Some(task_config) = context.config.tasks.iter().find(|t| t.name == context.task_name) {
-                    let config_context = context.to_ready_context(task_config.clone());
-                    return self.start_task_from_config(config_context).await;
-                }
-            }
-            StartContextVariant::Functions { .. } => {
-                if let Some(task_config) = context.config.functions.iter().find(|t| t.name == context.task_name) {
-                    let config_context = context.to_ready_context(task_config.clone());
-                    return self.start_task_from_config(config_context).await;
-                }
-            }
+        // Try to find task in tasks or functions (both are searched)
+        let task_config = context.config.tasks.iter()
+            .chain(context.config.functions.iter())
+            .find(|t| t.name == context.task_name);
+        
+        if let Some(task_config) = task_config {
+            let config_context = context.to_ready_context(task_config.clone());
+            return self.start_task_from_config(config_context).await;
         }
 
         Err(anyhow::anyhow!("Task '{}' not found in configuration", context.task_name))
@@ -734,7 +724,7 @@ impl MiclowSystem {
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) {
-        let tasks: Vec<&TaskConfig> = config.get_all_tasks();
+        let tasks: Vec<&TaskConfig> = config.get_autostart_tasks();
 
         for task_config in tasks.iter() {
             let task_name: String = task_config.name.clone();
@@ -746,7 +736,9 @@ impl MiclowSystem {
                 system_control_manager: system_control_manager.clone(),
                 shutdown_token: shutdown_token.clone(),
                 userlog_sender: userlog_sender.clone(),
-                variant: StartContextVariant::Tasks,
+                return_message_sender: None,
+                initial_input: None,
+                caller_task_name: None,
             };
 
             match task_executor.start_single_task(start_context).await {
