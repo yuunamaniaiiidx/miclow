@@ -39,6 +39,7 @@ impl TaskConfig {
 pub struct SystemConfig {
     #[serde(skip)]
     pub config_file: Option<String>,
+    #[serde(default)]
     pub tasks: Vec<TaskConfig>,
     #[serde(default)]
     pub functions: Vec<TaskConfig>,
@@ -48,10 +49,16 @@ pub struct SystemConfig {
 
 impl SystemConfig {
     pub fn from_toml(toml_content: &str) -> Result<Self> {
+        Self::from_toml_internal(toml_content, true)
+    }
+    
+    fn from_toml_internal(toml_content: &str, validate: bool) -> Result<Self> {
         let mut config: SystemConfig = toml::from_str(toml_content)?;
         config.config_file = None;
         config.normalize_defaults();
-        config.validate()?;
+        if validate {
+            config.validate()?;
+        }
         Ok(config)
     }
     
@@ -60,7 +67,11 @@ impl SystemConfig {
         let mut config = Self::from_toml(&config_content)?;
         config.config_file = Some(config_file.clone());
         
+        log::debug!("Before load_includes: {} tasks, {} functions", 
+            config.tasks.len(), config.functions.len());
         config.load_includes(&config_file)?;
+        log::debug!("After load_includes: {} tasks, {} functions", 
+            config.tasks.len(), config.functions.len());
         config.validate()?;
         
         Ok(config)
@@ -193,6 +204,8 @@ impl SystemConfig {
             let full_path = if std::path::Path::new(include_path).is_absolute() {
                 include_path.clone()
             } else {
+                // Standard approach: resolve relative to the config file's directory
+                // This is the most common pattern used by Docker Compose, Nginx, etc.
                 base_dir.join(include_path).to_string_lossy().to_string()
             };
             
@@ -202,7 +215,8 @@ impl SystemConfig {
             }
             
             if !std::path::Path::new(&full_path).exists() {
-                log::warn!("Include file not found: {}", full_path);
+                log::warn!("Include file not found: {} (base_dir: {}, include_path: {})", 
+                    full_path, base_dir.display(), include_path);
                 continue;
             }
             
@@ -211,10 +225,16 @@ impl SystemConfig {
                     loaded_files.insert(full_path.clone());
                     log::info!("Loading include file: {}", full_path);
                     
-                    match Self::from_toml(&content) {
-                        Ok(mut included_config) => {
-                            // Normalize defaults for included config
-                            included_config.normalize_defaults();
+                    match Self::from_toml_internal(&content, false) {
+                        Ok(included_config) => {
+                            // from_toml_internal already calls normalize_defaults()
+                            log::info!("Loaded {} tasks and {} functions from {}", 
+                                included_config.tasks.len(), 
+                                included_config.functions.len(),
+                                full_path);
+                            for func in &included_config.functions {
+                                log::info!("  Function: {}", func.name);
+                            }
                             self.tasks.extend(included_config.tasks);
                             self.functions.extend(included_config.functions);
                             if !included_config.include_paths.is_empty() {
@@ -276,3 +296,42 @@ impl SystemConfig {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_load_functions_from_include() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_dir = temp_dir.path();
+        
+        // Create include file with functions
+        let include_file = base_dir.join("include.toml");
+        fs::write(&include_file, r#"
+[[functions]]
+task_name = "test_function"
+command = "echo"
+args = ["test"]
+"#).unwrap();
+        
+        // Create main config file
+        let main_file = base_dir.join("main.toml");
+        fs::write(&main_file, format!(r#"
+include_paths = ["include.toml"]
+
+[[tasks]]
+task_name = "main_task"
+command = "echo"
+args = ["main"]
+"#)).unwrap();
+        
+        let config = SystemConfig::from_file(main_file.to_string_lossy().to_string()).unwrap();
+        
+        assert_eq!(config.functions.len(), 1, "Should have 1 function from include file");
+        assert_eq!(config.functions[0].name, "test_function");
+        assert_eq!(config.tasks.len(), 1, "Should have 1 task from main file");
+        assert_eq!(config.tasks[0].name, "main_task");
+    }
+}

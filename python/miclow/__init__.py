@@ -449,7 +449,7 @@ class MiclowClient:
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
 
-    def call_function(self, function_name: str, data: str = "") -> str:
+    def call_function(self, function_name: str, data: str = "") -> TopicMessage | SystemResponse | FunctionMessage:
         """
         Call a function defined in [[functions]] section and wait for return value.
 
@@ -467,8 +467,6 @@ class MiclowClient:
         print(f'"{function_command}"::')
         print(data)
         print(f'::"{function_command}"')
-        sys.stdout.flush()
-
         expected_topic = f"system.function.{function_name}"
         response = self.wait_for_topic(expected_topic)
         if not isinstance(response, SystemResponse):
@@ -479,11 +477,7 @@ class MiclowClient:
 
         return_message = self.wait_for_topic("system.return")
 
-        if isinstance(return_message, SystemResponse):
-            return return_message.data
-        elif isinstance(return_message, TopicMessage):
-            return return_message.message
-        raise RuntimeError(f"Unexpected message type: {type(return_message)}")
+        return return_message
 
     @contextmanager
     def listen_to_topic(self, topic: str):

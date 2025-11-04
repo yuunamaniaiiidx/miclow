@@ -33,7 +33,7 @@ use tokio::task::JoinHandle;
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
- 
+
 pub fn start_system_control_worker(
     system_control_manager: SystemControlManager,
     topic_manager: TopicManager,

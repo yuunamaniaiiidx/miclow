@@ -133,32 +133,45 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
         }
     }
     if input.starts_with('"') {
-        let (topic, idx_after_topic) = parse_quoted_topic(input)?;
-        let rest = &input[idx_after_topic..];
-        if rest == "::" {
-            return Ok(LineParseResult::MultilineStart { topic });
-        }
-        let rest_trim_left = rest.trim_start();
-        if rest_trim_left.starts_with(':') {
-            let after_colon = &rest_trim_left[1..];
-            let value = after_colon.trim();
-            return Ok(LineParseResult::SingleLine { topic, value: value.to_string() });
+        // parse_quoted_topicが失敗した場合はNotSpecialを返す（エラーにしない）
+        match parse_quoted_topic(input) {
+            Ok((topic, idx_after_topic)) => {
+                let rest = &input[idx_after_topic..];
+                // 複数行開始の判定: "key":: の完全一致のみ
+                if rest == "::" {
+                    return Ok(LineParseResult::MultilineStart { topic });
+                }
+                // 1行形式の判定: "key": data 形式
+                let rest_trim_left = rest.trim_start();
+                if rest_trim_left.starts_with(':') {
+                    let after_colon = &rest_trim_left[1..];
+                    let value = after_colon.trim();
+                    return Ok(LineParseResult::SingleLine { topic, value: value.to_string() });
+                }
+            }
+            Err(_) => {
+                // parse_quoted_topicが失敗した場合はNotSpecialとして扱う
+                return Ok(LineParseResult::NotSpecial);
+            }
         }
         return Ok(LineParseResult::NotSpecial);
     }
 
+    // アクティブ状態中の終了判定: ::"key" の完全一致のみ
     if input.starts_with("::\"") {
-        // "::"の後の文字列を取得（文字境界を考慮）
         let after = &input["::".len()..];
-        let (topic, idx) = parse_quoted_topic(after)?;
-        if idx == after.len() {
-            return Ok(LineParseResult::MultilineEnd { topic });
-        } else {
-            return Ok(LineParseResult::NotSpecial);
+        match parse_quoted_topic(after) {
+            Ok((topic, idx)) => {
+                if idx == after.len() {
+                    return Ok(LineParseResult::MultilineEnd { topic });
+                }
+            }
+            Err(_) => {
+                // パース失敗はNotSpecial
+            }
         }
     }
     if input.starts_with("::") {
-        // "::"の後の文字列を取得（文字境界を考慮）
         let after = &input["::".len()..];
         if after.starts_with(' ') || after.starts_with('\t') {
             return Ok(LineParseResult::NotSpecial);
@@ -181,16 +194,19 @@ pub fn strip_crlf(s: &str) -> &str {
 
 pub fn consume_stream_line(buffer: &mut TopicInputBuffer, line: &str) -> Result<StreamOutcome, String> {
     if buffer.is_active() {
+        // アクティブ状態中は終了文字（::"key"）以外は通常のデータとしてバッファに追加
         match parse_line(line)? {
             LineParseResult::MultilineEnd { topic } => {
                 if let Some((active_topic, data)) = buffer.try_finish(&topic) {
                     Ok(StreamOutcome::Emit { topic: active_topic, data })
                 } else {
+                    // トピック名が一致しない場合は通常のデータとしてバッファに追加
                     buffer.push_line(line.to_string());
                     Ok(StreamOutcome::None)
                 }
             }
             _ => {
+                // 終了文字以外は全て通常のデータとしてバッファに追加
                 buffer.push_line(line.to_string());
                 Ok(StreamOutcome::None)
             }
@@ -418,8 +434,9 @@ mod tests {
     #[test]
     fn consume_stream_line_error_on_unterminated_topic() {
         let mut buf = TopicInputBuffer::new();
-        let err = consume_stream_line(&mut buf, "\"unterminated").err();
-        assert!(err.is_some());
+        // 未終了のトピックはエラーではなくNotSpecialとして扱われる
+        let result = consume_stream_line(&mut buf, "\"unterminated").unwrap();
+        assert!(matches!(result, StreamOutcome::Plain(_)));
         assert!(!buf.is_active());
     }
 
