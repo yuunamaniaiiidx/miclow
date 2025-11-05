@@ -449,7 +449,7 @@ class MiclowClient:
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
 
-    def call_function(self, function_name: str, data: str = "") -> TopicMessage | SystemResponse | FunctionMessage:
+    def call_function(self, function_name: str, data: str = "") -> SystemResponse:
         """
         Call a function defined in [[functions]] section and wait for return value.
 
@@ -478,6 +478,19 @@ class MiclowClient:
         return_message = self.wait_for_topic("system.return")
 
         return return_message
+
+    def return_value(self, data: str) -> None:
+        """
+        Return a value to the caller.
+
+        Args:
+            data: The data to return
+        """
+        print('"system.return"::')
+        print(data)
+        print('::"system.return"')
+        sys.stdout.flush()
+
 
     @contextmanager
     def listen_to_topic(self, topic: str):
@@ -532,7 +545,7 @@ def unsubscribe_topic(topic: str) -> SystemResponse:
     return get_client().unsubscribe_topic(topic)
 
 
-def receive_message() -> TopicMessage | SystemResponse | FunctionMessage | None:
+def receive_message() -> TopicMessage | SystemResponse | FunctionMessage:
     """
     Receive the oldest message across all topics based on arrival order.
     Returns buffered message if available, otherwise waits until received from stdin.
@@ -563,10 +576,7 @@ def get_status() -> SystemResponse:
     """Get the system status."""
     return get_client().get_status()
 
-
-
-
-def call_function(function_name: str, data: str = "") -> str:
+def call_function(function_name: str, data: str = "") -> SystemResponse:
     """
     Call a function defined in [[functions]] section and wait for return value.
 
@@ -582,3 +592,12 @@ def call_function(function_name: str, data: str = "") -> str:
     """
     return get_client().call_function(function_name, data)
 
+
+def return_value(data: str) -> None:
+    """
+    Return a value to the caller.
+
+    Args:
+        response: The response to return
+    """
+    get_client().return_value(data)
