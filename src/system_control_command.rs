@@ -205,11 +205,7 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
     
     let key_lower = key.to_lowercase();
     let data_trimmed = data.trim();
-    
-    if data_trimmed.is_empty() && key_lower.as_str() != "system.status" {
-        return None;
-    }
-    
+
     let cmd = match key_lower.as_str() {
         "system.subscribe-topic" => {
             SystemControlCommand::SubscribeTopic { 

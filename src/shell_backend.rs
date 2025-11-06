@@ -58,7 +58,8 @@ impl ShellBackend {
         let topic_lower = topic.to_lowercase();
         let data_trimmed = data.trim();
         
-        if data_trimmed.is_empty() && topic_lower.as_str() != "system.status" {
+        // Allow empty data for system.status and system.function.* commands
+        if data_trimmed.is_empty() && topic_lower.as_str() != "system.status" && !topic_lower.starts_with("system.function.") {
             return None;
         }
         
@@ -98,9 +99,7 @@ impl ShellBackend {
         let data_trimmed = data.trim();
         
         if topic_lower == "system.return" {
-            if !data_trimmed.is_empty() {
-                return Some(ExecutorEvent::new_return_message(data_trimmed.to_string()));
-            }
+            return Some(ExecutorEvent::new_return_message(data_trimmed.to_string()));
         }
         
         None
@@ -324,13 +323,35 @@ impl TaskBackend for ShellBackend {
                     }
                     status = child.wait() => {
                         notify(status.map_err(anyhow::Error::from));
+                        // プロセスが自然に終了した場合、stdout/stderrの読み取りが完了するまで
+                        // cancel_tokenをキャンセルしない（EOFで自然に終了するため）
+                        // これにより、バッファに残っているエラーメッセージが確実に読み取られる
                     }
                 }
             });
 
             let _ = status_handle.await;
-            let _ = stdout_handle.await;
-            let _ = stderr_handle.await;
+            
+            // プロセス終了後、stdout/stderrのストリームがEOFになるまで待機
+            // タイムアウトを設けて、無限に待たないようにする
+            let stream_read_timeout = tokio::time::Duration::from_millis(500);
+            tokio::select! {
+                _ = stdout_handle => {
+                    log::debug!("stdout reader completed for task {}", task_id);
+                }
+                _ = tokio::time::sleep(stream_read_timeout) => {
+                    log::debug!("stdout reader timeout for task {}, continuing", task_id);
+                }
+            }
+            tokio::select! {
+                _ = stderr_handle => {
+                    log::debug!("stderr reader completed for task {}", task_id);
+                }
+                _ = tokio::time::sleep(stream_read_timeout) => {
+                    log::debug!("stderr reader timeout for task {}, continuing", task_id);
+                }
+            }
+            
             cancel_token.cancel();
             let _ = input_handle.await;
         });

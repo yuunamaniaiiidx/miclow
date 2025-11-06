@@ -632,9 +632,10 @@ impl TaskExecutor {
         };
 
         // Handle function message if this is a function call
-        if let Some(initial_input) = &context.initial_input {
+        // Send FunctionMessage even if initial_input is None (for functions called without arguments)
+        if context.return_message_sender.is_some() {
             let input_sender_for_initial = spawn_result.input_sender.clone();
-            let initial_input_for_log = initial_input.clone();
+            let initial_input_for_log = context.initial_input.clone().unwrap_or_else(|| "".to_string());
             let caller_name = context.caller_task_name.clone().unwrap_or_else(|| "unknown".to_string());
             let task_id_for_log = task_id_new.clone();
             tokio::task::spawn(async move {
