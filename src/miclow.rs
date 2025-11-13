@@ -752,12 +752,18 @@ impl MiclowSystem {
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());
         let logging_shutdown = CancellationToken::new();
-        let h_log = spawn_log_aggregator(log_rx, logging_shutdown.clone());
+        let (log_ready_tx, log_ready_rx) = tokio::sync::oneshot::channel();
+        let h_log = spawn_log_aggregator(log_rx, logging_shutdown.clone(), Some(log_ready_tx));
+        // ログタスクの起動を待機
+        let _ = log_ready_rx.await;
         self.background_tasks.register("log_aggregator", h_log);
 
         let (userlog_tx, userlog_rx) = mpsc::unbounded_channel::<UserLogEvent>();
         let userlog_sender = UserLogSender::new(userlog_tx);
-        let h_userlog = spawn_user_log_aggregator(userlog_rx, logging_shutdown.clone());
+        let (userlog_ready_tx, userlog_ready_rx) = tokio::sync::oneshot::channel();
+        let h_userlog = spawn_user_log_aggregator(userlog_rx, logging_shutdown.clone(), Some(userlog_ready_tx));
+        // ユーザーログタスクの起動を待機
+        let _ = userlog_ready_rx.await;
         self.background_tasks.register("user_log_aggregator", h_userlog);
 
         let h_sys = start_system_control_worker(

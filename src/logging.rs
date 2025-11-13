@@ -175,10 +175,19 @@ fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
 }
 
 /// Spawn the log aggregator that prints to console with colors
-pub fn spawn_log_aggregator(mut rx: UnboundedReceiver<LogEvent>, shutdown: CancellationToken) -> JoinHandle<()> {
+/// ready_notifierが提供された場合、タスクが起動したことを通知します
+pub fn spawn_log_aggregator(
+    mut rx: UnboundedReceiver<LogEvent>,
+    shutdown: CancellationToken,
+    ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let term = Term::stdout();
         let mut colors = ColorBook::new();
+        // タスクが起動したことを通知
+        if let Some(notifier) = ready_notifier {
+            let _ = notifier.send(());
+        }
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }
@@ -209,10 +218,19 @@ pub fn spawn_log_aggregator(mut rx: UnboundedReceiver<LogEvent>, shutdown: Cance
 }
 
 /// User task logs (stdout/stderr) aggregator: color by task_id, red for stderr, etc.
-pub fn spawn_user_log_aggregator(mut rx: UnboundedReceiver<UserLogEvent>, shutdown: CancellationToken) -> JoinHandle<()> {
+/// ready_notifierが提供された場合、タスクが起動したことを通知します
+pub fn spawn_user_log_aggregator(
+    mut rx: UnboundedReceiver<UserLogEvent>,
+    shutdown: CancellationToken,
+    ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let term = Term::stdout();
         let mut colors = ColorBook::new();
+        // タスクが起動したことを通知
+        if let Some(notifier) = ready_notifier {
+            let _ = notifier.send(());
+        }
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }
