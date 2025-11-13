@@ -826,11 +826,6 @@ impl MiclowSystem {
         }
 
         log::info!("Received shutdown signal, stopping all workers...");
-        
-        Self::shutdown_workers(
-            self.task_executor,
-            self.shutdown_token,
-        ).await;
 
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         logging_shutdown.cancel();
@@ -839,6 +834,12 @@ impl MiclowSystem {
             let _ = interactive_handle.await;
         }
         self.background_tasks.abort_all().await;
+
+        Self::shutdown_workers(
+            self.task_executor,
+            self.shutdown_token,
+        ).await;
+
         log::logger().flush();
 
         log::info!("Graceful shutdown completed");
