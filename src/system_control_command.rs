@@ -14,6 +14,7 @@ pub enum SystemControlCommand {
     SubscribeTopic { topic: String },
     UnsubscribeTopic { topic: String },
     Status,
+    GetLatestMessage { topic: String },
     CallFunction { task_name: String, initial_input: Option<String> },
     Unknown { command: String, data: String },
 }
@@ -131,6 +132,47 @@ impl SystemControlCommand {
                     Ok(())
                 }
             },
+            SystemControlCommand::GetLatestMessage { topic } => {
+                log::info!("Processing GetLatestMessage command for task {}: '{}'", task_id, topic);
+
+                match topic_manager.get_latest_message(topic).await {
+                    Some(ExecutorEvent::Message { data, .. }) => {
+                        let status = SystemResponseStatus::Success;
+                        let response_topic = "system.get-latest-message".to_string();
+                        let success_event = SystemResponseEvent::new_system_response(
+                            response_topic,
+                            status.to_string(),
+                            data.clone(),
+                        );
+                        let _ = response_channel.send(success_event);
+                        Ok(())
+                    }
+                    Some(_) => {
+                        log::warn!("Latest event for topic '{}' is not a Message; task {}", topic, task_id);
+                        let status = SystemResponseStatus::Error;
+                        let response_topic = "system.get-latest-message".to_string();
+                        let error_event = SystemResponseEvent::new_system_error(
+                            response_topic,
+                            status.to_string(),
+                            format!("Latest event for '{}' is not a message", topic),
+                        );
+                        let _ = response_channel.send(error_event);
+                        Err("Latest event is not a Message variant".to_string())
+                    }
+                    None => {
+                        log::info!("No latest message found for topic '{}' (task {})", topic, task_id);
+                        let status = SystemResponseStatus::Error;
+                        let response_topic = "system.get-latest-message".to_string();
+                        let error_event = SystemResponseEvent::new_system_error(
+                            response_topic,
+                            status.to_string(),
+                            format!("No latest message for topic '{}'", topic),
+                        );
+                        let _ = response_channel.send(error_event);
+                        Err(format!("No latest message for topic '{}'", topic))
+                    }
+                }
+            },
             SystemControlCommand::CallFunction { task_name, initial_input } => {
                 log::info!("Processing CallFunction command for task {}: '{}'", task_id, task_name);
                 
@@ -219,6 +261,14 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
         },
         "system.status" => {
             SystemControlCommand::Status
+        },
+        "system.get-latest-message" => {
+            if data_trimmed.is_empty() {
+                return None;
+            }
+            SystemControlCommand::GetLatestMessage {
+                topic: data_trimmed.to_string(),
+            }
         },
         _ if key_lower.starts_with("system.function.") => {
             let function_name = key_lower.strip_prefix("system.function.").unwrap_or("");

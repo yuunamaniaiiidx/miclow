@@ -9,6 +9,7 @@ use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender};
 pub struct TopicManager {
     subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorEventSender>>>>>>,
     task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorEventSender>>>>,
+    latest_messages: Arc<RwLock<HashMap<String, ExecutorEvent>>>,
 }
 
 impl TopicManager {
@@ -16,6 +17,7 @@ impl TopicManager {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
             task_subscriptions: Arc::new(RwLock::new(HashMap::new())),
+            latest_messages: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -149,8 +151,14 @@ impl TopicManager {
                 return Err("Event does not contain a topic".to_string());
             }
         };
+        let topic_owned = topic.clone();
+
+        if matches!(event, ExecutorEvent::Message { .. }) {
+            let mut latest_messages = self.latest_messages.write().await;
+            latest_messages.insert(topic_owned.clone(), event.clone());
+        }
         
-        let subscribers = self.get_subscribers(topic).await;
+        let subscribers = self.get_subscribers(&topic_owned).await;
         
         if let Some(subscriber_list) = subscribers {
             if subscriber_list.is_empty() {
@@ -192,6 +200,11 @@ impl TopicManager {
             log::info!("No subscribers found for topic '{}'", topic);
             Ok(0)
         }
+    }
+
+    pub async fn get_latest_message(&self, topic: &str) -> Option<ExecutorEvent> {
+        let latest_messages = self.latest_messages.read().await;
+        latest_messages.get(topic).cloned()
     }
 }
 

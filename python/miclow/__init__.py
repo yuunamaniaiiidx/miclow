@@ -23,7 +23,7 @@ __version__ = "0.1.0"
 __all__ = [
     "MiclowClient", "get_client", "send_message",
     "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
-    "get_status",
+    "get_status", "get_latest_message",
     "call_function", "wait_for_topic", "receive_message", "MessageType"
 ]
 
@@ -448,6 +448,26 @@ class MiclowClient:
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
+    def get_latest_message(self, topic: str) -> SystemResponse:
+        """
+        Get the latest message for a topic.
+
+        Args:
+            topic: The topic name to get the latest message for
+
+        Returns:
+            SystemResponse with the latest message data (if available) or error
+        """
+        print('"system.get-latest-message"::')
+        print(topic)
+        print('::"system.get-latest-message"')
+        sys.stdout.flush()
+
+        expected_topic = "system.get-latest-message"
+        response = self.wait_for_topic(expected_topic)
+        if isinstance(response, SystemResponse):
+            return response
+        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
     def call_function(self, function_name: str, data: str = "") -> SystemResponse:
         """
@@ -575,6 +595,20 @@ def wait_for_topic(topic: str) -> TopicMessage | SystemResponse | FunctionMessag
 def get_status() -> SystemResponse:
     """Get the system status."""
     return get_client().get_status()
+
+
+def get_latest_message(topic: str) -> SystemResponse:
+    """
+    Get the latest message for a topic.
+
+    Args:
+        topic: The topic name to get the latest message for
+
+    Returns:
+        SystemResponse with the latest message data (if available) or error
+    """
+    return get_client().get_latest_message(topic)
+
 
 def call_function(function_name: str, data: str = "") -> SystemResponse:
     """
