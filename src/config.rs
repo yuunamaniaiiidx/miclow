@@ -96,6 +96,10 @@ impl SystemConfig {
                 return Err(anyhow::anyhow!("Task {} has empty name", index));
             }
             
+            if task.name.starts_with("system") {
+                return Err(anyhow::anyhow!("Task '{}' cannot start with 'system' (reserved for system tasks)", task.name));
+            }
+            
             if task.command.is_empty() {
                 return Err(anyhow::anyhow!("Task '{}' has empty command", task.name));
             }

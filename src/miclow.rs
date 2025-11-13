@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader, stdin};
 use tokio::task;
@@ -442,14 +442,18 @@ pub struct TaskExecutor {
     running_tasks: Arc<RwLock<HashMap<TaskId, RunningTask>>>,
     name_to_id: Arc<RwLock<HashMap<String, Vec<TaskId>>>>,
     id_to_name: Arc<RwLock<HashMap<TaskId, String>>>,
+    monitored_task_names: Arc<RwLock<HashSet<String>>>,
+    shutdown_token: CancellationToken,
 }
 
 impl TaskExecutor {
-    pub fn new() -> Self {
+    pub fn new(shutdown_token: CancellationToken) -> Self {
         Self {
             running_tasks: Arc::new(RwLock::new(HashMap::new())),
             name_to_id: Arc::new(RwLock::new(HashMap::new())),
             id_to_name: Arc::new(RwLock::new(HashMap::new())),
+            monitored_task_names: Arc::new(RwLock::new(HashSet::new())),
+            shutdown_token,
         }
     }
 
@@ -461,7 +465,14 @@ impl TaskExecutor {
         
         running_tasks.insert(task_id.clone(), task);
         name_to_id.entry(task_name.clone()).or_insert_with(Vec::new).push(task_id.clone());
-        id_to_name.insert(task_id, task_name);
+        id_to_name.insert(task_id, task_name.clone());
+        
+        // "system."で始まらないタスクは自動的に監視対象に追加
+        if !task_name.starts_with("system.") {
+            let mut monitored = self.monitored_task_names.write().await;
+            monitored.insert(task_name);
+        }
+        
         Ok(())
     }
 
@@ -483,6 +494,9 @@ impl TaskExecutor {
         let mut name_to_id = self.name_to_id.write().await;
         let mut id_to_name = self.id_to_name.write().await;
         if let Some(task) = running_tasks.remove(task_id) {
+            // タスク名を取得
+            let task_name = id_to_name.get(task_id).cloned();
+            
             // Vecから該当のtask_idを削除
             for ids in name_to_id.values_mut() {
                 ids.retain(|id| id != task_id);
@@ -490,6 +504,21 @@ impl TaskExecutor {
             // 空になったVecのエントリを削除
             name_to_id.retain(|_name, ids| !ids.is_empty());
             id_to_name.remove(task_id);
+            
+            // 監視対象タスクの終了をチェック
+            if let Some(name) = task_name {
+                let mut monitored = self.monitored_task_names.write().await;
+                if monitored.remove(&name) {
+                    // 監視対象タスクが終了した
+                    if monitored.is_empty() {
+                        // すべての監視対象タスクが終了した
+                        drop(monitored);
+                        log::info!("All monitored tasks finished, requesting shutdown...");
+                        self.shutdown_token.cancel();
+                    }
+                }
+            }
+            
             Some(task)
         } else {
             None
@@ -687,7 +716,7 @@ impl MiclowSystem {
         let topic_manager: TopicManager = TopicManager::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
         let system_control_manager: SystemControlManager = SystemControlManager::new(shutdown_token.clone());
-        let task_executor: TaskExecutor = TaskExecutor::new();
+        let task_executor: TaskExecutor = TaskExecutor::new(shutdown_token.clone());
         Self {
             config,
             topic_manager,
@@ -786,7 +815,6 @@ impl MiclowSystem {
         ).await;
         
         log::info!("System running. Press Ctrl+C to stop.");
-        println!("System running. Press Ctrl+C to stop.");
         
         let shutdown_token = self.shutdown_token.clone();
         let interactive_task_id = TaskId::new();
@@ -796,7 +824,7 @@ impl MiclowSystem {
             topic_manager.clone(),
             self.system_control_manager.clone(),
             self.task_executor.clone(),
-            "interactive".to_string(),
+            "system.interactive".to_string(),
             userlog_sender.clone(),
         );
         let interactive_result = interactive_task_spawner.spawn_backend(
@@ -843,7 +871,6 @@ impl MiclowSystem {
         log::logger().flush();
 
         log::info!("Graceful shutdown completed");
-        println!("Graceful shutdown completed");
         return Ok(());
     }
 
