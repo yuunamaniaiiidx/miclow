@@ -4,7 +4,7 @@ use tokio_util::sync::CancellationToken;
 use std::collections::HashMap;
 use toml::Value as TomlValue;
 use crate::task_id::TaskId;
-use crate::task_backend_handle::TaskBackendHandle;
+use crate::backend::TaskBackendHandle;
 use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, ExecutorEventChannel};
 use crate::input_channel::{InputChannel, InputReceiver, FunctionMessage, InputDataMessage};
 use crate::system_response_channel::SystemResponseChannel;

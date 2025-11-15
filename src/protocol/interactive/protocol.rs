@@ -3,7 +3,7 @@ use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader, stdin};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
-use crate::task_backend_handle::TaskBackendHandle;
+use crate::backend::TaskBackendHandle;
 use crate::executor_event_channel::{ExecutorEvent, ExecutorEventChannel};
 use crate::input_channel::InputChannel;
 use crate::system_response_channel::SystemResponseChannel;

@@ -2,8 +2,7 @@ use anyhow::{Error, Result};
 use std::convert::TryFrom;
 use async_trait::async_trait;
 use crate::task_id::TaskId;
-use crate::task_backend::TaskBackend;
-use crate::task_backend_handle::TaskBackendHandle;
+use crate::backend::{TaskBackend, TaskBackendHandle};
 use crate::config::TaskConfig;
 use crate::protocol::{self, MiclowStdinConfig, InteractiveConfig, McpServerConfig};
 
