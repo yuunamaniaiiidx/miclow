@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
-use crate::mcp::jsonrpc::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestIdManager};
-use crate::mcp::stdio::StdioTransport;
-use crate::mcp::types::*;
+use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestIdManager};
+use super::stdio::StdioTransport;
+use super::types::*;
 use tokio::process::Command;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -102,7 +102,7 @@ impl McpClient {
     }
 
     async fn send_notification(&mut self, method: String, params: Option<Value>) -> Result<()> {
-        let notification = JsonRpcMessage::Notification(crate::mcp::jsonrpc::JsonRpcNotification {
+        let notification = JsonRpcMessage::Notification(super::jsonrpc::JsonRpcNotification {
             jsonrpc: "2.0".to_string(),
             method,
             params,

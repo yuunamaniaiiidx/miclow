@@ -20,7 +20,7 @@ use crate::start_context::StartContext;
 use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
-use crate::protocol_backend::ProtocolBackend;
+use crate::protocol::ProtocolBackend;
 use crate::background_task_manager::BackgroundTaskManager;
 use crate::config::{TaskConfig, SystemConfig};
 use tokio::task::JoinHandle;
@@ -818,7 +818,7 @@ impl MiclowSystem {
         let shutdown_token = self.shutdown_token.clone();
         let interactive_task_id = TaskId::new();
         let interactive_backend = ProtocolBackend::Interactive(
-            crate::interactive_protocol::InteractiveConfig::new("system".to_string())
+            crate::protocol::InteractiveConfig::new("system".to_string())
         );
         let interactive_task_spawner = TaskSpawner::new(
             interactive_task_id.clone(),

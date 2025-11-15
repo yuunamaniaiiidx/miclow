@@ -12,7 +12,7 @@ use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, Executor
 use crate::input_channel::{InputChannel, InputReceiver, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage, InputDataMessage};
 use crate::system_response_channel::SystemResponseChannel;
 use crate::shutdown_channel::ShutdownChannel;
-use crate::buffer::{InputBufferManager, StreamOutcome};
+use super::buffer::{InputBufferManager, StreamOutcome};
 use crate::config::TaskConfig;
 
 #[derive(Clone)]
@@ -524,7 +524,7 @@ where
                 Ok(StreamOutcome::None) => {}
                 Err(e) => {
                     let _ = event_tx.send_error(e.clone());
-                    let output = crate::buffer::strip_crlf(line_content).to_string();
+                    let output = super::buffer::strip_crlf(line_content).to_string();
                     let _ = event_tx.send_message(topic_name.clone(), output.clone());
                     if let Some(emit) = emit_func {
                         let _ = event_tx.send(emit(output));

@@ -10,7 +10,7 @@ use crate::input_channel::{InputChannel, InputReceiver, FunctionMessage, InputDa
 use crate::system_response_channel::SystemResponseChannel;
 use crate::shutdown_channel::ShutdownChannel;
 use crate::config::TaskConfig;
-use crate::mcp::client::McpClient;
+use super::client::McpClient;
 use serde_json::Value as JsonValue;
 
 #[derive(Clone)]

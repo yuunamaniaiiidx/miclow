@@ -3,7 +3,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use crate::mcp::jsonrpc::JsonRpcMessage;
+use super::jsonrpc::JsonRpcMessage;
 
 pub struct StdioTransport {
     stdin: ChildStdin,

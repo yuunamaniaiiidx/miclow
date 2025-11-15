@@ -5,9 +5,7 @@ use crate::task_id::TaskId;
 use crate::task_backend::TaskBackend;
 use crate::task_backend_handle::TaskBackendHandle;
 use crate::config::TaskConfig;
-use crate::miclow_protocol::{self, MiclowStdinConfig};
-use crate::interactive_protocol::{self, InteractiveConfig};
-use crate::mcp_protocol::{self, McpServerConfig};
+use crate::protocol::{self, MiclowStdinConfig, InteractiveConfig, McpServerConfig};
 
 #[derive(Clone)]
 pub enum ProtocolBackend {
@@ -28,15 +26,15 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
         
         match protocol {
             "MiclowStdin" => {
-                let config = miclow_protocol::try_miclow_stdin_from_task_config(&config)?;
+                let config = protocol::try_miclow_stdin_from_task_config(&config)?;
                 Ok(ProtocolBackend::MiclowStdin(config))
             }
             "Interactive" => {
-                let config = interactive_protocol::try_interactive_from_task_config(&config)?;
+                let config = protocol::try_interactive_from_task_config(&config)?;
                 Ok(ProtocolBackend::Interactive(config))
             }
             "McpServer" => {
-                let config = mcp_protocol::try_mcp_server_from_task_config(&config)?;
+                let config = protocol::try_mcp_server_from_task_config(&config)?;
                 Ok(ProtocolBackend::McpServer(config))
             }
             _ => {
@@ -51,13 +49,13 @@ impl TaskBackend for ProtocolBackend {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         match self {
             ProtocolBackend::MiclowStdin(config) => {
-                miclow_protocol::spawn_miclow_protocol(config, task_id).await
+                protocol::spawn_miclow_protocol(config, task_id).await
             }
             ProtocolBackend::Interactive(config) => {
-                interactive_protocol::spawn_interactive_protocol(config, task_id).await
+                protocol::spawn_interactive_protocol(config, task_id).await
             }
             ProtocolBackend::McpServer(config) => {
-                mcp_protocol::spawn_mcp_protocol(config, task_id).await
+                protocol::spawn_mcp_protocol(config, task_id).await
             }
         }
     }
