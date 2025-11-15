@@ -4,8 +4,10 @@ use serde_json::Value;
 // Initialize
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeParams {
+    #[serde(rename = "protocolVersion")]
     pub protocol_version: String,
     pub capabilities: ClientCapabilities,
+    #[serde(rename = "clientInfo")]
     pub client_info: ClientInfo,
 }
 
@@ -23,8 +25,10 @@ pub struct ClientInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitializeResult {
+    #[serde(rename = "protocolVersion")]
     pub protocol_version: String,
     pub capabilities: ServerCapabilities,
+    #[serde(rename = "serverInfo")]
     pub server_info: ServerInfo,
 }
 
@@ -42,7 +46,7 @@ pub struct ServerCapabilities {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolsCapability {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
@@ -50,13 +54,13 @@ pub struct ToolsCapability {
 pub struct ResourcesCapability {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscribe: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptsCapability {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
@@ -77,7 +81,7 @@ pub struct Tool {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "inputSchema", skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<Value>,
 }
 
@@ -92,7 +96,7 @@ pub struct CallToolParams {
 pub struct CallToolResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<Vec<Content>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
 }
 
@@ -115,7 +119,7 @@ pub struct Resource {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
 }
 
@@ -128,14 +132,14 @@ pub struct ReadResourceParams {
 pub struct ReadResourceResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contents: Option<Vec<ResourceContents>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceContents {
     pub uri: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
     pub text: String,
 }
@@ -188,6 +192,7 @@ pub struct PromptMessage {
 // Progress
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressNotification {
+    #[serde(rename = "progressToken")]
     pub progress_token: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<f64>,

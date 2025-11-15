@@ -124,17 +124,39 @@ pub async fn spawn_mcp_protocol(
                             Some(input_data_msg) => {
                                 // MCPプロトコルでは、入力メッセージをツール呼び出しとして解釈
                                 match input_data_msg {
-                                    InputDataMessage::Function(FunctionMessage { task_name, data, .. }) => {
-                                        // ツール名としてtask_nameを使用
-                                        let tool_name = task_name;
-                                        let arguments: Option<JsonValue> = if data.is_empty() {
-                                            None
+                                    InputDataMessage::Function(FunctionMessage { task_name: _mcp_task_name, data, .. }) => {
+                                        // dataをパースしてツール名と引数を取得
+                                        // dataはJSON形式で、{"name": "ツール名", "arguments": {...}} または
+                                        // 単純にツール名の文字列の場合もある
+                                        let (tool_name, arguments) = if data.is_empty() {
+                                            return; // ツール名が指定されていない
                                         } else {
-                                            match serde_json::from_str(&data) {
-                                                Ok(v) => Some(v),
+                                            match serde_json::from_str::<JsonValue>(&data) {
+                                                Ok(json_value) => {
+                                                    // JSONオブジェクトの場合
+                                                    if let Some(obj) = json_value.as_object() {
+                                                        let name = obj.get("name")
+                                                            .and_then(|v| v.as_str())
+                                                            .map(|s| s.to_string());
+                                                        let args = obj.get("arguments").cloned();
+                                                        
+                                                        if let Some(name) = name {
+                                                            (name, args)
+                                                        } else {
+                                                            log::warn!("MCP tool call: 'name' field not found in JSON");
+                                                            return;
+                                                        }
+                                                    } else if let Some(name_str) = json_value.as_str() {
+                                                        // 文字列の場合、ツール名として扱う
+                                                        (name_str.to_string(), None)
+                                                    } else {
+                                                        log::warn!("MCP tool call: invalid JSON format");
+                                                        return;
+                                                    }
+                                                }
                                                 Err(_) => {
-                                                    // JSONとして解析できない場合は、文字列として扱う
-                                                    Some(JsonValue::String(data))
+                                                    // JSONとして解析できない場合は、文字列としてツール名として扱う
+                                                    (data, None)
                                                 }
                                             }
                                         };
