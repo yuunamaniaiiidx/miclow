@@ -4,7 +4,7 @@ use crate::topic_broker::TopicBroker;
 use crate::miclow::TaskExecutor;
 use crate::config::SystemConfig;
 use crate::channels::UserLogSender;
-use crate::system_control_queue::SystemControlQueue;
+use crate::system_control::queue::SystemControlQueue;
 use crate::channels::SystemResponseSender;
 use crate::messages::{SystemResponseEvent, SystemResponseStatus};
 use crate::messages::ExecutorEvent;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
-use crate::system_control_action::SystemControlAction;
+use crate::system_control::action::SystemControlAction;
 use crate::channels::{SystemResponseSender, ExecutorEventSender};
 
 
@@ -60,7 +60,7 @@ impl SystemControlQueue {
         Ok(())
     }
 
-    pub async fn send_system_control_action(&self, action: crate::system_control_action::SystemControlAction, task_id: crate::task_id::TaskId, response_channel: crate::channels::SystemResponseSender, task_event_sender: crate::channels::ExecutorEventSender, return_message_sender: crate::channels::ExecutorEventSender) -> Result<(), String> {
+    pub async fn send_system_control_action(&self, action: SystemControlAction, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender, return_message_sender: ExecutorEventSender) -> Result<(), String> {
         let message = SystemControlMessage::new(action, task_id, response_channel, task_event_sender, return_message_sender);
         self.add_command(message).await
     }

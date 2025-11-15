@@ -11,3 +11,4 @@ pub struct RunningTask {
     pub view_stderr: bool,
 }
 
+// view_stdoutなどはMiclowProtocol特有処理？見直し。
