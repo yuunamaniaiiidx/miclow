@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 pub struct TaskConfig {
     #[serde(rename = "task_name")]
     pub name: String,
+    pub protocol: String,
     pub command: String,
     pub args: Vec<String>,
     pub working_directory: Option<String>,
@@ -21,18 +22,6 @@ pub struct TaskConfig {
     pub allow_duplicate: bool,
     #[serde(skip)]
     pub auto_start: bool,
-}
-
-impl TaskConfig {
-    pub fn get_stdout_topic(&self) -> String {
-        self.stdout_topic.clone()
-            .unwrap_or_else(|| format!("{}.stdout", self.name))
-    }
-
-    pub fn get_stderr_topic(&self) -> String {
-        self.stderr_topic.clone()
-            .unwrap_or_else(|| format!("{}.stderr", self.name))
-    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -100,9 +89,12 @@ impl SystemConfig {
                 return Err(anyhow::anyhow!("Task '{}' cannot start with 'system' (reserved for system tasks)", task.name));
             }
             
-            if task.command.is_empty() {
-                return Err(anyhow::anyhow!("Task '{}' has empty command", task.name));
+            if task.protocol.is_empty() {
+                return Err(anyhow::anyhow!("Task '{}' has empty protocol", task.name));
             }
+            
+            // Protocol-specific validation is done in ProtocolBackend::from()
+            // Here we only check basic requirements
             
             if let Some(working_dir) = &task.working_directory {
                 if !std::path::Path::new(working_dir).exists() {
@@ -145,9 +137,12 @@ impl SystemConfig {
                 return Err(anyhow::anyhow!("Function {} has empty name", index));
             }
             
-            if task.command.is_empty() {
-                return Err(anyhow::anyhow!("Function '{}' has empty command", task.name));
+            if task.protocol.is_empty() {
+                return Err(anyhow::anyhow!("Function '{}' has empty protocol", task.name));
             }
+            
+            // Protocol-specific validation is done in ProtocolBackend::from()
+            // Here we only check basic requirements
             
             if let Some(working_dir) = &task.working_directory {
                 if !std::path::Path::new(working_dir).exists() {

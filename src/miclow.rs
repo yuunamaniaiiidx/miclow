@@ -3,36 +3,26 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader, stdin};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
-use async_trait::async_trait;
-use std::process::Stdio;
-use crate::buffer::{InputBufferManager, StreamOutcome};
 use crate::logging::{UserLogEvent, UserLogKind, spawn_user_log_aggregator, LogEvent, spawn_log_aggregator, set_channel_logger, level_from_env};
-use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, ExecutorEventReceiver, ExecutorEventChannel};
-use crate::input_channel::{InputChannel, InputSender, InputReceiver, InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage, StdinProtocol};
-use crate::system_response_channel::{SystemResponseChannel, SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
-use crate::shutdown_channel::{ShutdownChannel, ShutdownSender};
+use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, ExecutorEventChannel};
+use crate::input_channel::{InputChannel, InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage};
+use crate::system_response_channel::{SystemResponseChannel, SystemResponseEvent, SystemResponseStatus};
+use crate::shutdown_channel::ShutdownChannel;
 use crate::user_log_sender::UserLogSender;
-use crate::system_control_command::{SystemControlCommand, system_control_command_to_handler};
+use crate::system_control_command::system_control_command_to_handler;
 use crate::spawn_backend_result::SpawnBackendResult;
-use crate::task_backend_handle::TaskBackendHandle;
 use crate::running_task::RunningTask;
 use crate::start_context::StartContext;
 use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
-use crate::interactive_backend::InteractiveBackend;
-use crate::miclow_protocol_backend::MiclowProtocolBackend;
+use crate::protocol_backend::ProtocolBackend;
 use crate::background_task_manager::BackgroundTaskManager;
 use crate::config::{TaskConfig, SystemConfig};
 use tokio::task::JoinHandle;
-#[cfg(unix)]
-use nix::sys::signal::{kill, Signal};
-#[cfg(unix)]
-use nix::unistd::Pid;
 
 pub fn start_system_control_worker(
     system_control_manager: SystemControlManager,
@@ -201,7 +191,7 @@ impl TaskSpawner {
 
     pub async fn spawn_backend(
         self,
-        backend: Box<dyn TaskBackend>,
+        backend: ProtocolBackend,
         shutdown_token: CancellationToken,
         subscribe_topics: Option<Vec<String>>,
         other_return_message_sender: Option<ExecutorEventSender>,
@@ -623,16 +613,8 @@ impl TaskExecutor {
         
         let task_id_new = TaskId::new();
         
-        let backend: Box<dyn TaskBackend> = Box::new(MiclowProtocolBackend::new(
-            task_config.command.clone(),
-            task_config.args.clone(),
-            task_config.working_directory.clone(),
-            task_config.environment_vars.clone(),
-            task_config.get_stdout_topic(),
-            task_config.get_stderr_topic(),
-            task_config.view_stdout,
-            task_config.view_stderr,
-        ));
+        let backend: ProtocolBackend = ProtocolBackend::try_from(task_config.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to create protocol backend for task '{}': {}", task_config.name, e))?;
         let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
@@ -818,7 +800,9 @@ impl MiclowSystem {
         
         let shutdown_token = self.shutdown_token.clone();
         let interactive_task_id = TaskId::new();
-        let interactive_backend: Box<dyn TaskBackend> = Box::new(InteractiveBackend::new("system".to_string()));
+        let interactive_backend = ProtocolBackend::InteractiveProtocol(
+            crate::protocol_backend::InteractiveProtocolConfig::new("system".to_string())
+        );
         let interactive_task_spawner = TaskSpawner::new(
             interactive_task_id.clone(),
             topic_manager.clone(),
