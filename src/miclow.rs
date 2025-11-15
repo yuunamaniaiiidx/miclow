@@ -772,7 +772,7 @@ impl MiclowSystem {
         }
     }
 
-    pub async fn start_system_with_interactive(
+    pub async fn start_system(
         mut self,
     ) -> Result<()> {
         let topic_manager: TopicManager = self.topic_manager.clone();

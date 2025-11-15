@@ -45,7 +45,7 @@ async fn run_miclow(config_file: String) -> Result<()> {
     let config = SystemConfig::from_file(config_file)?;
     
     let miclow_system = MiclowSystem::new(config);
-    miclow_system.start_system_with_interactive().await?;
+    miclow_system.start_system().await?;
 
     exit(0);
     Ok(())
