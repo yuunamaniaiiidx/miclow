@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::env;
 
 /// 変数展開のコンテキスト
-/// 仮想的な環境変数（config_path、config_dirなど）を保持
+/// 仮想的な環境変数（MICLOW_CONFIG_PATH、MICLOW_CONFIG_DIRなど）を保持
 #[derive(Debug, Clone)]
 pub struct ExpandContext {
     virtual_env: HashMap<String, String>,
@@ -18,16 +18,16 @@ impl ExpandContext {
     }
 
     /// 設定ファイルパスからExpandContextを作成
-    /// config_pathとconfig_dirを仮想環境変数として設定
+    /// MICLOW_CONFIG_PATHとMICLOW_CONFIG_DIRを仮想環境変数として設定
     pub fn from_config_path(config_path: &str) -> Self {
         let mut context = Self::new();
-        context.set_virtual_env("config_path", config_path);
+        context.set_virtual_env("MICLOW_CONFIG_PATH", config_path);
         
         let config_dir = std::path::Path::new(config_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| ".".to_string());
-        context.set_virtual_env("config_dir", &config_dir);
+        context.set_virtual_env("MICLOW_CONFIG_DIR", &config_dir);
         
         context
     }
@@ -229,25 +229,25 @@ mod tests {
     #[test]
     fn test_expand_virtual_env() {
         let mut context = ExpandContext::new();
-        context.set_virtual_env("config_path", "/path/to/config.toml");
-        let result = expand_variables("${config_path}", &context).unwrap();
+        context.set_virtual_env("MICLOW_CONFIG_PATH", "/path/to/config.toml");
+        let result = expand_variables("${MICLOW_CONFIG_PATH}", &context).unwrap();
         assert_eq!(result, "/path/to/config.toml");
     }
 
     #[test]
     fn test_expand_virtual_env_with_default() {
         let context = ExpandContext::new();
-        let result = expand_variables("${config_path-/default/path}", &context).unwrap();
+        let result = expand_variables("${MICLOW_CONFIG_PATH-/default/path}", &context).unwrap();
         assert_eq!(result, "/default/path");
     }
 
     #[test]
     fn test_expand_from_config_path() {
         let context = ExpandContext::from_config_path("/home/user/config.toml");
-        let result = expand_variables("${config_path}", &context).unwrap();
+        let result = expand_variables("${MICLOW_CONFIG_PATH}", &context).unwrap();
         assert_eq!(result, "/home/user/config.toml");
         
-        let result = expand_variables("${config_dir}", &context).unwrap();
+        let result = expand_variables("${MICLOW_CONFIG_DIR}", &context).unwrap();
         assert_eq!(result, "/home/user");
     }
 
