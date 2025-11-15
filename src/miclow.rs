@@ -25,7 +25,7 @@ use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::task_backend::TaskBackend;
 use crate::interactive_backend::InteractiveBackend;
-use crate::shell_backend::ShellBackend;
+use crate::miclow_protocol_backend::MiclowProtocolBackend;
 use crate::background_task_manager::BackgroundTaskManager;
 use crate::config::{TaskConfig, SystemConfig};
 use tokio::task::JoinHandle;
@@ -623,7 +623,7 @@ impl TaskExecutor {
         
         let task_id_new = TaskId::new();
         
-        let backend: Box<dyn TaskBackend> = Box::new(ShellBackend::new(
+        let backend: Box<dyn TaskBackend> = Box::new(MiclowProtocolBackend::new(
             task_config.command.clone(),
             task_config.args.clone(),
             task_config.working_directory.clone(),

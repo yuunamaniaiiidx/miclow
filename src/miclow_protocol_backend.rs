@@ -20,7 +20,7 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 
 #[derive(Clone)]
-pub struct ShellBackend {
+pub struct MiclowProtocolBackend {
     command: String,
     args: Vec<String>,
     working_directory: Option<String>,
@@ -31,7 +31,7 @@ pub struct ShellBackend {
     view_stderr: bool,
 }
 
-impl ShellBackend {
+impl MiclowProtocolBackend {
     pub fn new(
         command: String,
         args: Vec<String>,
@@ -107,7 +107,7 @@ impl ShellBackend {
 }
 
 #[async_trait]
-impl TaskBackend for ShellBackend {
+impl TaskBackend for MiclowProtocolBackend {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         let command = self.command.clone();
         let args = self.args.clone();
@@ -385,9 +385,9 @@ where
         let process_stream_outcome = |outcome: Result<StreamOutcome, String>, line_content: &str| {
             match outcome {
                 Ok(StreamOutcome::Emit { topic, data }) => {
-                    if let Some(return_message_event) = ShellBackend::parse_return_message_from_outcome(&topic, &data) {
+                    if let Some(return_message_event) = MiclowProtocolBackend::parse_return_message_from_outcome(&topic, &data) {
                         let _ = event_tx.send(return_message_event);
-                    } else if let Some(system_control_cmd_event) = ShellBackend::parse_system_control_command_from_outcome(&topic, &data) {
+                    } else if let Some(system_control_cmd_event) = MiclowProtocolBackend::parse_system_control_command_from_outcome(&topic, &data) {
                         let _ = event_tx.send(system_control_cmd_event);
                     } else {
                         let _ = event_tx.send_message(topic, data);
