@@ -8,6 +8,8 @@ mod system_control_command;
 mod spawn_backend_result;
 mod task_backend_handle;
 mod task_backend;
+mod miclow_protocol;
+mod interactive_protocol;
 mod protocol_backend;
 mod running_task;
 mod start_context;

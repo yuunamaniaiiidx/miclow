@@ -9,6 +9,8 @@ pub mod system_control_command;
 pub mod spawn_backend_result;
 pub mod task_backend_handle;
 pub mod task_backend;
+pub mod miclow_protocol;
+pub mod interactive_protocol;
 pub mod protocol_backend;
 pub mod running_task;
 pub mod start_context;
