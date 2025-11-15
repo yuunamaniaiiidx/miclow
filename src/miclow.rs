@@ -816,26 +816,6 @@ impl MiclowSystem {
         log::info!("System running. Press Ctrl+C to stop.");
         
         let shutdown_token = self.shutdown_token.clone();
-        let interactive_task_id = TaskId::new();
-        let interactive_backend = ProtocolBackend::Interactive(
-            crate::protocol::InteractiveConfig::new("system".to_string())
-        );
-        let interactive_task_spawner = TaskSpawner::new(
-            interactive_task_id.clone(),
-            topic_manager.clone(),
-            self.system_control_manager.clone(),
-            self.task_executor.clone(),
-            "system.interactive".to_string(),
-            userlog_sender.clone(),
-        );
-        let interactive_result = interactive_task_spawner.spawn_backend(
-            interactive_backend,
-            self.shutdown_token.clone(),
-            None,
-            None,
-        ).await;
-        
-        let mut interactive_handle = interactive_result.task_handle;
         
         let ctrlc_fut = async {
             if let Err(e) = tokio::signal::ctrl_c().await {
@@ -846,8 +826,8 @@ impl MiclowSystem {
             }
         };
         tokio::select! {
-            _ = &mut interactive_handle => {
-                log::info!("Interactive mode terminated");
+            _ = shutdown_token.cancelled() => {
+                log::info!("Shutdown signal received");
             },
             _ = ctrlc_fut => {
                 log::info!("Ctrl+C signal received, proceeding with shutdown");
@@ -858,10 +838,6 @@ impl MiclowSystem {
 
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         logging_shutdown.cancel();
-        if !interactive_handle.is_finished() {
-            interactive_handle.abort();
-            let _ = interactive_handle.await;
-        }
         self.background_tasks.abort_all().await;
 
         Self::shutdown_workers(
