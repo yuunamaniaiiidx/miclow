@@ -3,7 +3,8 @@ use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 use std::collections::HashMap;
 use crate::task_id::TaskId;
-use crate::chunnel::{ExecutorEvent, ExecutorEventSender};
+use crate::messages::ExecutorEvent;
+use crate::channels::ExecutorEventSender;
 
 #[derive(Clone)]
 pub struct TopicBroker {

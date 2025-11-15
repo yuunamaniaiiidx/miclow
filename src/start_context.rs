@@ -1,8 +1,8 @@
-use crate::chunnel::ExecutorEventSender;
+use crate::channels::ExecutorEventSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::topic_broker::TopicBroker;
 use crate::system_control_queue::SystemControlQueue;
-use crate::chunnel::UserLogSender;
+use crate::channels::UserLogSender;
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
 

@@ -1,6 +1,7 @@
 mod task_id;
 mod message_id;
-mod chunnel;
+mod messages;
+mod channels;
 mod system_control_command;
 mod backend;
 mod protocol;

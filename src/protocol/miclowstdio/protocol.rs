@@ -8,10 +8,10 @@ use std::collections::HashMap;
 use toml::Value as TomlValue;
 use crate::task_id::TaskId;
 use crate::backend::TaskBackendHandle;
-use crate::chunnel::{ExecutorEvent, ExecutorEventSender, ExecutorEventChannel};
-use crate::chunnel::{InputChannel, InputReceiver, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage, InputDataMessage};
-use crate::chunnel::SystemResponseChannel;
-use crate::chunnel::ShutdownChannel;
+use crate::messages::ExecutorEvent;
+use crate::channels::{ExecutorEventSender, ExecutorEventChannel};
+use crate::messages::{TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage, InputDataMessage};
+use crate::channels::{InputChannel, InputReceiver, SystemResponseChannel, ShutdownChannel};
 use super::buffer::{InputBufferManager, StreamOutcome};
 use crate::config::TaskConfig;
 

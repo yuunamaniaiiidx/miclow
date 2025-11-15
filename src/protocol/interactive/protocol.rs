@@ -4,10 +4,8 @@ use tokio::task;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
 use crate::backend::TaskBackendHandle;
-use crate::chunnel::{ExecutorEvent, ExecutorEventChannel};
-use crate::chunnel::InputChannel;
-use crate::chunnel::SystemResponseChannel;
-use crate::chunnel::ShutdownChannel;
+use crate::messages::ExecutorEvent;
+use crate::channels::{ExecutorEventChannel, InputChannel, SystemResponseChannel, ShutdownChannel};
 use crate::config::TaskConfig;
 
 #[derive(Clone)]
