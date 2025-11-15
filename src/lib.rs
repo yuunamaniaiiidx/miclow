@@ -1,5 +1,6 @@
 
 pub mod task_id;
+pub mod message_id;
 pub mod executor_event_channel;
 pub mod input_channel;
 pub mod system_response_channel;

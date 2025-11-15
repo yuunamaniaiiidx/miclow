@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
+use crate::message_id::MessageId;
 use crate::logging::{UserLogEvent, UserLogKind, spawn_user_log_aggregator, LogEvent, spawn_log_aggregator, set_channel_logger, level_from_env};
 use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, ExecutorEventChannel};
 use crate::input_channel::{InputChannel, InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage};
@@ -344,6 +345,7 @@ impl TaskSpawner {
                                 if let Some(data) = topic_data.data() {
                                     if let Some(topic_name) = topic_data.topic() {
                                         let topic_msg = TopicMessage {
+                                            message_id: MessageId::new(),
                                             topic: topic_name.clone(),
                                             data: data.clone(),
                                         };
@@ -369,6 +371,7 @@ impl TaskSpawner {
                                 log::info!("Return message received for task {}: {:?}", task_id, message);
                                 if let Some(data) = message.data() {
                                     let return_msg = ReturnMessage {
+                                        message_id: MessageId::new(),
                                         data: data.clone(),
                                     };
                                     if let Err(e) = backend_handle.input_sender.send(InputDataMessage::Return(return_msg)) {
@@ -388,6 +391,7 @@ impl TaskSpawner {
                             Some(SystemResponseEvent::SystemResponse { topic, status, data }) => {
                                 log::info!("SystemResponse event for task {}: topic='{}', status='{}', data='{}'", task_id, topic, status, data);
                                 let system_response_msg = SystemResponseMessage {
+                                    message_id: MessageId::new(),
                                     topic,
                                     status,
                                     data,
@@ -399,6 +403,7 @@ impl TaskSpawner {
                             Some(SystemResponseEvent::SystemError { topic, status, error }) => {
                                 log::error!("SystemError event for task {}: topic='{}', status='{}', error='{}'", task_id, topic, status, error);
                                 let system_response_msg = SystemResponseMessage {
+                                    message_id: MessageId::new(),
                                     topic,
                                     status,
                                     data: error,
@@ -653,6 +658,7 @@ impl TaskExecutor {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
                 
                 let function_msg = FunctionMessage {
+                    message_id: MessageId::new(),
                     task_name: caller_name.clone(),
                     data: initial_input_for_log.clone(),
                 };
