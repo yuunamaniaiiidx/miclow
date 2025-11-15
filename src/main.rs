@@ -2,7 +2,7 @@ mod task_id;
 mod message_id;
 mod messages;
 mod channels;
-mod system_control_command;
+mod system_control_action;
 mod backend;
 mod protocol;
 mod running_task;

@@ -14,7 +14,7 @@ use crate::messages::{InputDataMessage, TopicMessage, SystemResponseMessage, Ret
 use crate::channels::InputChannel;
 use crate::messages::{SystemResponseEvent, SystemResponseStatus};
 use crate::channels::{SystemResponseChannel, ShutdownChannel, UserLogSender};
-use crate::system_control_command::system_control_command_to_handler;
+use crate::system_control_action::system_control_action_from_event;
 use crate::backend::SpawnBackendResult;
 use crate::running_task::RunningTask;
 use crate::start_context::StartContext;
@@ -73,14 +73,14 @@ pub fn start_system_control_worker(
                                 let task_event_sender_clone = message.task_event_sender.clone();
                                 let return_message_sender_clone = message.return_message_sender.clone();
                                 let response_channel_for_cancel = message.response_channel.clone();
-                                let command_clone = message.command.clone();
+                                let action_clone = message.action.clone();
                                 
                                 let worker = tokio::spawn(async move {
                                     let task_id_for_log = task_id_clone.clone();
                                     log::info!("Executing SystemControl for task {}", task_id_for_log);
                                     
                                     let execute_worker = tokio::spawn(async move {
-                                        command_clone.execute(
+                                        action_clone.execute(
                                             &topic_manager_clone,
                                             &task_executor_clone,
                                             &system_config_clone,
@@ -273,21 +273,21 @@ impl TaskSpawner {
                                         }
                                     },
                                     ExecutorEvent::SystemControl { .. } => {
-                                        if let Some(system_control_cmd) = system_control_command_to_handler(&event) {
+                                        if let Some(system_control_action) = system_control_action_from_event(&event) {
                                             log::info!("SystemControl detected from task {}", task_id);
-                                            if let Err(e) = system_control_manager.send_system_control_command(
-                                                system_control_cmd,
+                                            if let Err(e) = system_control_manager.send_system_control_action(
+                                                system_control_action,
                                                 task_id.clone(),
                                                 backend_handle.system_response_sender.clone(),
                                                 topic_data_channel.sender.clone(),
                                                 return_message_channel.sender.clone()
                                             ).await {
-                                                log::warn!("Failed to send system control command to worker (task {}): {}", task_id, e);
+                                                log::warn!("Failed to send system control action to worker (task {}): {}", task_id, e);
                                             } else {
-                                                log::info!("Sent system control command to worker for task {}", task_id);
+                                                log::info!("Sent system control action to worker for task {}", task_id);
                                             }
                                         } else {
-                                            log::warn!("Failed to convert SystemControl event to handler for task {}", task_id);
+                                            log::warn!("Failed to convert SystemControl event to action for task {}", task_id);
                                         }
                                     },
                                     ExecutorEvent::ReturnMessage { data } => {

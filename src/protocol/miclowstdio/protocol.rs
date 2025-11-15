@@ -186,9 +186,9 @@ pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Opt
         return None;
     }
     
-    let is_system_command = topic_lower.starts_with("system.") || (topic_lower.is_empty() && data_trimmed.starts_with("system."));
+    let is_system_control = topic_lower.starts_with("system.") || (topic_lower.is_empty() && data_trimmed.starts_with("system."));
     
-    if is_system_command {
+    if is_system_control {
         let actual_topic = if topic_lower.is_empty() {
             let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
             if parts.len() == 2 {

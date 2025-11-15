@@ -3,7 +3,7 @@ pub mod task_id;
 pub mod message_id;
 pub mod messages;
 pub mod channels;
-pub mod system_control_command;
+pub mod system_control_action;
 pub mod backend;
 pub mod protocol;
 pub mod running_task;
