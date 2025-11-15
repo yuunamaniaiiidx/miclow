@@ -8,10 +8,10 @@ use crate::executor_event_channel::{ExecutorEvent, ExecutorEventChannel};
 use crate::input_channel::InputChannel;
 use crate::system_response_channel::SystemResponseChannel;
 use crate::shutdown_channel::ShutdownChannel;
-use crate::protocol_backend::InteractiveProtocolConfig;
+use crate::protocol_backend::InteractiveConfig;
 
 pub async fn spawn_interactive_protocol(
-    config: &InteractiveProtocolConfig,
+    config: &InteractiveConfig,
     task_id: TaskId,
 ) -> Result<TaskBackendHandle, Error> {
     let system_input_topic = config.system_input_topic.clone();

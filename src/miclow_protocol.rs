@@ -11,7 +11,7 @@ use crate::input_channel::{InputChannel, InputReceiver, TopicMessage, SystemResp
 use crate::system_response_channel::SystemResponseChannel;
 use crate::shutdown_channel::ShutdownChannel;
 use crate::buffer::{InputBufferManager, StreamOutcome};
-use crate::protocol_backend::MiclowProtocolConfig;
+use crate::protocol_backend::MiclowStdinConfig;
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
@@ -147,7 +147,7 @@ pub fn parse_return_message_from_outcome(topic: &str, data: &str) -> Option<Exec
 }
 
 pub async fn spawn_miclow_protocol(
-    config: &MiclowProtocolConfig,
+    config: &MiclowStdinConfig,
     task_id: TaskId,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();

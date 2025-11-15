@@ -46,7 +46,14 @@ impl SystemConfig {
         config.config_file = None;
         config.normalize_defaults();
         if validate {
-            config.validate()?;
+            config.validate().unwrap_or_else(|e| {
+                eprintln!("Config validation failed: {}", e);
+                eprintln!("\nError details:");
+                for (i, cause) in e.chain().enumerate() {
+                    eprintln!("  {}: {}", i, cause);
+                }
+                std::process::exit(1);
+            });
         }
         Ok(config)
     }
@@ -61,7 +68,14 @@ impl SystemConfig {
         config.load_includes(&config_file)?;
         log::debug!("After load_includes: {} tasks, {} functions", 
             config.tasks.len(), config.functions.len());
-        config.validate()?;
+        config.validate().unwrap_or_else(|e| {
+            eprintln!("Config validation failed: {}", e);
+            eprintln!("\nError details:");
+            for (i, cause) in e.chain().enumerate() {
+                eprintln!("  {}: {}", i, cause);
+            }
+            std::process::exit(1);
+        });
         
         Ok(config)
     }

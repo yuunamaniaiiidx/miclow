@@ -619,7 +619,15 @@ impl TaskExecutor {
         let task_id_new = TaskId::new();
         
         let backend: ProtocolBackend = ProtocolBackend::try_from(task_config.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to create protocol backend for task '{}': {}", task_config.name, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create protocol backend for task '{}': {}", task_config.name, e))
+            .unwrap_or_else(|e| {
+                eprintln!("Config validation failed for task '{}': {}", task_config.name, e);
+                eprintln!("\nError details:");
+                for (i, cause) in e.chain().enumerate() {
+                    eprintln!("  {}: {}", i, cause);
+                }
+                std::process::exit(1);
+            });
         let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
@@ -806,8 +814,8 @@ impl MiclowSystem {
         
         let shutdown_token = self.shutdown_token.clone();
         let interactive_task_id = TaskId::new();
-        let interactive_backend = ProtocolBackend::InteractiveProtocol(
-            crate::protocol_backend::InteractiveProtocolConfig::new("system".to_string())
+        let interactive_backend = ProtocolBackend::Interactive(
+            crate::protocol_backend::InteractiveConfig::new("system".to_string())
         );
         let interactive_task_spawner = TaskSpawner::new(
             interactive_task_id.clone(),

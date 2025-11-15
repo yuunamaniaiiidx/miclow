@@ -11,7 +11,7 @@ use crate::miclow_protocol;
 use crate::interactive_protocol;
 
 #[derive(Clone)]
-pub struct MiclowProtocolConfig {
+pub struct MiclowStdinConfig {
     pub command: String,
     pub args: Vec<String>,
     pub working_directory: Option<String>,
@@ -23,11 +23,11 @@ pub struct MiclowProtocolConfig {
 }
 
 #[derive(Clone)]
-pub struct InteractiveProtocolConfig {
+pub struct InteractiveConfig {
     pub system_input_topic: String,
 }
 
-impl InteractiveProtocolConfig {
+impl InteractiveConfig {
     pub fn new(system_input_topic: String) -> Self {
         Self { system_input_topic }
     }
@@ -35,8 +35,8 @@ impl InteractiveProtocolConfig {
 
 #[derive(Clone)]
 pub enum ProtocolBackend {
-    MiclowProtocol(MiclowProtocolConfig),
-    InteractiveProtocol(InteractiveProtocolConfig),
+    MiclowStdin(MiclowStdinConfig),
+    Interactive(InteractiveConfig),
 }
 
 impl TryFrom<TaskConfig> for ProtocolBackend {
@@ -50,9 +50,9 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
         }
         
         match protocol {
-            "MiclowProtocol" => {
+            "MiclowStdin" => {
                 if config.command.is_empty() {
-                    return Err(anyhow::anyhow!("Command field is required for MiclowProtocol in task '{}'", config.name));
+                    return Err(anyhow::anyhow!("Command field is required for MiclowStdin in task '{}'", config.name));
                 }
                 
                 // デフォルト値の生成ロジック: stdout_topic/stderr_topicが未設定の場合は"{name}.stdout"/"{name}.stderr"を使用
@@ -61,7 +61,7 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
                 let stderr_topic = config.stderr_topic.clone()
                     .unwrap_or_else(|| format!("{}.stderr", config.name));
                 
-                Ok(ProtocolBackend::MiclowProtocol(MiclowProtocolConfig {
+                Ok(ProtocolBackend::MiclowStdin(MiclowStdinConfig {
                     command: config.command,
                     args: config.args,
                     working_directory: config.working_directory,
@@ -72,12 +72,12 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
                     view_stderr: config.view_stderr,
                 }))
             }
-            "InteractiveProtocol" => {
+            "Interactive" => {
                 // InteractiveProtocol用のシステム入力トピック: stdout_topicが未設定の場合は"system"を使用
                 let system_input_topic = config.stdout_topic.clone()
                     .unwrap_or_else(|| "system".to_string());
                 
-                Ok(ProtocolBackend::InteractiveProtocol(InteractiveProtocolConfig {
+                Ok(ProtocolBackend::Interactive(InteractiveConfig {
                     system_input_topic,
                 }))
             }
@@ -92,10 +92,10 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
 impl TaskBackend for ProtocolBackend {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         match self {
-            ProtocolBackend::MiclowProtocol(config) => {
+            ProtocolBackend::MiclowStdin(config) => {
                 miclow_protocol::spawn_miclow_protocol(config, task_id).await
             }
-            ProtocolBackend::InteractiveProtocol(config) => {
+            ProtocolBackend::Interactive(config) => {
                 interactive_protocol::spawn_interactive_protocol(config, task_id).await
             }
         }
