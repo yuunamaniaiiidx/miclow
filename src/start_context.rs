@@ -1,7 +1,7 @@
 use crate::chunnel::ExecutorEventSender;
 use crate::config::{SystemConfig, TaskConfig};
-use crate::topic_manager::TopicManager;
-use crate::system_control_manager::SystemControlManager;
+use crate::topic_broker::TopicBroker;
+use crate::system_control_queue::SystemControlQueue;
 use crate::chunnel::UserLogSender;
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
@@ -9,8 +9,8 @@ use anyhow::Result;
 #[derive(Clone)]
 pub struct StartContext {
     pub task_config: TaskConfig,
-    pub topic_manager: TopicManager,
-    pub system_control_manager: SystemControlManager,
+    pub topic_manager: TopicBroker,
+    pub system_control_manager: SystemControlQueue,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
     pub return_message_sender: Option<ExecutorEventSender>,
@@ -22,8 +22,8 @@ impl StartContext {
     /// TaskConfigを既に持っている場合の作成
     pub fn new(
         task_config: TaskConfig,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
+        topic_manager: TopicBroker,
+        system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
         return_message_sender: Option<ExecutorEventSender>,
@@ -46,8 +46,8 @@ impl StartContext {
     pub fn from_task_name(
         task_name: String,
         config: &SystemConfig,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
+        topic_manager: TopicBroker,
+        system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
         return_message_sender: Option<ExecutorEventSender>,

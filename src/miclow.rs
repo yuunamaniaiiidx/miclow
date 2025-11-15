@@ -17,17 +17,17 @@ use crate::system_control_command::system_control_command_to_handler;
 use crate::backend::SpawnBackendResult;
 use crate::running_task::RunningTask;
 use crate::start_context::StartContext;
-use crate::system_control_manager::SystemControlManager;
-use crate::topic_manager::TopicManager;
+use crate::system_control_queue::SystemControlQueue;
+use crate::topic_broker::TopicBroker;
 use crate::backend::TaskBackend;
 use crate::protocol::ProtocolBackend;
-use crate::background_worker_manager::BackgroundWorkerManager;
+use crate::background_worker_registry::BackgroundWorkerRegistry;
 use crate::config::{TaskConfig, SystemConfig};
 use tokio::task::JoinHandle;
 
 pub fn start_system_control_worker(
-    system_control_manager: SystemControlManager,
-    topic_manager: TopicManager,
+    system_control_manager: SystemControlQueue,
+    topic_manager: TopicBroker,
     task_executor: TaskExecutor,
     system_config: SystemConfig,
     shutdown_token: CancellationToken,
@@ -164,8 +164,8 @@ pub fn start_system_control_worker(
 
 pub struct TaskSpawner {
     pub task_id: TaskId,
-    pub topic_manager: TopicManager,
-    pub system_control_manager: SystemControlManager,
+    pub     topic_manager: TopicBroker,
+    pub system_control_manager: SystemControlQueue,
     pub task_executor: TaskExecutor,
     pub task_name: String,
     pub userlog_sender: UserLogSender,
@@ -174,8 +174,8 @@ pub struct TaskSpawner {
 impl TaskSpawner {
     pub fn new(
         task_id: TaskId,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
+        topic_manager: TopicBroker,
+        system_control_manager: SystemControlQueue,
         task_executor: TaskExecutor,
         task_name: String,
         userlog_sender: UserLogSender,
@@ -199,8 +199,8 @@ impl TaskSpawner {
     ) -> SpawnBackendResult {
         let task_id: TaskId = self.task_id.clone();
         let task_name: String = self.task_name.clone();
-        let topic_manager: TopicManager = self.topic_manager;
-        let system_control_manager: SystemControlManager = self.system_control_manager;
+        let topic_manager: TopicBroker = self.topic_manager;
+        let system_control_manager: SystemControlQueue = self.system_control_manager;
         let task_executor: TaskExecutor = self.task_executor;
         let userlog_sender = self.userlog_sender.clone();
 
@@ -706,18 +706,18 @@ impl TaskExecutor {
 
 pub struct MiclowSystem {
     pub config: SystemConfig,
-    topic_manager: TopicManager,
-    system_control_manager: SystemControlManager,
+    topic_manager: TopicBroker,
+    system_control_manager: SystemControlQueue,
     task_executor: TaskExecutor,
     shutdown_token: CancellationToken,
-    background_tasks: BackgroundWorkerManager,
+    background_tasks: BackgroundWorkerRegistry,
 }
 
 impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
-        let topic_manager: TopicManager = TopicManager::new();
+        let topic_manager: TopicBroker = TopicBroker::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
-        let system_control_manager: SystemControlManager = SystemControlManager::new(shutdown_token.clone());
+        let system_control_manager: SystemControlQueue = SystemControlQueue::new(shutdown_token.clone());
         let task_executor: TaskExecutor = TaskExecutor::new(shutdown_token.clone());
         Self {
             config,
@@ -725,15 +725,15 @@ impl MiclowSystem {
             system_control_manager,
             task_executor,
             shutdown_token,
-            background_tasks: BackgroundWorkerManager::new(),
+            background_tasks: BackgroundWorkerRegistry::new(),
         }
     }
 
     async fn start_user_tasks(
         config: &SystemConfig,
         task_executor: &TaskExecutor,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
+        topic_manager: TopicBroker,
+        system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) {
@@ -775,7 +775,7 @@ impl MiclowSystem {
     pub async fn start_system(
         mut self,
     ) -> Result<()> {
-        let topic_manager: TopicManager = self.topic_manager.clone();
+        let topic_manager: TopicBroker = self.topic_manager.clone();
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());

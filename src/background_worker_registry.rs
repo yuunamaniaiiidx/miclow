@@ -1,11 +1,11 @@
 use tokio::task::JoinHandle;
 
 #[derive(Default)]
-pub struct BackgroundWorkerManager {
+pub struct BackgroundWorkerRegistry {
     handles: Vec<(String, JoinHandle<()>)>,
 }
 
-impl BackgroundWorkerManager {
+impl BackgroundWorkerRegistry {
     pub fn new() -> Self { 
         Self { handles: Vec::new() } 
     }

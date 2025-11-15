@@ -1,10 +1,10 @@
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
-use crate::topic_manager::TopicManager;
+use crate::topic_broker::TopicBroker;
 use crate::miclow::TaskExecutor;
 use crate::config::SystemConfig;
 use crate::chunnel::UserLogSender;
-use crate::system_control_manager::SystemControlManager;
+use crate::system_control_queue::SystemControlQueue;
 use crate::chunnel::{SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
 use crate::chunnel::{ExecutorEvent, ExecutorEventSender};
 use crate::start_context::StartContext;
@@ -22,12 +22,12 @@ pub enum SystemControlCommand {
 impl SystemControlCommand {
     pub async fn execute(
         &self,
-        topic_manager: &TopicManager,
+        topic_manager: &TopicBroker,
         task_executor: &TaskExecutor,
         system_config: &SystemConfig,
         shutdown_token: &CancellationToken,
         userlog_sender: &UserLogSender,
-        system_control_manager: &SystemControlManager,
+        system_control_manager: &SystemControlQueue,
         task_id: &TaskId,
         response_channel: &SystemResponseSender,
         task_event_sender: &ExecutorEventSender,

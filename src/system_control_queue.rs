@@ -42,12 +42,12 @@ impl SystemControlMessage {
 
 
 #[derive(Clone, Debug)]
-pub struct SystemControlManager {
+pub struct SystemControlQueue {
     commands: Arc<RwLock<Vec<SystemControlMessage>>>,
     shutdown_token: CancellationToken,
 }
 
-impl SystemControlManager {
+impl SystemControlQueue {
     pub fn new(shutdown_token: CancellationToken) -> Self {
         Self {
             commands: Arc::new(RwLock::new(Vec::new())),

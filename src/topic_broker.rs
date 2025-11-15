@@ -6,13 +6,13 @@ use crate::task_id::TaskId;
 use crate::chunnel::{ExecutorEvent, ExecutorEventSender};
 
 #[derive(Clone)]
-pub struct TopicManager {
+pub struct TopicBroker {
     subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorEventSender>>>>>>,
     task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorEventSender>>>>,
     latest_messages: Arc<RwLock<HashMap<String, ExecutorEvent>>>,
 }
 
-impl TopicManager {
+impl TopicBroker {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
