@@ -7,11 +7,13 @@ use crate::task_backend_handle::TaskBackendHandle;
 use crate::config::TaskConfig;
 use crate::miclow_protocol::{self, MiclowStdinConfig};
 use crate::interactive_protocol::{self, InteractiveConfig};
+use crate::mcp_protocol::{self, McpServerConfig};
 
 #[derive(Clone)]
 pub enum ProtocolBackend {
     MiclowStdin(MiclowStdinConfig),
     Interactive(InteractiveConfig),
+    McpServer(McpServerConfig),
 }
 
 impl TryFrom<TaskConfig> for ProtocolBackend {
@@ -33,8 +35,12 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
                 let config = interactive_protocol::try_interactive_from_task_config(&config)?;
                 Ok(ProtocolBackend::Interactive(config))
             }
+            "McpServer" => {
+                let config = mcp_protocol::try_mcp_server_from_task_config(&config)?;
+                Ok(ProtocolBackend::McpServer(config))
+            }
             _ => {
-                Err(anyhow::anyhow!("Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdin, Interactive", protocol, config.name))
+                Err(anyhow::anyhow!("Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdin, Interactive, McpServer", protocol, config.name))
             }
         }
     }
@@ -49,6 +55,9 @@ impl TaskBackend for ProtocolBackend {
             }
             ProtocolBackend::Interactive(config) => {
                 interactive_protocol::spawn_interactive_protocol(config, task_id).await
+            }
+            ProtocolBackend::McpServer(config) => {
+                mcp_protocol::spawn_mcp_protocol(config, task_id).await
             }
         }
     }

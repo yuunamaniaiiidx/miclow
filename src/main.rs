@@ -11,6 +11,8 @@ mod task_backend_handle;
 mod task_backend;
 mod miclow_protocol;
 mod interactive_protocol;
+mod mcp;
+mod mcp_protocol;
 mod protocol_backend;
 mod running_task;
 mod start_context;
