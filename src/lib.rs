@@ -11,6 +11,5 @@ pub mod start_context;
 pub mod topic_broker;
 pub mod background_worker_registry;
 pub mod config;
-pub mod variable_expansion;
 pub mod miclow;
 pub mod logging;

@@ -10,7 +10,6 @@ mod start_context;
 mod topic_broker;
 mod background_worker_registry;
 mod config;
-mod variable_expansion;
 mod miclow;
 mod logging;
 

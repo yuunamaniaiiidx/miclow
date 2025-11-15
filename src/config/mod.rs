@@ -1,7 +1,9 @@
+pub mod expansion;
+
 use anyhow::Result;
 use std::collections::{HashSet, HashMap};
 use toml::Value as TomlValue;
-use crate::variable_expansion::{ExpandContext, Expandable};
+use crate::config::expansion::{ExpandContext, Expandable};
 
 /// TOML値から型への変換トレイト
 pub trait FromTomlValue: Sized {
@@ -560,3 +562,4 @@ args = ["main"]
         assert_eq!(config.tasks.get("main_task").unwrap().name, "main_task");
     }
 }
+
