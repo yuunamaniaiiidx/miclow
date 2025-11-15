@@ -2,7 +2,6 @@
 pub mod task_id;
 pub mod message_id;
 pub mod chunnel;
-pub mod user_log_sender;
 pub mod system_control_command;
 pub mod backend;
 pub mod protocol;

@@ -12,7 +12,7 @@ use crate::chunnel::{ExecutorEvent, ExecutorEventSender, ExecutorEventChannel};
 use crate::chunnel::{InputChannel, InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage};
 use crate::chunnel::{SystemResponseChannel, SystemResponseEvent, SystemResponseStatus};
 use crate::chunnel::ShutdownChannel;
-use crate::user_log_sender::UserLogSender;
+use crate::chunnel::UserLogSender;
 use crate::system_control_command::system_control_command_to_handler;
 use crate::backend::SpawnBackendResult;
 use crate::running_task::RunningTask;

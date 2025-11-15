@@ -2,7 +2,7 @@ use crate::chunnel::ExecutorEventSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::topic_manager::TopicManager;
 use crate::system_control_manager::SystemControlManager;
-use crate::user_log_sender::UserLogSender;
+use crate::chunnel::UserLogSender;
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
 

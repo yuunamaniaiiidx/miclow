@@ -3,7 +3,7 @@ use crate::task_id::TaskId;
 use crate::topic_manager::TopicManager;
 use crate::miclow::TaskExecutor;
 use crate::config::SystemConfig;
-use crate::user_log_sender::UserLogSender;
+use crate::chunnel::UserLogSender;
 use crate::system_control_manager::SystemControlManager;
 use crate::chunnel::{SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
 use crate::chunnel::{ExecutorEvent, ExecutorEventSender};

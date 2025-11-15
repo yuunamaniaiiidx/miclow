@@ -16,3 +16,4 @@ impl UserLogSender {
         self.sender.send(event)
     }
 }
+
