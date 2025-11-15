@@ -512,6 +512,7 @@ impl TaskExecutor {
             ProtocolBackend::MiclowStdin(config) => (config.view_stdout, config.view_stderr),
             ProtocolBackend::Interactive(_) => (false, false), // Interactiveプロトコルでは使用しない
             ProtocolBackend::McpServer(_) => (false, false), // McpServerプロトコルでは使用しない
+            // あまり気持ちの良い設計じゃない可能性がある
         };
         
         let running_task = RunningTask {
