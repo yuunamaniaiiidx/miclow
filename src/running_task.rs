@@ -1,6 +1,5 @@
 use crate::task_id::TaskId;
-use crate::shutdown_channel::ShutdownSender;
-use crate::input_channel::InputSender;
+use crate::channels::{ShutdownSender, InputSender};
 
 #[derive(Debug)]
 pub struct RunningTask {
@@ -12,3 +11,4 @@ pub struct RunningTask {
     pub view_stderr: bool,
 }
 
+// view_stdoutなどはMiclowProtocol特有処理？見直し。

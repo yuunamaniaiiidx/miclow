@@ -1,23 +1,16 @@
 mod task_id;
-mod executor_event_channel;
-mod input_channel;
-mod system_response_channel;
-mod shutdown_channel;
-mod user_log_sender;
-mod system_control_command;
-mod spawn_backend_result;
-mod task_backend_handle;
-mod task_backend;
-mod interactive_backend;
-mod shell_backend;
+mod message_id;
+mod messages;
+mod channels;
+mod system_control;
+mod backend;
+mod protocol;
 mod running_task;
 mod start_context;
-mod system_control_manager;
-mod topic_manager;
-mod background_task_manager;
+mod topic_broker;
+mod background_worker_registry;
 mod config;
 mod miclow;
-mod buffer;
 mod logging;
 
 use anyhow::Result;
@@ -47,7 +40,7 @@ async fn run_miclow(config_file: String) -> Result<()> {
     let config = SystemConfig::from_file(config_file)?;
     
     let miclow_system = MiclowSystem::new(config);
-    miclow_system.start_system_with_interactive().await?;
+    miclow_system.start_system().await?;
 
     exit(0);
     Ok(())

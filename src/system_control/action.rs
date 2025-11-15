@@ -1,16 +1,18 @@
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
-use crate::topic_manager::TopicManager;
+use crate::topic_broker::TopicBroker;
 use crate::miclow::TaskExecutor;
 use crate::config::SystemConfig;
-use crate::user_log_sender::UserLogSender;
-use crate::system_control_manager::SystemControlManager;
-use crate::system_response_channel::{SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
-use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender};
+use crate::channels::UserLogSender;
+use crate::system_control::queue::SystemControlQueue;
+use crate::channels::SystemResponseSender;
+use crate::messages::{SystemResponseEvent, SystemResponseStatus};
+use crate::messages::ExecutorEvent;
+use crate::channels::ExecutorEventSender;
 use crate::start_context::StartContext;
 
 #[derive(Debug, Clone)]
-pub enum SystemControlCommand {
+pub enum SystemControlAction {
     SubscribeTopic { topic: String },
     UnsubscribeTopic { topic: String },
     Status,
@@ -19,23 +21,23 @@ pub enum SystemControlCommand {
     Unknown { command: String, data: String },
 }
 
-impl SystemControlCommand {
+impl SystemControlAction {
     pub async fn execute(
         &self,
-        topic_manager: &TopicManager,
+        topic_manager: &TopicBroker,
         task_executor: &TaskExecutor,
         system_config: &SystemConfig,
         shutdown_token: &CancellationToken,
         userlog_sender: &UserLogSender,
-        system_control_manager: &SystemControlManager,
+        system_control_manager: &SystemControlQueue,
         task_id: &TaskId,
         response_channel: &SystemResponseSender,
         task_event_sender: &ExecutorEventSender,
         return_message_sender: &ExecutorEventSender,
     ) -> Result<(), String> {
         match self {
-            SystemControlCommand::SubscribeTopic { topic } => {
-                log::info!("Processing SubscribeTopic command for task {}: '{}'", task_id, topic);
+            SystemControlAction::SubscribeTopic { topic } => {
+                log::info!("Processing SubscribeTopic action for task {}: '{}'", task_id, topic);
                 
                 topic_manager.add_subscriber(
                     topic.clone(),
@@ -55,8 +57,8 @@ impl SystemControlCommand {
                 let _ = response_channel.send(success_event);
                 Ok(())
             },
-            SystemControlCommand::UnsubscribeTopic { topic } => {
-                log::info!("Processing UnsubscribeTopic command for task {}: '{}'", task_id, topic);
+            SystemControlAction::UnsubscribeTopic { topic } => {
+                log::info!("Processing UnsubscribeTopic action for task {}: '{}'", task_id, topic);
                 
                 let removed = topic_manager.remove_subscriber_by_task(
                     topic.clone(),
@@ -88,8 +90,8 @@ impl SystemControlCommand {
                 }
                 Ok(())
             },
-            SystemControlCommand::Status => {
-                log::info!("Processing Status command for task {}", task_id);
+            SystemControlAction::Status => {
+                log::info!("Processing Status action for task {}", task_id);
                 
                 let tasks_info = task_executor.get_running_tasks_info().await;
                 let topics_info = topic_manager.get_topics_info().await;
@@ -132,8 +134,8 @@ impl SystemControlCommand {
                     Ok(())
                 }
             },
-            SystemControlCommand::GetLatestMessage { topic } => {
-                log::info!("Processing GetLatestMessage command for task {}: '{}'", task_id, topic);
+            SystemControlAction::GetLatestMessage { topic } => {
+                log::info!("Processing GetLatestMessage action for task {}: '{}'", task_id, topic);
 
                 match topic_manager.get_latest_message(topic).await {
                     Some(ExecutorEvent::Message { data, .. }) => {
@@ -173,8 +175,8 @@ impl SystemControlCommand {
                     }
                 }
             },
-            SystemControlCommand::CallFunction { task_name, initial_input } => {
-                log::info!("Processing CallFunction command for task {}: '{}'", task_id, task_name);
+            SystemControlAction::CallFunction { task_name, initial_input } => {
+                log::info!("Processing CallFunction action for task {}: '{}'", task_id, task_name);
                 
                 let caller_task_name = task_executor.get_task_name_by_id(task_id).await;
                 
@@ -232,15 +234,15 @@ impl SystemControlCommand {
                     }
                 }
             },
-            SystemControlCommand::Unknown { command, data } => {
-                log::warn!("Unknown system control command '{}' with data '{}' from task {}", command, data, task_id);
+            SystemControlAction::Unknown { command, data } => {
+                log::warn!("Unknown system control action '{}' with data '{}' from task {}", command, data, task_id);
                 Ok(())
             },
         }
     }
 }
 
-pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<SystemControlCommand> {
+pub fn system_control_action_from_event(event: &ExecutorEvent) -> Option<SystemControlAction> {
     let ExecutorEvent::SystemControl { key, data } = event else {
         return None;
     };
@@ -248,25 +250,25 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
     let key_lower = key.to_lowercase();
     let data_trimmed = data.trim();
 
-    let cmd = match key_lower.as_str() {
+    let action = match key_lower.as_str() {
         "system.subscribe-topic" => {
-            SystemControlCommand::SubscribeTopic { 
+            SystemControlAction::SubscribeTopic { 
                 topic: data_trimmed.to_string() 
             }
         },
         "system.unsubscribe-topic" => {
-            SystemControlCommand::UnsubscribeTopic { 
+            SystemControlAction::UnsubscribeTopic { 
                 topic: data_trimmed.to_string() 
             }
         },
         "system.status" => {
-            SystemControlCommand::Status
+            SystemControlAction::Status
         },
         "system.get-latest-message" => {
             if data_trimmed.is_empty() {
                 return None;
             }
-            SystemControlCommand::GetLatestMessage {
+            SystemControlAction::GetLatestMessage {
                 topic: data_trimmed.to_string(),
             }
         },
@@ -280,13 +282,13 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
             } else {
                 Some(data_trimmed.to_string())
             };
-            SystemControlCommand::CallFunction { 
+            SystemControlAction::CallFunction { 
                 task_name: function_name.to_string(),
                 initial_input,
             }
         },
         _ if key_lower.starts_with("system.") => {
-            SystemControlCommand::Unknown { 
+            SystemControlAction::Unknown { 
                 command: key_lower.clone(), 
                 data: data_trimmed.to_string() 
             }
@@ -294,5 +296,6 @@ pub fn system_control_command_to_handler(event: &ExecutorEvent) -> Option<System
         _ => return None,
     };
     
-    Some(cmd)
+    Some(action)
 }
+

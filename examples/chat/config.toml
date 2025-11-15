@@ -1,0 +1,31 @@
+[[tasks]]
+protocol = "MiclowStdin"
+task_name = "main"
+command = "uv"
+args = ["run", "python3", "main.py"]
+working_directory = "./src"
+environment_vars = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
+
+[[tasks]]
+protocol = "MiclowStdin"
+task_name = "chat"
+command = "uv"
+args = ["run", "python3", "chat.py"]
+working_directory = "./src"
+environment_vars = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
+subscribe_topics = ["system"]
+
+[[tasks]]
+protocol = "MiclowStdin"
+task_name = "receive"
+command = "uv"
+args = ["run", "python3", "receive.py"]
+working_directory = "./src"
+environment_vars = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
+subscribe_topics = ["data"]

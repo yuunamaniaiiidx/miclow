@@ -1,0 +1,17 @@
+[[functions]]
+protocol = "McpServer"
+task_name = "filesystem_mcp"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coding/coto/miclow/examples/mcp"]
+working_directory = "./"
+
+[[tasks]]
+protocol = "MiclowStdin"
+task_name = "main"
+command = "python3"
+args = ["main.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+environment_vars = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
+

@@ -1,16 +1,16 @@
-use crate::executor_event_channel::ExecutorEventSender;
+use crate::channels::ExecutorEventSender;
 use crate::config::{SystemConfig, TaskConfig};
-use crate::topic_manager::TopicManager;
-use crate::system_control_manager::SystemControlManager;
-use crate::user_log_sender::UserLogSender;
+use crate::topic_broker::TopicBroker;
+use crate::system_control::SystemControlQueue;
+use crate::channels::UserLogSender;
 use tokio_util::sync::CancellationToken;
 use anyhow::Result;
 
 #[derive(Clone)]
 pub struct StartContext {
     pub task_config: TaskConfig,
-    pub topic_manager: TopicManager,
-    pub system_control_manager: SystemControlManager,
+    pub topic_manager: TopicBroker,
+    pub system_control_manager: SystemControlQueue,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
     pub return_message_sender: Option<ExecutorEventSender>,
@@ -22,8 +22,8 @@ impl StartContext {
     /// TaskConfigを既に持っている場合の作成
     pub fn new(
         task_config: TaskConfig,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
+        topic_manager: TopicBroker,
+        system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
         return_message_sender: Option<ExecutorEventSender>,
@@ -46,17 +46,16 @@ impl StartContext {
     pub fn from_task_name(
         task_name: String,
         config: &SystemConfig,
-        topic_manager: TopicManager,
-        system_control_manager: SystemControlManager,
+        topic_manager: TopicBroker,
+        system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
         return_message_sender: Option<ExecutorEventSender>,
         initial_input: Option<String>,
         caller_task_name: Option<String>,
     ) -> Result<Self> {
-        let task_config = config.tasks.iter()
-            .chain(config.functions.iter())
-            .find(|t| t.name == task_name)
+        let task_config = config.tasks.get(&task_name)
+            .or_else(|| config.functions.get(&task_name))
             .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in configuration", task_name))?;
 
         Ok(Self {

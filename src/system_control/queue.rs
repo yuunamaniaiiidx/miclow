@@ -3,13 +3,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
-use crate::system_control_command::SystemControlCommand;
-use crate::system_response_channel::SystemResponseSender;
-use crate::executor_event_channel::ExecutorEventSender;
+use crate::system_control::action::SystemControlAction;
+use crate::channels::{SystemResponseSender, ExecutorEventSender};
 
 
 pub struct SystemControlMessage {
-    pub command: SystemControlCommand,
+    pub action: SystemControlAction,
     pub task_id: TaskId,
     pub response_channel: SystemResponseSender,
     pub task_event_sender: ExecutorEventSender,
@@ -19,7 +18,7 @@ pub struct SystemControlMessage {
 impl std::fmt::Debug for SystemControlMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SystemControlMessage")
-            .field("command", &"SystemControl")
+            .field("action", &"SystemControl")
             .field("task_id", &self.task_id)
             .field("response_channel", &"SystemResponseSender")
             .field("task_event_sender", &"ExecutorEventSender")
@@ -28,9 +27,9 @@ impl std::fmt::Debug for SystemControlMessage {
 }
 
 impl SystemControlMessage {
-    pub fn new(command: SystemControlCommand, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender, return_message_sender: ExecutorEventSender) -> Self {
+    pub fn new(action: SystemControlAction, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender, return_message_sender: ExecutorEventSender) -> Self {
         Self {
-            command,
+            action,
             task_id,
             response_channel,
             task_event_sender,
@@ -42,12 +41,12 @@ impl SystemControlMessage {
 
 
 #[derive(Clone, Debug)]
-pub struct SystemControlManager {
+pub struct SystemControlQueue {
     commands: Arc<RwLock<Vec<SystemControlMessage>>>,
     shutdown_token: CancellationToken,
 }
 
-impl SystemControlManager {
+impl SystemControlQueue {
     pub fn new(shutdown_token: CancellationToken) -> Self {
         Self {
             commands: Arc::new(RwLock::new(Vec::new())),
@@ -61,8 +60,8 @@ impl SystemControlManager {
         Ok(())
     }
 
-    pub async fn send_system_control_command(&self, command: crate::system_control_command::SystemControlCommand, task_id: crate::task_id::TaskId, response_channel: crate::system_response_channel::SystemResponseSender, task_event_sender: crate::executor_event_channel::ExecutorEventSender, return_message_sender: crate::executor_event_channel::ExecutorEventSender) -> Result<(), String> {
-        let message = SystemControlMessage::new(command, task_id, response_channel, task_event_sender, return_message_sender);
+    pub async fn send_system_control_action(&self, action: SystemControlAction, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender, return_message_sender: ExecutorEventSender) -> Result<(), String> {
+        let message = SystemControlMessage::new(action, task_id, response_channel, task_event_sender, return_message_sender);
         self.add_command(message).await
     }
 
