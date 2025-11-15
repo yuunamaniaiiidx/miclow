@@ -45,7 +45,7 @@ impl McpClient {
         let id_manager = Arc::new(RequestIdManager::new());
         let id_manager_clone = Arc::clone(&id_manager);
 
-        // メッセージ処理タスクを開始
+        // メッセージ処理ワーカーを開始
         tokio::spawn(async move {
             while let Some(msg) = message_rx.recv().await {
                 match msg {

@@ -289,7 +289,7 @@ pub async fn spawn_miclow_protocol(
 
         let cancel_token: CancellationToken = CancellationToken::new();
 
-        let stdout_handle = spawn_stream_reader(
+        let stdout_worker = spawn_stream_reader(
             TokioBufReader::new(stdout),
             stdout_topic.clone(),
             event_tx_clone.clone(),
@@ -298,7 +298,7 @@ pub async fn spawn_miclow_protocol(
             if view_stdout { Some(ExecutorEvent::new_task_stdout as fn(String) -> ExecutorEvent) } else { None },
         );
 
-        let stderr_handle = spawn_stream_reader(
+        let stderr_worker = spawn_stream_reader(
             TokioBufReader::new(stderr),
             stderr_topic.clone(),
             event_tx_clone.clone(),
@@ -309,7 +309,7 @@ pub async fn spawn_miclow_protocol(
 
         let cancel_input: CancellationToken = cancel_token.clone();
         let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
-        let input_handle = task::spawn(async move {
+        let input_worker = task::spawn(async move {
             loop {
                 tokio::select! {
                     _ = cancel_input.cancelled() => { break; }
@@ -343,7 +343,7 @@ pub async fn spawn_miclow_protocol(
         let event_tx_status: ExecutorEventSender = event_tx_clone.clone();
         let status_cancel: CancellationToken = cancel_token.clone();
         let task_id_status: TaskId = task_id.clone();
-        let status_handle = task::spawn(async move {
+        let status_worker = task::spawn(async move {
             let notify = |res: Result<std::process::ExitStatus, anyhow::Error>| {
                 match res {
                     Ok(exit_status) => {
@@ -387,12 +387,12 @@ pub async fn spawn_miclow_protocol(
                     if graceful_shutdown_attempted {
                         let graceful_timeout = tokio::time::Duration::from_secs(3);
                         
-                        let mut wait_handle = tokio::spawn(async move {
+                        let mut wait_worker = tokio::spawn(async move {
                             child.wait().await.map_err(anyhow::Error::from)
                         });
                         
                         tokio::select! {
-                            result = &mut wait_handle => {
+                            result = &mut wait_worker => {
                                 match result {
                                     Ok(Ok(exit_status)) => {
                                         #[cfg(unix)]
@@ -422,7 +422,7 @@ pub async fn spawn_miclow_protocol(
                                     log::warn!("Child process {} (task {}) did not exit within timeout, sending SIGKILL", pid, task_id_status);
                                     let _ = kill(pid, Signal::SIGKILL);
                                 }
-                                match wait_handle.await {
+                                match wait_worker.await {
                                     Ok(Ok(exit_status)) => {
                                         notify(Ok(exit_status));
                                     }
@@ -453,13 +453,13 @@ pub async fn spawn_miclow_protocol(
             }
         });
 
-        let _ = status_handle.await;
+        let _ = status_worker.await;
         
         // プロセス終了後、stdout/stderrのストリームがEOFになるまで待機
         // タイムアウトを設けて、無限に待たないようにする
         let stream_read_timeout = tokio::time::Duration::from_millis(500);
         tokio::select! {
-            _ = stdout_handle => {
+            _ = stdout_worker => {
                 log::debug!("stdout reader completed for task {}", task_id);
             }
             _ = tokio::time::sleep(stream_read_timeout) => {
@@ -467,7 +467,7 @@ pub async fn spawn_miclow_protocol(
             }
         }
         tokio::select! {
-            _ = stderr_handle => {
+            _ = stderr_worker => {
                 log::debug!("stderr reader completed for task {}", task_id);
             }
             _ = tokio::time::sleep(stream_read_timeout) => {
@@ -476,7 +476,7 @@ pub async fn spawn_miclow_protocol(
         }
         
         cancel_token.cancel();
-        let _ = input_handle.await;
+        let _ = input_worker.await;
     });
     
     Ok(TaskBackendHandle {

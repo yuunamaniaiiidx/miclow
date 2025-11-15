@@ -164,7 +164,7 @@ impl TopicManager {
             if subscriber_list.is_empty() {
                 return Ok(0);
             }
-            let send_tasks: Vec<_> = subscriber_list.into_iter()
+            let send_workers: Vec<_> = subscriber_list.into_iter()
                 .enumerate()
                 .map(|(index, sender)| {
                     let event_clone = event.clone();
@@ -176,7 +176,7 @@ impl TopicManager {
                     })
                 })
                 .collect();
-            let results = futures::future::join_all(send_tasks).await;
+            let results = futures::future::join_all(send_workers).await;
             
             let mut success_count = 0;
             let mut failed_indices = Vec::new();

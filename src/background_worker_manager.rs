@@ -1,11 +1,11 @@
 use tokio::task::JoinHandle;
 
 #[derive(Default)]
-pub struct BackgroundTaskManager {
+pub struct BackgroundWorkerManager {
     handles: Vec<(String, JoinHandle<()>)>,
 }
 
-impl BackgroundTaskManager {
+impl BackgroundWorkerManager {
     pub fn new() -> Self { 
         Self { handles: Vec::new() } 
     }
@@ -17,10 +17,10 @@ impl BackgroundTaskManager {
     pub async fn shutdown_all(&mut self, timeout: std::time::Duration) {
         let mut handles = std::mem::take(&mut self.handles);
         for (idx, (name, mut h)) in handles.drain(..).enumerate() {
-            log::info!("Waiting background task {} ({}) up to {:?}", idx, name, timeout);
+            log::info!("Waiting background worker {} ({}) up to {:?}", idx, name, timeout);
             let finished_in_time = tokio::time::timeout(timeout, &mut h).await.is_ok();
             if !finished_in_time {
-                log::warn!("Background task {} ({}) did not finish in {:?}, aborting", idx, name, timeout);
+                log::warn!("Background worker {} ({}) did not finish in {:?}, aborting", idx, name, timeout);
                 h.abort();
                 let _ = h.await;
             }

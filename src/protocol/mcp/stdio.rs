@@ -7,7 +7,7 @@ use super::jsonrpc::JsonRpcMessage;
 
 pub struct StdioTransport {
     stdin: ChildStdin,
-    stdout_handle: JoinHandle<()>,
+    stdout_worker: JoinHandle<()>,
     message_tx: mpsc::UnboundedSender<JsonRpcMessage>,
 }
 
@@ -21,7 +21,7 @@ impl StdioTransport {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
 
         let message_tx_clone = message_tx.clone();
-        let stdout_handle = tokio::spawn(async move {
+        let stdout_worker = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             let mut line = String::new();
 
@@ -60,7 +60,7 @@ impl StdioTransport {
         Ok((
             Self {
                 stdin,
-                stdout_handle,
+                stdout_worker,
                 message_tx,
             },
             message_rx,
@@ -87,7 +87,7 @@ impl StdioTransport {
 
     pub async fn shutdown(self) {
         drop(self.stdin);
-        let _ = self.stdout_handle.await;
+        let _ = self.stdout_worker.await;
     }
 }
 

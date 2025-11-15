@@ -21,7 +21,7 @@ use crate::system_control_manager::SystemControlManager;
 use crate::topic_manager::TopicManager;
 use crate::backend::TaskBackend;
 use crate::protocol::ProtocolBackend;
-use crate::background_task_manager::BackgroundTaskManager;
+use crate::background_worker_manager::BackgroundWorkerManager;
 use crate::config::{TaskConfig, SystemConfig};
 use tokio::task::JoinHandle;
 
@@ -74,11 +74,11 @@ pub fn start_system_control_worker(
                                 let response_channel_for_cancel = message.response_channel.clone();
                                 let command_clone = message.command.clone();
                                 
-                                let handle = tokio::spawn(async move {
+                                let worker = tokio::spawn(async move {
                                     let task_id_for_log = task_id_clone.clone();
                                     log::info!("Executing SystemControl for task {}", task_id_for_log);
                                     
-                                    let execute_handle = tokio::spawn(async move {
+                                    let execute_worker = tokio::spawn(async move {
                                         command_clone.execute(
                                             &topic_manager_clone,
                                             &task_executor_clone,
@@ -93,7 +93,7 @@ pub fn start_system_control_worker(
                                         ).await
                                     });
                                     
-                                    let execute_abort_handle = execute_handle.abort_handle();
+                                    let execute_abort_handle = execute_worker.abort_handle();
                                     let task_id_for_select = task_id_for_log.clone();
                                     
                                     tokio::select! {
@@ -109,7 +109,7 @@ pub fn start_system_control_worker(
                                             );
                                             let _ = response_channel_for_cancel.send(cancel_error);
                                         }
-                                        result = execute_handle => {
+                                        result = execute_worker => {
                                             match result {
                                                 Ok(Ok(_)) => {
                                                     log::info!("Successfully executed SystemControl for task {}", task_id_for_select);
@@ -147,7 +147,7 @@ pub fn start_system_control_worker(
                                 });
                                 
                                 let mut commands = running_commands.write().await;
-                                commands.insert(task_id, handle);
+                                commands.insert(task_id, worker);
                             }
                             None => {
                                 log::info!("SystemControl receiver closed");
@@ -211,7 +211,7 @@ impl TaskSpawner {
                 let input_channel: InputChannel = InputChannel::new();
                 let shutdown_channel = ShutdownChannel::new();
                 return SpawnBackendResult {
-                    task_handle: tokio::task::spawn(async {}),
+                    worker_handle: tokio::task::spawn(async {}),
                     input_sender: input_channel.sender,
                     shutdown_sender: shutdown_channel.sender,
                 };
@@ -225,7 +225,7 @@ impl TaskSpawner {
         let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
 
-        let task_handle = tokio::task::spawn(async move {
+        let worker_handle = tokio::task::spawn(async move {
             let topic_data_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let mut topic_data_receiver = topic_data_channel.receiver;
 
@@ -425,7 +425,7 @@ impl TaskSpawner {
         });
 
         SpawnBackendResult {
-            task_handle,
+            worker_handle,
             input_sender: input_sender_for_external,
             shutdown_sender: shutdown_sender_for_external,
         }
@@ -656,7 +656,7 @@ impl TaskExecutor {
             task_id: task_id_new.clone(),
             shutdown_sender: spawn_result.shutdown_sender.clone(),
             input_sender: spawn_result.input_sender.clone(),
-            task_handle: spawn_result.task_handle,
+            task_handle: spawn_result.worker_handle,
             view_stdout,
             view_stderr,
         };
@@ -710,7 +710,7 @@ pub struct MiclowSystem {
     system_control_manager: SystemControlManager,
     task_executor: TaskExecutor,
     shutdown_token: CancellationToken,
-    background_tasks: BackgroundTaskManager,
+    background_tasks: BackgroundWorkerManager,
 }
 
 impl MiclowSystem {
@@ -725,7 +725,7 @@ impl MiclowSystem {
             system_control_manager,
             task_executor,
             shutdown_token,
-            background_tasks: BackgroundTaskManager::new(),
+            background_tasks: BackgroundWorkerManager::new(),
         }
     }
 

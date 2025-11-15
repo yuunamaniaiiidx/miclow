@@ -111,10 +111,10 @@ pub async fn spawn_mcp_protocol(
 
         let cancel_token: CancellationToken = CancellationToken::new();
 
-        // 入力処理タスク
+        // 入力処理ワーカー
         let cancel_input: CancellationToken = cancel_token.clone();
         let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
-        let input_handle = task::spawn(async move {
+        let input_worker = task::spawn(async move {
             let mut client = client;
             loop {
                 tokio::select! {
@@ -196,9 +196,9 @@ pub async fn spawn_mcp_protocol(
             client.shutdown().await;
         });
 
-        // シャットダウン処理
+        // シャットダウン処理ワーカー
         let status_cancel: CancellationToken = cancel_token.clone();
-        let status_handle = task::spawn(async move {
+        let status_worker = task::spawn(async move {
             tokio::select! {
                 _ = shutdown_channel.receiver.recv() => {
                     log::info!("Shutdown signal received for MCP task {}", task_id);
@@ -207,9 +207,9 @@ pub async fn spawn_mcp_protocol(
             }
         });
 
-        let _ = status_handle.await;
+        let _ = status_worker.await;
         cancel_token.cancel();
-        let _ = input_handle.await;
+        let _ = input_worker.await;
     });
     
     Ok(TaskBackendHandle {
