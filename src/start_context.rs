@@ -54,9 +54,8 @@ impl StartContext {
         initial_input: Option<String>,
         caller_task_name: Option<String>,
     ) -> Result<Self> {
-        let task_config = config.tasks.iter()
-            .chain(config.functions.iter())
-            .find(|t| t.name == task_name)
+        let task_config = config.tasks.get(&task_name)
+            .or_else(|| config.functions.get(&task_name))
             .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in configuration", task_name))?;
 
         Ok(Self {

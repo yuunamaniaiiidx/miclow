@@ -19,6 +19,7 @@ pub mod system_control_manager;
 pub mod topic_manager;
 pub mod background_task_manager;
 pub mod config;
+pub mod variable_expansion;
 pub mod miclow;
 pub mod buffer;
 pub mod logging;

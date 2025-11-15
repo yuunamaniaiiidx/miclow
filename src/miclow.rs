@@ -606,18 +606,9 @@ impl TaskExecutor {
         let task_config = &context.task_config;
         log::info!("Starting task '{}'", task_config.name);
         
-        if !std::path::Path::new(&task_config.command).exists() && !which::which(&task_config.command).is_ok() {
-            return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", task_config.command));
-        }
-
-        if let Some(working_dir) = &task_config.working_directory {
-            if !std::path::Path::new(working_dir).exists() {
-                return Err(anyhow::anyhow!("Working directory '{}' does not exist", working_dir));
-            }
-        }
-        
         let task_id_new = TaskId::new();
         
+        // ProtocolBackendへの変換（バリデーションも含む）
         let backend: ProtocolBackend = ProtocolBackend::try_from(task_config.clone())
             .map_err(|e| anyhow::anyhow!("Failed to create protocol backend for task '{}': {}", task_config.name, e))
             .unwrap_or_else(|e| {
@@ -628,6 +619,14 @@ impl TaskExecutor {
                 }
                 std::process::exit(1);
             });
+        
+        // コマンドの存在確認（MiclowStdinプロトコルの場合のみ）
+        if let ProtocolBackend::MiclowStdin(ref config) = backend {
+            if !std::path::Path::new(&config.command).exists() && !which::which(&config.command).is_ok() {
+                return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", config.command));
+            }
+        }
+        
         let subscribe_topics = task_config.subscribe_topics.clone();
         
         let task_spawner = TaskSpawner::new(
@@ -640,19 +639,25 @@ impl TaskExecutor {
         );
         
         let spawn_result = task_spawner.spawn_backend(
-            backend,
+            backend.clone(),
             context.shutdown_token,
             subscribe_topics,
             context.return_message_sender.clone(),
         ).await;
+        
+        // view_stdoutとview_stderrをProtocolBackendから取得
+        let (view_stdout, view_stderr) = match &backend {
+            ProtocolBackend::MiclowStdin(config) => (config.view_stdout, config.view_stderr),
+            ProtocolBackend::Interactive(_) => (false, false), // Interactiveプロトコルでは使用しない
+        };
         
         let running_task = RunningTask {
             task_id: task_id_new.clone(),
             shutdown_sender: spawn_result.shutdown_sender.clone(),
             input_sender: spawn_result.input_sender.clone(),
             task_handle: spawn_result.task_handle,
-            view_stdout: task_config.view_stdout,
-            view_stderr: task_config.view_stderr,
+            view_stdout,
+            view_stderr,
         };
 
         // Handle function message if this is a function call
@@ -750,10 +755,7 @@ impl MiclowSystem {
 
             match task_executor.start_task_from_config(ready_context).await {
                 Ok(_) => {
-                    log::info!("Started user task {} with command: {} {}",
-                          task_name,
-                          task_config.command,
-                          task_config.args.join(" "));
+                    log::info!("Started user task '{}'", task_name);
                 },
                 Err(e) => {
                     log::error!("Failed to start task '{}': {}", task_name, e);
@@ -815,7 +817,7 @@ impl MiclowSystem {
         let shutdown_token = self.shutdown_token.clone();
         let interactive_task_id = TaskId::new();
         let interactive_backend = ProtocolBackend::Interactive(
-            crate::protocol_backend::InteractiveConfig::new("system".to_string())
+            crate::interactive_protocol::InteractiveConfig::new("system".to_string())
         );
         let interactive_task_spawner = TaskSpawner::new(
             interactive_task_id.clone(),

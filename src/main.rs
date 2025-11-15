@@ -18,6 +18,7 @@ mod system_control_manager;
 mod topic_manager;
 mod background_task_manager;
 mod config;
+mod variable_expansion;
 mod miclow;
 mod buffer;
 mod logging;

@@ -8,7 +8,33 @@ use crate::executor_event_channel::{ExecutorEvent, ExecutorEventChannel};
 use crate::input_channel::InputChannel;
 use crate::system_response_channel::SystemResponseChannel;
 use crate::shutdown_channel::ShutdownChannel;
-use crate::protocol_backend::InteractiveConfig;
+use crate::config::TaskConfig;
+
+#[derive(Clone)]
+pub struct InteractiveConfig {
+    pub system_input_topic: String,
+}
+
+impl InteractiveConfig {
+    pub fn new(system_input_topic: String) -> Self {
+        Self { system_input_topic }
+    }
+}
+
+pub fn try_interactive_from_task_config(config: &TaskConfig) -> Result<InteractiveConfig, anyhow::Error> {
+    // InteractiveProtocol用のシステム入力トピック: stdout_topicが未設定の場合は"system"を使用
+    let system_input_topic: String = config.expand("stdout_topic")
+        .unwrap_or_else(|| "system".to_string());
+    
+    // バリデーション
+    if system_input_topic.contains(' ') {
+        return Err(anyhow::anyhow!("Task '{}' stdout_topic '{}' contains spaces (not allowed)", config.name, system_input_topic));
+    }
+    
+    Ok(InteractiveConfig {
+        system_input_topic,
+    })
+}
 
 pub async fn spawn_interactive_protocol(
     config: &InteractiveConfig,

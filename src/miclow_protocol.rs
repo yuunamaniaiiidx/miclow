@@ -4,6 +4,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 use std::process::Stdio;
+use std::collections::HashMap;
+use toml::Value as TomlValue;
 use crate::task_id::TaskId;
 use crate::task_backend_handle::TaskBackendHandle;
 use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender, ExecutorEventChannel};
@@ -11,7 +13,19 @@ use crate::input_channel::{InputChannel, InputReceiver, TopicMessage, SystemResp
 use crate::system_response_channel::SystemResponseChannel;
 use crate::shutdown_channel::ShutdownChannel;
 use crate::buffer::{InputBufferManager, StreamOutcome};
-use crate::protocol_backend::MiclowStdinConfig;
+use crate::config::TaskConfig;
+
+#[derive(Clone)]
+pub struct MiclowStdinConfig {
+    pub command: String,
+    pub args: Vec<String>,
+    pub working_directory: Option<String>,
+    pub environment_vars: Option<HashMap<String, String>>,
+    pub stdout_topic: String,
+    pub stderr_topic: String,
+    pub view_stdout: bool,
+    pub view_stderr: bool,
+}
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
@@ -93,6 +107,74 @@ impl StdinProtocol for InputDataMessage {
             InputDataMessage::Function(msg) => msg.to_input_lines_raw(),
         }
     }
+}
+
+pub fn try_miclow_stdin_from_task_config(config: &TaskConfig) -> Result<MiclowStdinConfig, anyhow::Error> {
+    // プロトコル固有のフィールドを抽出・バリデーション
+    let command: String = config.expand("command")
+        .ok_or_else(|| anyhow::anyhow!("Command field is required for MiclowStdin in task '{}'", config.name))?;
+    
+    if command.is_empty() {
+        return Err(anyhow::anyhow!("Command field is required for MiclowStdin in task '{}'", config.name));
+    }
+    
+    let args: Vec<String> = config.expand("args").unwrap_or_default();
+    
+    let working_directory: Option<String> = config.expand("working_directory");
+    
+    let environment_vars = config.get_protocol_value("environment_vars")
+        .and_then(|v| {
+            if let TomlValue::Table(table) = v {
+                let mut env_map = HashMap::new();
+                for (key, value) in table {
+                    if let Some(val_str) = value.as_str() {
+                        env_map.insert(key.clone(), val_str.to_string());
+                    } else {
+                        return None;
+                    }
+                }
+                Some(env_map)
+            } else {
+                None
+            }
+        });
+    
+    // デフォルト値の生成ロジック: stdout_topic/stderr_topicが未設定の場合は"{name}.stdout"/"{name}.stderr"を使用
+    let stdout_topic: String = config.expand("stdout_topic")
+        .unwrap_or_else(|| format!("{}.stdout", config.name));
+    
+    let stderr_topic: String = config.expand("stderr_topic")
+        .unwrap_or_else(|| format!("{}.stderr", config.name));
+    
+    // view_stdoutとview_stderrを取得（デフォルトはfalse）
+    let view_stdout: bool = config.expand("view_stdout").unwrap_or(false);
+    
+    let view_stderr: bool = config.expand("view_stderr").unwrap_or(false);
+    
+    // バリデーション
+    if stdout_topic.contains(' ') {
+        return Err(anyhow::anyhow!("Task '{}' stdout_topic '{}' contains spaces (not allowed)", config.name, stdout_topic));
+    }
+    if stderr_topic.contains(' ') {
+        return Err(anyhow::anyhow!("Task '{}' stderr_topic '{}' contains spaces (not allowed)", config.name, stderr_topic));
+    }
+    
+    if let Some(ref working_dir) = working_directory {
+        if !std::path::Path::new(working_dir).exists() {
+            return Err(anyhow::anyhow!("Task '{}' working directory '{}' does not exist", config.name, working_dir));
+        }
+    }
+    
+    Ok(MiclowStdinConfig {
+        command,
+        args,
+        working_directory,
+        environment_vars,
+        stdout_topic,
+        stderr_topic,
+        view_stdout,
+        view_stderr,
+    })
 }
 
 pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Option<ExecutorEvent> {

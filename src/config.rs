@@ -1,50 +1,294 @@
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet, HashMap};
+use toml::Value as TomlValue;
+use crate::variable_expansion::{ExpandContext, Expandable};
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct TaskConfig {
-    #[serde(rename = "task_name")]
-    pub name: String,
-    pub protocol: String,
-    pub command: String,
-    pub args: Vec<String>,
-    pub working_directory: Option<String>,
-    pub environment_vars: Option<HashMap<String, String>>,
-    pub subscribe_topics: Option<Vec<String>>,
-    pub stdout_topic: Option<String>,
-    pub stderr_topic: Option<String>,
-    #[serde(default)]
-    pub view_stdout: bool,
-    #[serde(default)]
-    pub view_stderr: bool,
-    // Internal flags (not exposed in config file)
-    #[serde(skip)]
-    pub allow_duplicate: bool,
-    #[serde(skip)]
-    pub auto_start: bool,
+/// TOML値から型への変換トレイト
+pub trait FromTomlValue: Sized {
+    fn from_toml_value(value: &TomlValue) -> Option<Self>;
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+impl FromTomlValue for bool {
+    fn from_toml_value(value: &TomlValue) -> Option<Self> {
+        match value {
+            TomlValue::Boolean(b) => Some(*b),
+            TomlValue::String(s) => Some(parse_bool(s)),
+            _ => None,
+        }
+    }
+}
+
+impl FromTomlValue for String {
+    fn from_toml_value(value: &TomlValue) -> Option<Self> {
+        value.as_str().map(|s| s.to_string())
+    }
+}
+
+impl FromTomlValue for Vec<String> {
+    fn from_toml_value(value: &TomlValue) -> Option<Self> {
+        value.as_array().map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+    }
+}
+
+impl FromTomlValue for Option<String> {
+    fn from_toml_value(value: &TomlValue) -> Option<Self> {
+        Some(value.as_str().map(|s| s.to_string()))
+    }
+}
+
+/// 展開前の生のタスク設定情報
+#[derive(Debug, Clone)]
+struct RawTaskConfig {
+    pub name: TomlValue,
+    pub protocol: TomlValue,
+    pub subscribe_topics: Option<TomlValue>,
+    pub allow_duplicate: Option<TomlValue>,
+    pub auto_start: Option<TomlValue>,
+    
+    /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
+    pub protocol_config: HashMap<String, TomlValue>,
+}
+
+/// プロトコル非依存のタスク設定情報（展開後）
+#[derive(Debug, Clone)]
+pub struct TaskConfig {
+    pub name: String,
+    pub protocol: String,
+    pub subscribe_topics: Option<Vec<String>>,
+    pub allow_duplicate: bool,
+    pub auto_start: bool,
+    
+    /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
+    pub protocol_config: HashMap<String, TomlValue>,
+}
+
+impl<'de> serde::Deserialize<'de> for RawTaskConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // まず全体をTOMLのテーブルとして読み込む
+        let mut protocol_config: HashMap<String, TomlValue> = HashMap::deserialize(deserializer)?;
+        
+        // プロトコル非依存のフィールドをpopで取り出す
+        let name = protocol_config.remove("task_name")
+            .ok_or_else(|| serde::de::Error::missing_field("task_name"))?;
+        
+        let protocol = protocol_config.remove("protocol")
+            .ok_or_else(|| serde::de::Error::missing_field("protocol"))?;
+        
+        let subscribe_topics = protocol_config.remove("subscribe_topics");
+        
+        let allow_duplicate = protocol_config.remove("allow_duplicate");
+        let auto_start = protocol_config.remove("auto_start");
+        
+        // 残りが全てprotocol_configに入っている
+        
+        Ok(RawTaskConfig {
+            name,
+            protocol,
+            subscribe_topics,
+            allow_duplicate,
+            auto_start,
+            protocol_config,
+        })
+    }
+}
+
+
+impl RawTaskConfig {
+    /// 環境変数展開を実行してTaskConfigに変換
+    pub fn expand(self, context: &ExpandContext) -> Result<TaskConfig> {
+        // 文字列フィールドの展開
+        let expanded_name = expand_toml_value(&self.name, context)?;
+        let name = String::from_toml_value(&expanded_name)
+            .ok_or_else(|| anyhow::anyhow!("task_name must be a string"))?;
+        
+        let expanded_protocol = expand_toml_value(&self.protocol, context)?;
+        let protocol = String::from_toml_value(&expanded_protocol)
+            .ok_or_else(|| anyhow::anyhow!("protocol must be a string"))?;
+        
+        let subscribe_topics = if let Some(raw_value) = self.subscribe_topics {
+            let expanded_value = expand_toml_value(&raw_value, context)?;
+            Some(Vec::<String>::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("subscribe_topics must be an array of strings"))?)
+        } else {
+            None
+        };
+        
+        // allow_duplicateとauto_startを展開してboolに変換
+        // normalize_defaults()で既にデフォルト値が設定されているので、必ずSome(TomlValue::Boolean)になっている
+        let allow_duplicate = self.allow_duplicate
+            .map(|raw_value| {
+                let expanded_value = expand_toml_value(&raw_value, context)?;
+                bool::from_toml_value(&expanded_value)
+                    .ok_or_else(|| anyhow::anyhow!("allow_duplicate must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false); // normalize_defaults()で既に設定されているはずだが、念のため
+        
+        let auto_start = self.auto_start
+            .map(|raw_value| {
+                let expanded_value = expand_toml_value(&raw_value, context)?;
+                bool::from_toml_value(&expanded_value)
+                    .ok_or_else(|| anyhow::anyhow!("auto_start must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false); // normalize_defaults()で既に設定されているはずだが、念のため
+        
+        // プロトコル固有設定の展開
+        let mut protocol_config = HashMap::new();
+        for (key, value) in self.protocol_config {
+            let expanded_key = key.expand(context)?;
+            let expanded_value = expand_toml_value(&value, context)?;
+            protocol_config.insert(expanded_key, expanded_value);
+        }
+        
+        Ok(TaskConfig {
+            name,
+            protocol,
+            subscribe_topics,
+            allow_duplicate,
+            auto_start,
+            protocol_config,
+        })
+    }
+}
+
+impl TaskConfig {
+    /// プロトコル固有設定から値を取得（展開済み）
+    pub fn get_protocol_value(&self, key: &str) -> Option<&TomlValue> {
+        self.protocol_config.get(key)
+    }
+    
+    /// プロトコル固有設定から型指定で値を取得
+    /// 型推論により、`let value: bool = config.expand("key")`のように使用可能
+    pub fn expand<T: FromTomlValue>(&self, key: &str) -> Option<T> {
+        self.get_protocol_value(key)
+            .and_then(|v| T::from_toml_value(v))
+    }
+}
+
+/// TOML値に対して環境変数展開を実行
+fn expand_toml_value(value: &TomlValue, context: &ExpandContext) -> Result<TomlValue> {
+    match value {
+        TomlValue::String(s) => {
+            let expanded = s.expand(context)?;
+            Ok(TomlValue::String(expanded))
+        }
+        TomlValue::Array(arr) => {
+            let mut expanded = Vec::new();
+            for item in arr {
+                expanded.push(expand_toml_value(item, context)?);
+            }
+            Ok(TomlValue::Array(expanded))
+        }
+        TomlValue::Table(table) => {
+            let mut expanded = toml::map::Map::new();
+            for (key, val) in table {
+                let expanded_key = key.expand(context)?;
+                expanded.insert(expanded_key, expand_toml_value(val, context)?);
+            }
+            Ok(TomlValue::Table(expanded))
+        }
+        _ => Ok(value.clone()),
+    }
+}
+
+/// 文字列をboolに変換
+/// "true", "1", "yes", "on" などは true、それ以外は false
+fn parse_bool(s: &str) -> bool {
+    let s_lower = s.to_lowercase();
+    let s_trimmed = s_lower.trim();
+    matches!(s_trimmed, "true" | "1" | "yes" | "on" | "y")
+}
+
+#[derive(Debug, Clone)]
+struct RawSystemConfig {
+    tasks: Vec<RawTaskConfig>,
+    functions: Vec<RawTaskConfig>,
+    include_paths: Option<TomlValue>,
+}
+
+impl<'de> serde::Deserialize<'de> for RawSystemConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        struct Helper {
+            #[serde(default)]
+            tasks: Vec<RawTaskConfig>,
+            #[serde(default)]
+            functions: Vec<RawTaskConfig>,
+            #[serde(default)]
+            include_paths: Option<TomlValue>,
+        }
+        
+        let helper = Helper::deserialize(deserializer)?;
+        Ok(RawSystemConfig {
+            tasks: helper.tasks,
+            functions: helper.functions,
+            include_paths: helper.include_paths,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SystemConfig {
-    #[serde(skip)]
-    pub config_file: Option<String>,
-    #[serde(default)]
-    pub tasks: Vec<TaskConfig>,
-    #[serde(default)]
-    pub functions: Vec<TaskConfig>,
-    #[serde(default)]
+    pub tasks: HashMap<String, TaskConfig>,
+    pub functions: HashMap<String, TaskConfig>,
     pub include_paths: Vec<String>,
 }
 
 impl SystemConfig {
     pub fn from_toml(toml_content: &str) -> Result<Self> {
-        Self::from_toml_internal(toml_content, true)
+        Self::from_toml_internal(toml_content, true, &ExpandContext::new())
     }
     
-    fn from_toml_internal(toml_content: &str, validate: bool) -> Result<Self> {
-        let mut config: SystemConfig = toml::from_str(toml_content)?;
-        config.config_file = None;
-        config.normalize_defaults();
+    fn from_toml_internal(toml_content: &str, validate: bool, expand_context: &ExpandContext) -> Result<Self> {
+        let mut raw: RawSystemConfig = toml::from_str(toml_content)?;
+        
+        // デフォルト値を設定（展開前に実行）
+        raw.normalize_defaults();
+        
+        // 変数展開を実行してTaskConfigに変換
+        let mut tasks = HashMap::new();
+        for task in raw.tasks {
+            let expanded = task.expand(expand_context)?;
+            let name = expanded.name.clone();
+            if tasks.insert(name.clone(), expanded).is_some() {
+                return Err(anyhow::anyhow!("Duplicate task name: {}", name));
+            }
+        }
+        
+        let mut functions = HashMap::new();
+        for func in raw.functions {
+            let expanded = func.expand(expand_context)?;
+            let name = expanded.name.clone();
+            if functions.insert(name.clone(), expanded).is_some() {
+                return Err(anyhow::anyhow!("Duplicate function name: {}", name));
+            }
+        }
+        
+        let include_paths = if let Some(raw_value) = raw.include_paths {
+            let expanded_value = expand_toml_value(&raw_value, expand_context)?;
+            Vec::<String>::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("include_paths must be an array of strings"))?
+        } else {
+            Vec::new()
+        };
+        
+        let config = SystemConfig {
+            tasks,
+            functions,
+            include_paths,
+        };
+        
         if validate {
             config.validate().unwrap_or_else(|e| {
                 eprintln!("Config validation failed: {}", e);
@@ -60,8 +304,12 @@ impl SystemConfig {
     
     pub fn from_file(config_file: String) -> Result<Self> {
         let config_content: String = std::fs::read_to_string(&config_file)?;
-        let mut config = Self::from_toml(&config_content)?;
-        config.config_file = Some(config_file.clone());
+        
+        // 展開コンテキストを作成
+        let expand_context = ExpandContext::from_config_path(&config_file);
+        
+        // パース後に展開処理を実行
+        let mut config = Self::from_toml_internal(&config_content, true, &expand_context)?;
         
         log::debug!("Before load_includes: {} tasks, {} functions", 
             config.tasks.len(), config.functions.len());
@@ -81,22 +329,31 @@ impl SystemConfig {
     }
     
     pub fn get_autostart_tasks(&self) -> Vec<&TaskConfig> {
-        self.tasks.iter().chain(self.functions.iter())
+        self.tasks.values().chain(self.functions.values())
             .filter(|task| task.auto_start)
             .collect()
     }
     
     pub fn validate(&self) -> Result<()> {
-        let autostart_count = self.tasks.iter().filter(|t| t.auto_start).count()
-            + self.functions.iter().filter(|t| t.auto_start).count();
+        let autostart_count = self.tasks.values().filter(|t| t.auto_start).count()
+            + self.functions.values().filter(|t| t.auto_start).count();
         if autostart_count == 0 {
             return Err(anyhow::anyhow!("No autostart tasks configured"));
         }
         
-        // Validate tasks
-        for (index, task) in self.tasks.iter().enumerate() {
+        // プロトコル非依存のバリデーションのみ実行
+        // プロトコル固有のバリデーションはProtocolBackend::try_fromで実行される
+        self.validate_tasks()?;
+        self.validate_functions()?;
+        
+        Ok(())
+    }
+    
+    /// タスクのプロトコル非依存バリデーション
+    fn validate_tasks(&self) -> Result<()> {
+        for (name, task) in &self.tasks {
             if task.name.is_empty() {
-                return Err(anyhow::anyhow!("Task {} has empty name", index));
+                return Err(anyhow::anyhow!("Task '{}' has empty name", name));
             }
             
             if task.name.starts_with("system") {
@@ -105,15 +362,6 @@ impl SystemConfig {
             
             if task.protocol.is_empty() {
                 return Err(anyhow::anyhow!("Task '{}' has empty protocol", task.name));
-            }
-            
-            // Protocol-specific validation is done in ProtocolBackend::from()
-            // Here we only check basic requirements
-            
-            if let Some(working_dir) = &task.working_directory {
-                if !std::path::Path::new(working_dir).exists() {
-                    return Err(anyhow::anyhow!("Task '{}' working directory '{}' does not exist", task.name, working_dir));
-                }
             }
             
             if let Some(subscribe_topics) = &task.subscribe_topics {
@@ -126,42 +374,19 @@ impl SystemConfig {
                     }
                 }
             }
-
-            if let Some(stdout_topic) = &task.stdout_topic {
-                if stdout_topic.is_empty() {
-                    return Err(anyhow::anyhow!("Task '{}' stdout_topic is empty", task.name));
-                }
-                if stdout_topic.contains(' ') {
-                    return Err(anyhow::anyhow!("Task '{}' stdout_topic '{}' contains spaces (not allowed)", task.name, stdout_topic));
-                }
-            }
-            if let Some(stderr_topic) = &task.stderr_topic {
-                if stderr_topic.is_empty() {
-                    return Err(anyhow::anyhow!("Task '{}' stderr_topic is empty", task.name));
-                }
-                if stderr_topic.contains(' ') {
-                    return Err(anyhow::anyhow!("Task '{}' stderr_topic '{}' contains spaces (not allowed)", task.name, stderr_topic));
-                }
-            }
         }
-        
-        // Validate functions
-        for (index, task) in self.functions.iter().enumerate() {
+        Ok(())
+    }
+    
+    /// 関数のプロトコル非依存バリデーション
+    fn validate_functions(&self) -> Result<()> {
+        for (name, task) in &self.functions {
             if task.name.is_empty() {
-                return Err(anyhow::anyhow!("Function {} has empty name", index));
+                return Err(anyhow::anyhow!("Function '{}' has empty name", name));
             }
             
             if task.protocol.is_empty() {
                 return Err(anyhow::anyhow!("Function '{}' has empty protocol", task.name));
-            }
-            
-            // Protocol-specific validation is done in ProtocolBackend::from()
-            // Here we only check basic requirements
-            
-            if let Some(working_dir) = &task.working_directory {
-                if !std::path::Path::new(working_dir).exists() {
-                    return Err(anyhow::anyhow!("Function '{}' working directory '{}' does not exist", task.name, working_dir));
-                }
             }
             
             if let Some(subscribe_topics) = &task.subscribe_topics {
@@ -174,25 +399,7 @@ impl SystemConfig {
                     }
                 }
             }
-
-            if let Some(stdout_topic) = &task.stdout_topic {
-                if stdout_topic.is_empty() {
-                    return Err(anyhow::anyhow!("Function '{}' stdout_topic is empty", task.name));
-                }
-                if stdout_topic.contains(' ') {
-                    return Err(anyhow::anyhow!("Function '{}' stdout_topic '{}' contains spaces (not allowed)", task.name, stdout_topic));
-                }
-            }
-            if let Some(stderr_topic) = &task.stderr_topic {
-                if stderr_topic.is_empty() {
-                    return Err(anyhow::anyhow!("Function '{}' stderr_topic is empty", task.name));
-                }
-                if stderr_topic.contains(' ') {
-                    return Err(anyhow::anyhow!("Function '{}' stderr_topic '{}' contains spaces (not allowed)", task.name, stderr_topic));
-                }
-            }
         }
-        
         Ok(())
     }
     
@@ -238,18 +445,29 @@ impl SystemConfig {
                     loaded_files.insert(full_path.clone());
                     log::info!("Loading include file: {}", full_path);
                     
-                    match Self::from_toml_internal(&content, false) {
+                    // includeファイル用の展開コンテキストを作成
+                    let include_expand_context = ExpandContext::from_config_path(&full_path);
+                    
+                    match Self::from_toml_internal(&content, false, &include_expand_context) {
                         Ok(included_config) => {
                             // from_toml_internal already calls normalize_defaults()
                             log::info!("Loaded {} tasks and {} functions from {}", 
                                 included_config.tasks.len(), 
                                 included_config.functions.len(),
                                 full_path);
-                            for func in &included_config.functions {
+                            for func in included_config.functions.values() {
                                 log::info!("  Function: {}", func.name);
                             }
-                            self.tasks.extend(included_config.tasks);
-                            self.functions.extend(included_config.functions);
+                            for (name, task) in included_config.tasks {
+                                if self.tasks.insert(name.clone(), task).is_some() {
+                                    log::warn!("Duplicate task name '{}' in include file {}, overwriting", name, full_path);
+                                }
+                            }
+                            for (name, func) in included_config.functions {
+                                if self.functions.insert(name.clone(), func).is_some() {
+                                    log::warn!("Duplicate function name '{}' in include file {}, overwriting", name, full_path);
+                                }
+                            }
                             if !included_config.include_paths.is_empty() {
                                 let include_dir = std::path::Path::new(&full_path)
                                     .parent()
@@ -275,36 +493,28 @@ impl SystemConfig {
         
         Ok(())
     }
+}
 
+impl RawSystemConfig {
     fn normalize_defaults(&mut self) {
         // Tasks: allow_duplicate = false, auto_start = true
-        for task in self.tasks.iter_mut() {
-            if task.working_directory.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-                task.working_directory = Some("./".to_string());
+        for task in &mut self.tasks {
+            if task.allow_duplicate.is_none() {
+                task.allow_duplicate = Some(TomlValue::Boolean(false));
             }
-            if task.view_stdout != true {
-                task.view_stdout = false;
+            if task.auto_start.is_none() {
+                task.auto_start = Some(TomlValue::Boolean(true));
             }
-            if task.view_stderr != true {
-                task.view_stderr = false;
-            }
-            task.allow_duplicate = false;
-            task.auto_start = true;
         }
         
         // Functions: allow_duplicate = true, auto_start = false
-        for task in self.functions.iter_mut() {
-            if task.working_directory.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-                task.working_directory = Some("./".to_string());
+        for task in &mut self.functions {
+            if task.allow_duplicate.is_none() {
+                task.allow_duplicate = Some(TomlValue::Boolean(true));
             }
-            if task.view_stdout != true {
-                task.view_stdout = false;
+            if task.auto_start.is_none() {
+                task.auto_start = Some(TomlValue::Boolean(false));
             }
-            if task.view_stderr != true {
-                task.view_stderr = false;
-            }
-            task.allow_duplicate = true;
-            task.auto_start = false;
         }
     }
 }
@@ -324,6 +534,7 @@ mod tests {
         let include_file = base_dir.join("include.toml");
         fs::write(&include_file, r#"
 [[functions]]
+protocol = "MiclowStdin"
 task_name = "test_function"
 command = "echo"
 args = ["test"]
@@ -335,6 +546,7 @@ args = ["test"]
 include_paths = ["include.toml"]
 
 [[tasks]]
+protocol = "MiclowStdin"
 task_name = "main_task"
 command = "echo"
 args = ["main"]
@@ -343,8 +555,8 @@ args = ["main"]
         let config = SystemConfig::from_file(main_file.to_string_lossy().to_string()).unwrap();
         
         assert_eq!(config.functions.len(), 1, "Should have 1 function from include file");
-        assert_eq!(config.functions[0].name, "test_function");
+        assert_eq!(config.functions.get("test_function").unwrap().name, "test_function");
         assert_eq!(config.tasks.len(), 1, "Should have 1 task from main file");
-        assert_eq!(config.tasks[0].name, "main_task");
+        assert_eq!(config.tasks.get("main_task").unwrap().name, "main_task");
     }
 }

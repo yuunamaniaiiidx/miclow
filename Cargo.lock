@@ -1099,6 +1099,7 @@ dependencies = [
  "nix 0.28.0",
  "petgraph",
  "rand",
+ "regex",
  "serde",
  "serde_json",
  "sha2",
