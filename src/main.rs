@@ -1,9 +1,6 @@
 mod task_id;
 mod message_id;
-mod executor_event_channel;
-mod input_channel;
-mod system_response_channel;
-mod shutdown_channel;
+mod chunnel;
 mod user_log_sender;
 mod system_control_command;
 mod backend;

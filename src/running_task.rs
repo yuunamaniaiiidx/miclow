@@ -1,6 +1,6 @@
 use crate::task_id::TaskId;
-use crate::shutdown_channel::ShutdownSender;
-use crate::input_channel::InputSender;
+use crate::chunnel::ShutdownSender;
+use crate::chunnel::InputSender;
 
 #[derive(Debug)]
 pub struct RunningTask {

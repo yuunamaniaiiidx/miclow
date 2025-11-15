@@ -1,5 +1,5 @@
-use crate::input_channel::InputSender;
-use crate::shutdown_channel::ShutdownSender;
+use crate::chunnel::InputSender;
+use crate::chunnel::ShutdownSender;
 
 pub struct SpawnBackendResult {
     pub task_handle: tokio::task::JoinHandle<()>,

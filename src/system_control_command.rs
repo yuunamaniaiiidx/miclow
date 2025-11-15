@@ -5,8 +5,8 @@ use crate::miclow::TaskExecutor;
 use crate::config::SystemConfig;
 use crate::user_log_sender::UserLogSender;
 use crate::system_control_manager::SystemControlManager;
-use crate::system_response_channel::{SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
-use crate::executor_event_channel::{ExecutorEvent, ExecutorEventSender};
+use crate::chunnel::{SystemResponseSender, SystemResponseEvent, SystemResponseStatus};
+use crate::chunnel::{ExecutorEvent, ExecutorEventSender};
 use crate::start_context::StartContext;
 
 #[derive(Debug, Clone)]

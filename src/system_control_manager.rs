@@ -4,8 +4,8 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use crate::task_id::TaskId;
 use crate::system_control_command::SystemControlCommand;
-use crate::system_response_channel::SystemResponseSender;
-use crate::executor_event_channel::ExecutorEventSender;
+use crate::chunnel::SystemResponseSender;
+use crate::chunnel::ExecutorEventSender;
 
 
 pub struct SystemControlMessage {
@@ -61,7 +61,7 @@ impl SystemControlManager {
         Ok(())
     }
 
-    pub async fn send_system_control_command(&self, command: crate::system_control_command::SystemControlCommand, task_id: crate::task_id::TaskId, response_channel: crate::system_response_channel::SystemResponseSender, task_event_sender: crate::executor_event_channel::ExecutorEventSender, return_message_sender: crate::executor_event_channel::ExecutorEventSender) -> Result<(), String> {
+    pub async fn send_system_control_command(&self, command: crate::system_control_command::SystemControlCommand, task_id: crate::task_id::TaskId, response_channel: crate::chunnel::SystemResponseSender, task_event_sender: crate::chunnel::ExecutorEventSender, return_message_sender: crate::chunnel::ExecutorEventSender) -> Result<(), String> {
         let message = SystemControlMessage::new(command, task_id, response_channel, task_event_sender, return_message_sender);
         self.add_command(message).await
     }

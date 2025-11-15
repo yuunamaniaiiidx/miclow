@@ -1,4 +1,4 @@
-use crate::executor_event_channel::ExecutorEventSender;
+use crate::chunnel::ExecutorEventSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::topic_manager::TopicManager;
 use crate::system_control_manager::SystemControlManager;
