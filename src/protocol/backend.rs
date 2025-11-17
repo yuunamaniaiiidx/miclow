@@ -1,10 +1,10 @@
-use anyhow::{Error, Result};
-use std::convert::TryFrom;
-use async_trait::async_trait;
-use crate::task_id::TaskId;
 use crate::backend::{TaskBackend, TaskBackendHandle};
 use crate::config::TaskConfig;
-use crate::protocol::{self, MiclowStdinConfig, InteractiveConfig, McpServerConfig};
+use crate::protocol::{self, InteractiveConfig, McpServerConfig, MiclowStdinConfig};
+use crate::task_id::TaskId;
+use anyhow::{Error, Result};
+use async_trait::async_trait;
+use std::convert::TryFrom;
 
 #[derive(Clone)]
 pub enum ProtocolBackend {
@@ -18,11 +18,14 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
 
     fn try_from(config: TaskConfig) -> Result<Self, Self::Error> {
         let protocol = config.protocol.trim();
-        
+
         if protocol.is_empty() {
-            return Err(anyhow::anyhow!("Protocol field is required but was empty for task '{}'", config.name));
+            return Err(anyhow::anyhow!(
+                "Protocol field is required but was empty for task '{}'",
+                config.name
+            ));
         }
-        
+
         match protocol {
             "MiclowStdin" => {
                 let config = protocol::try_miclow_stdin_from_task_config(&config)?;
@@ -59,5 +62,3 @@ impl TaskBackend for ProtocolBackend {
         }
     }
 }
-
-

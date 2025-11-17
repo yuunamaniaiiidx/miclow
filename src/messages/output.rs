@@ -1,36 +1,17 @@
 #[derive(Debug, Clone)]
 pub enum ExecutorEvent {
-    Message {
-        topic: String,
-        data: String,
-    },
-    TaskStdout {
-        data: String,
-    },
-    TaskStderr {
-        data: String,
-    },
-    SystemControl {
-        key: String,
-        data: String,
-    },
-    ReturnMessage {
-        data: String,
-    },
-    Error {
-        error: String,
-    },
-    Exit {
-        exit_code: i32,
-    },
+    Message { topic: String, data: String },
+    TaskStdout { data: String },
+    TaskStderr { data: String },
+    SystemControl { key: String, data: String },
+    ReturnMessage { data: String },
+    Error { error: String },
+    Exit { exit_code: i32 },
 }
 
 impl ExecutorEvent {
     pub fn new_message(topic: String, data: String) -> Self {
-        Self::Message { 
-            topic, 
-            data 
-        }
+        Self::Message { topic, data }
     }
 
     pub fn new_error(error: String) -> Self {
@@ -50,10 +31,7 @@ impl ExecutorEvent {
     }
 
     pub fn new_system_control(key: String, data: String) -> Self {
-        Self::SystemControl { 
-            key, 
-            data 
-        }
+        Self::SystemControl { key, data }
     }
 
     pub fn new_return_message(data: String) -> Self {
@@ -77,4 +55,3 @@ impl ExecutorEvent {
         }
     }
 }
-

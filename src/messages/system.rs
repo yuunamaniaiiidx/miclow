@@ -29,11 +29,19 @@ pub enum SystemResponseEvent {
 
 impl SystemResponseEvent {
     pub fn new_system_response(topic: String, status: String, data: String) -> Self {
-        Self::SystemResponse { topic, status, data }
+        Self::SystemResponse {
+            topic,
+            status,
+            data,
+        }
     }
 
     pub fn new_system_error(topic: String, status: String, error: String) -> Self {
-        Self::SystemError { topic, status, error }
+        Self::SystemError {
+            topic,
+            status,
+            error,
+        }
     }
 
     pub fn topic(&self) -> &str {
@@ -50,4 +58,3 @@ impl SystemResponseEvent {
         }
     }
 }
-

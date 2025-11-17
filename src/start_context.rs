@@ -1,10 +1,10 @@
 use crate::channels::ExecutorEventSender;
-use crate::config::{SystemConfig, TaskConfig};
-use crate::topic_broker::TopicBroker;
-use crate::system_control::SystemControlQueue;
 use crate::channels::UserLogSender;
-use tokio_util::sync::CancellationToken;
+use crate::config::{SystemConfig, TaskConfig};
+use crate::system_control::SystemControlQueue;
+use crate::topic_broker::TopicBroker;
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 pub struct StartContext {
@@ -15,7 +15,6 @@ pub struct StartContext {
     pub userlog_sender: UserLogSender,
     pub return_message_sender: Option<ExecutorEventSender>,
     pub initial_input: Option<String>,
-    pub caller_task_name: Option<String>,
 }
 
 impl StartContext {
@@ -28,7 +27,6 @@ impl StartContext {
         userlog_sender: UserLogSender,
         return_message_sender: Option<ExecutorEventSender>,
         initial_input: Option<String>,
-        caller_task_name: Option<String>,
     ) -> Self {
         Self {
             task_config,
@@ -38,7 +36,6 @@ impl StartContext {
             userlog_sender,
             return_message_sender,
             initial_input,
-            caller_task_name,
         }
     }
 
@@ -52,9 +49,10 @@ impl StartContext {
         userlog_sender: UserLogSender,
         return_message_sender: Option<ExecutorEventSender>,
         initial_input: Option<String>,
-        caller_task_name: Option<String>,
     ) -> Result<Self> {
-        let task_config = config.tasks.get(&task_name)
+        let task_config = config
+            .tasks
+            .get(&task_name)
             .or_else(|| config.functions.get(&task_name))
             .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in configuration", task_name))?;
 
@@ -66,7 +64,6 @@ impl StartContext {
             userlog_sender,
             return_message_sender,
             initial_input,
-            caller_task_name,
         })
     }
 }

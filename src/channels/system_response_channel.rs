@@ -1,6 +1,6 @@
-use tokio::sync::mpsc;
-use anyhow::Result;
 use crate::messages::SystemResponseEvent;
+use anyhow::Result;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct SystemResponseSender {
@@ -12,7 +12,10 @@ impl SystemResponseSender {
         Self { sender }
     }
 
-    pub fn send(&self, event: SystemResponseEvent) -> Result<(), mpsc::error::SendError<SystemResponseEvent>> {
+    pub fn send(
+        &self,
+        event: SystemResponseEvent,
+    ) -> Result<(), mpsc::error::SendError<SystemResponseEvent>> {
         self.sender.send(event)
     }
 }
@@ -45,4 +48,3 @@ impl SystemResponseChannel {
         }
     }
 }
-

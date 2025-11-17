@@ -1,6 +1,6 @@
-use tokio::sync::mpsc;
-use anyhow::Result;
 use crate::messages::ExecutorEvent;
+use anyhow::Result;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ExecutorEventSender {
@@ -16,7 +16,11 @@ impl ExecutorEventSender {
         self.sender.send(event)
     }
 
-    pub fn send_message(&self, key: String, data: String) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
+    pub fn send_message(
+        &self,
+        key: String,
+        data: String,
+    ) -> Result<(), mpsc::error::SendError<ExecutorEvent>> {
         self.send(ExecutorEvent::new_message(key, data))
     }
 
@@ -57,4 +61,3 @@ impl ExecutorEventChannel {
         }
     }
 }
-

@@ -5,4 +5,3 @@ pub struct SpawnBackendResult {
     pub input_sender: InputSender,
     pub shutdown_sender: ShutdownSender,
 }
-

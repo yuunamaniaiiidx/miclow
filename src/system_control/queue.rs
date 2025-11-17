@@ -1,11 +1,10 @@
+use crate::channels::{ExecutorEventSender, SystemResponseSender};
+use crate::system_control::action::SystemControlAction;
+use crate::task_id::TaskId;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use crate::task_id::TaskId;
-use crate::system_control::action::SystemControlAction;
-use crate::channels::{SystemResponseSender, ExecutorEventSender};
-
 
 pub struct SystemControlMessage {
     pub action: SystemControlAction,
@@ -27,7 +26,13 @@ impl std::fmt::Debug for SystemControlMessage {
 }
 
 impl SystemControlMessage {
-    pub fn new(action: SystemControlAction, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender, return_message_sender: ExecutorEventSender) -> Self {
+    pub fn new(
+        action: SystemControlAction,
+        task_id: TaskId,
+        response_channel: SystemResponseSender,
+        task_event_sender: ExecutorEventSender,
+        return_message_sender: ExecutorEventSender,
+    ) -> Self {
         Self {
             action,
             task_id,
@@ -37,8 +42,6 @@ impl SystemControlMessage {
         }
     }
 }
-
-
 
 #[derive(Clone, Debug)]
 pub struct SystemControlQueue {
@@ -60,8 +63,21 @@ impl SystemControlQueue {
         Ok(())
     }
 
-    pub async fn send_system_control_action(&self, action: SystemControlAction, task_id: TaskId, response_channel: SystemResponseSender, task_event_sender: ExecutorEventSender, return_message_sender: ExecutorEventSender) -> Result<(), String> {
-        let message = SystemControlMessage::new(action, task_id, response_channel, task_event_sender, return_message_sender);
+    pub async fn send_system_control_action(
+        &self,
+        action: SystemControlAction,
+        task_id: TaskId,
+        response_channel: SystemResponseSender,
+        task_event_sender: ExecutorEventSender,
+        return_message_sender: ExecutorEventSender,
+    ) -> Result<(), String> {
+        let message = SystemControlMessage::new(
+            action,
+            task_id,
+            response_channel,
+            task_event_sender,
+            return_message_sender,
+        );
         self.add_command(message).await
     }
 
@@ -82,4 +98,3 @@ impl SystemControlQueue {
         }
     }
 }
-

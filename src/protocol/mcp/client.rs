@@ -1,13 +1,13 @@
-use anyhow::{Context, Result};
-use serde_json::Value;
-use tokio::sync::oneshot;
-use tokio::time::{timeout, Duration};
 use super::jsonrpc::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestIdManager};
 use super::stdio::StdioTransport;
 use super::types::*;
-use tokio::process::Command;
-use std::sync::Arc;
+use anyhow::{Context, Result};
+use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::process::Command;
+use tokio::sync::oneshot;
+use tokio::time::{timeout, Duration};
 
 pub struct McpClient {
     transport: StdioTransport,
@@ -36,10 +36,10 @@ impl McpClient {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let child = cmd.spawn()
-            .context("Failed to spawn MCP server process")?;
+        let child = cmd.spawn().context("Failed to spawn MCP server process")?;
 
-        let (transport, mut message_rx) = StdioTransport::new(child).await
+        let (transport, mut message_rx) = StdioTransport::new(child)
+            .await
             .context("Failed to create stdio transport")?;
 
         let id_manager = Arc::new(RequestIdManager::new());
@@ -74,7 +74,11 @@ impl McpClient {
         Ok(client)
     }
 
-    async fn send_request(&mut self, method: String, params: Option<Value>) -> Result<JsonRpcResponse> {
+    async fn send_request(
+        &mut self,
+        method: String,
+        params: Option<Value>,
+    ) -> Result<JsonRpcResponse> {
         let id = self.id_manager.allocate_id();
         let request = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -87,7 +91,9 @@ impl McpClient {
         self.id_manager.register_request(id, tx);
 
         let message = JsonRpcMessage::Request(request);
-        self.transport.send(message).await
+        self.transport
+            .send(message)
+            .await
             .context("Failed to send request")?;
 
         // レスポンスを待つ（タイムアウト: 30秒）
@@ -108,10 +114,11 @@ impl McpClient {
             params,
         });
 
-        self.transport.send(notification).await
+        self.transport
+            .send(notification)
+            .await
             .context("Failed to send notification")
     }
-
 
     pub async fn initialize(&mut self) -> Result<InitializeResult> {
         if self.initialized {
@@ -120,31 +127,39 @@ impl McpClient {
 
         let params = InitializeParams {
             protocol_version: "2024-11-05".to_string(),
-            capabilities: ClientCapabilities {
-                experimental: None,
-            },
+            capabilities: ClientCapabilities { experimental: None },
             client_info: ClientInfo {
                 name: "miclow".to_string(),
                 version: "0.1.0".to_string(),
             },
         };
 
-        let params_value = serde_json::to_value(params)
-            .context("Failed to serialize initialize params")?;
+        let params_value =
+            serde_json::to_value(params).context("Failed to serialize initialize params")?;
 
-        let response = self.send_request("initialize".to_string(), Some(params_value)).await
+        let response = self
+            .send_request("initialize".to_string(), Some(params_value))
+            .await
             .context("Failed to send initialize request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("Initialize error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "Initialize error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: InitializeResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("Initialize response missing result"))?
-        ).context("Failed to deserialize initialize result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("Initialize response missing result"))?,
+        )
+        .context("Failed to deserialize initialize result")?;
 
         // initialized通知を送信
-        self.send_notification("initialized".to_string(), None).await
+        self.send_notification("initialized".to_string(), None)
+            .await
             .context("Failed to send initialized notification")?;
 
         self.initialized = true;
@@ -153,111 +168,167 @@ impl McpClient {
     }
 
     pub async fn list_tools(&mut self) -> Result<ListToolsResult> {
-        let response = self.send_request("tools/list".to_string(), None).await
+        let response = self
+            .send_request("tools/list".to_string(), None)
+            .await
             .context("Failed to send tools/list request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("tools/list error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "tools/list error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: ListToolsResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("tools/list response missing result"))?
-        ).context("Failed to deserialize tools/list result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("tools/list response missing result"))?,
+        )
+        .context("Failed to deserialize tools/list result")?;
 
         Ok(result)
     }
 
-    pub async fn call_tool(&mut self, name: String, arguments: Option<Value>) -> Result<CallToolResult> {
-        let params = CallToolParams {
-            name,
-            arguments,
-        };
+    pub async fn call_tool(
+        &mut self,
+        name: String,
+        arguments: Option<Value>,
+    ) -> Result<CallToolResult> {
+        let params = CallToolParams { name, arguments };
 
-        let params_value = serde_json::to_value(params)
-            .context("Failed to serialize call_tool params")?;
+        let params_value =
+            serde_json::to_value(params).context("Failed to serialize call_tool params")?;
 
-        let response = self.send_request("tools/call".to_string(), Some(params_value)).await
+        let response = self
+            .send_request("tools/call".to_string(), Some(params_value))
+            .await
             .context("Failed to send tools/call request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("tools/call error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "tools/call error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: CallToolResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("tools/call response missing result"))?
-        ).context("Failed to deserialize tools/call result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("tools/call response missing result"))?,
+        )
+        .context("Failed to deserialize tools/call result")?;
 
         Ok(result)
     }
 
     pub async fn list_resources(&mut self) -> Result<ListResourcesResult> {
-        let response = self.send_request("resources/list".to_string(), None).await
+        let response = self
+            .send_request("resources/list".to_string(), None)
+            .await
             .context("Failed to send resources/list request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("resources/list error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "resources/list error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: ListResourcesResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("resources/list response missing result"))?
-        ).context("Failed to deserialize resources/list result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("resources/list response missing result"))?,
+        )
+        .context("Failed to deserialize resources/list result")?;
 
         Ok(result)
     }
 
     pub async fn read_resource(&mut self, uri: String) -> Result<ReadResourceResult> {
         let params = ReadResourceParams { uri };
-        let params_value = serde_json::to_value(params)
-            .context("Failed to serialize read_resource params")?;
+        let params_value =
+            serde_json::to_value(params).context("Failed to serialize read_resource params")?;
 
-        let response = self.send_request("resources/read".to_string(), Some(params_value)).await
+        let response = self
+            .send_request("resources/read".to_string(), Some(params_value))
+            .await
             .context("Failed to send resources/read request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("resources/read error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "resources/read error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: ReadResourceResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("resources/read response missing result"))?
-        ).context("Failed to deserialize resources/read result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("resources/read response missing result"))?,
+        )
+        .context("Failed to deserialize resources/read result")?;
 
         Ok(result)
     }
 
     pub async fn list_prompts(&mut self) -> Result<ListPromptsResult> {
-        let response = self.send_request("prompts/list".to_string(), None).await
+        let response = self
+            .send_request("prompts/list".to_string(), None)
+            .await
             .context("Failed to send prompts/list request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("prompts/list error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "prompts/list error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: ListPromptsResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("prompts/list response missing result"))?
-        ).context("Failed to deserialize prompts/list result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("prompts/list response missing result"))?,
+        )
+        .context("Failed to deserialize prompts/list result")?;
 
         Ok(result)
     }
 
-    pub async fn get_prompt(&mut self, name: String, arguments: Option<Value>) -> Result<GetPromptResult> {
-        let params = GetPromptParams {
-            name,
-            arguments,
-        };
+    pub async fn get_prompt(
+        &mut self,
+        name: String,
+        arguments: Option<Value>,
+    ) -> Result<GetPromptResult> {
+        let params = GetPromptParams { name, arguments };
 
-        let params_value = serde_json::to_value(params)
-            .context("Failed to serialize get_prompt params")?;
+        let params_value =
+            serde_json::to_value(params).context("Failed to serialize get_prompt params")?;
 
-        let response = self.send_request("prompts/get".to_string(), Some(params_value)).await
+        let response = self
+            .send_request("prompts/get".to_string(), Some(params_value))
+            .await
             .context("Failed to send prompts/get request")?;
 
         if let Some(error) = response.error {
-            return Err(anyhow::anyhow!("prompts/get error: {} (code: {})", error.message, error.code));
+            return Err(anyhow::anyhow!(
+                "prompts/get error: {} (code: {})",
+                error.message,
+                error.code
+            ));
         }
 
         let result: GetPromptResult = serde_json::from_value(
-            response.result.ok_or_else(|| anyhow::anyhow!("prompts/get response missing result"))?
-        ).context("Failed to deserialize prompts/get result")?;
+            response
+                .result
+                .ok_or_else(|| anyhow::anyhow!("prompts/get response missing result"))?,
+        )
+        .context("Failed to deserialize prompts/get result")?;
 
         Ok(result)
     }
@@ -266,4 +337,3 @@ impl McpClient {
         self.transport.shutdown().await;
     }
 }
-

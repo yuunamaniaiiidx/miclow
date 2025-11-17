@@ -1,6 +1,6 @@
-use tokio::sync::mpsc;
-use anyhow::Result;
 use crate::messages::InputDataMessage;
+use anyhow::Result;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct InputSender {
@@ -12,7 +12,10 @@ impl InputSender {
         Self { sender }
     }
 
-    pub fn send(&self, input: InputDataMessage) -> Result<(), mpsc::error::SendError<InputDataMessage>> {
+    pub fn send(
+        &self,
+        input: InputDataMessage,
+    ) -> Result<(), mpsc::error::SendError<InputDataMessage>> {
         self.sender.send(input)
     }
 }
@@ -45,4 +48,3 @@ impl InputChannel {
         }
     }
 }
-

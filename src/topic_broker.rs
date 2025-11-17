@@ -1,10 +1,10 @@
+use crate::channels::ExecutorEventSender;
+use crate::messages::ExecutorEvent;
+use crate::task_id::TaskId;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
-use std::collections::HashMap;
-use crate::task_id::TaskId;
-use crate::messages::ExecutorEvent;
-use crate::channels::ExecutorEventSender;
 
 #[derive(Clone)]
 pub struct TopicBroker {
@@ -22,10 +22,15 @@ impl TopicBroker {
         }
     }
 
-    pub async fn add_subscriber(&self, topic: String, task_id: TaskId, subscriber: ExecutorEventSender) {
+    pub async fn add_subscriber(
+        &self,
+        topic: String,
+        task_id: TaskId,
+        subscriber: ExecutorEventSender,
+    ) {
         let subscriber_arc = Arc::new(subscriber);
         let mut subscribers = self.subscribers.write().await;
-        
+
         if let Some(existing_subscribers) = subscribers.get_mut(&topic) {
             let new_subscribers = Arc::new({
                 let mut vec = existing_subscribers.as_ref().clone();
@@ -33,20 +38,31 @@ impl TopicBroker {
                 vec
             });
             *existing_subscribers = new_subscribers;
-            log::info!("Added subscriber to existing topic '{}' (total subscribers: {})", topic, existing_subscribers.len());
+            log::info!(
+                "Added subscriber to existing topic '{}' (total subscribers: {})",
+                topic,
+                existing_subscribers.len()
+            );
         } else {
             let new_subscribers = Arc::new(vec![subscriber_arc.clone()]);
             subscribers.insert(topic.clone(), new_subscribers);
             log::info!("Added new topic '{}' with subscriber", topic);
         }
         let mut task_subs = self.task_subscriptions.write().await;
-        task_subs.insert((topic.clone(), task_id.clone()), Arc::downgrade(&subscriber_arc));
-        log::info!("Recorded task {} subscription to topic '{}'", task_id, topic);
+        task_subs.insert(
+            (topic.clone(), task_id.clone()),
+            Arc::downgrade(&subscriber_arc),
+        );
+        log::info!(
+            "Recorded task {} subscription to topic '{}'",
+            task_id,
+            topic
+        );
     }
 
     pub async fn remove_failed_subscribers(&self, topic: &str, failed_indices: Vec<usize>) {
         let mut subscribers = self.subscribers.write().await;
-        
+
         if let Some(topic_subscribers) = subscribers.get_mut(topic) {
             let mut new_subscribers = topic_subscribers.as_ref().clone();
             for &index in failed_indices.iter().rev() {
@@ -54,7 +70,7 @@ impl TopicBroker {
                     new_subscribers.remove(index);
                 }
             }
-            
+
             if new_subscribers.is_empty() {
                 subscribers.remove(topic);
             } else {
@@ -67,9 +83,13 @@ impl TopicBroker {
         let mut task_subs = self.task_subscriptions.write().await;
         let weak_sender = task_subs.remove(&(topic.clone(), task_id.clone()));
         drop(task_subs);
-        
+
         if weak_sender.is_none() {
-            log::warn!("No mapping found for task {} and topic '{}'", task_id, topic);
+            log::warn!(
+                "No mapping found for task {} and topic '{}'",
+                task_id,
+                topic
+            );
             return false;
         }
         let mut subscribers = self.subscribers.write().await;
@@ -86,15 +106,19 @@ impl TopicBroker {
                     true
                 }
             });
-            
+
             if new_subscribers.is_empty() {
                 subscribers.remove(&topic);
                 log::info!("Removed empty topic '{}'", topic);
             } else {
                 *topic_subscribers = Arc::new(new_subscribers);
             }
-            
-            log::info!("Removed subscriber for task {} from topic '{}'", task_id, topic);
+
+            log::info!(
+                "Removed subscriber for task {} from topic '{}'",
+                task_id,
+                topic
+            );
             return true;
         } else {
             log::warn!("Topic '{}' not found for removal", topic);
@@ -105,7 +129,8 @@ impl TopicBroker {
     pub async fn remove_all_subscriptions_by_task(&self, task_id: TaskId) -> Vec<String> {
         let mut removed_topics = Vec::new();
         let mut task_subs = self.task_subscriptions.write().await;
-        let task_entries: Vec<(String, Weak<ExecutorEventSender>)> = task_subs.iter()
+        let task_entries: Vec<(String, Weak<ExecutorEventSender>)> = task_subs
+            .iter()
             .filter(|((_, stored_task_id), _)| *stored_task_id == task_id)
             .map(|((topic, _), weak_sender)| (topic.clone(), weak_sender.clone()))
             .collect();
@@ -118,7 +143,7 @@ impl TopicBroker {
                 if let Some(strong_ref) = weak_sender.upgrade() {
                     new_subscribers.retain(|sender| !Arc::ptr_eq(sender, &strong_ref));
                 }
-                
+
                 if new_subscribers.is_empty() {
                     subscribers.remove(&topic);
                     log::info!("Removed empty topic '{}'", topic);
@@ -128,19 +153,26 @@ impl TopicBroker {
                 }
             }
         }
-        
-        log::info!("Removed all subscriptions for task {} ({} topics affected)", task_id, removed_topics.len());
+
+        log::info!(
+            "Removed all subscriptions for task {} ({} topics affected)",
+            task_id,
+            removed_topics.len()
+        );
         removed_topics
     }
 
     pub async fn get_subscribers(&self, topic: &str) -> Option<Vec<Arc<ExecutorEventSender>>> {
         let subscribers = self.subscribers.read().await;
-        subscribers.get(topic).map(|arc_vec| arc_vec.as_ref().clone())
+        subscribers
+            .get(topic)
+            .map(|arc_vec| arc_vec.as_ref().clone())
     }
 
     pub async fn get_topics_info(&self) -> Vec<(String, usize)> {
         let subscribers = self.subscribers.read().await;
-        subscribers.iter()
+        subscribers
+            .iter()
             .map(|(topic, subscriber_list)| (topic.clone(), subscriber_list.len()))
             .collect()
     }
@@ -158,14 +190,15 @@ impl TopicBroker {
             let mut latest_messages = self.latest_messages.write().await;
             latest_messages.insert(topic_owned.clone(), event.clone());
         }
-        
+
         let subscribers = self.get_subscribers(&topic_owned).await;
-        
+
         if let Some(subscriber_list) = subscribers {
             if subscriber_list.is_empty() {
                 return Ok(0);
             }
-            let send_workers: Vec<_> = subscriber_list.into_iter()
+            let send_workers: Vec<_> = subscriber_list
+                .into_iter()
                 .enumerate()
                 .map(|(index, sender)| {
                     let event_clone = event.clone();
@@ -178,10 +211,10 @@ impl TopicBroker {
                 })
                 .collect();
             let results = futures::future::join_all(send_workers).await;
-            
+
             let mut success_count = 0;
             let mut failed_indices = Vec::new();
-            
+
             for result in results {
                 match result {
                     Ok(Ok(_)) => success_count += 1,
@@ -194,8 +227,12 @@ impl TopicBroker {
             if !failed_indices.is_empty() {
                 self.remove_failed_subscribers(topic, failed_indices).await;
             }
-            
-            log::info!("Broadcasted message to {} subscribers on topic '{}'", success_count, topic);
+
+            log::info!(
+                "Broadcasted message to {} subscribers on topic '{}'",
+                success_count,
+                topic
+            );
             Ok(success_count)
         } else {
             log::info!("No subscribers found for topic '{}'", topic);
@@ -208,4 +245,3 @@ impl TopicBroker {
         latest_messages.get(topic).cloned()
     }
 }
-

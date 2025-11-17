@@ -21,13 +21,13 @@ impl ExpandContext {
     /// MICLOW_CONFIG_DIRを仮想環境変数として設定
     pub fn from_config_path(config_path: &str) -> Self {
         let mut context = Self::new();
-        
+
         let config_dir = std::path::Path::new(config_path)
             .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| ".".to_string());
         context.set_virtual_env("MICLOW_CONFIG_DIR", &config_dir);
-        
+
         context
     }
 
@@ -69,17 +69,13 @@ impl Expandable for String {
 
 impl Expandable for Vec<String> {
     fn expand(&self, context: &ExpandContext) -> Result<Self> {
-        self.iter()
-            .map(|item| item.expand(context))
-            .collect()
+        self.iter().map(|item| item.expand(context)).collect()
     }
 }
 
 impl<T: Expandable> Expandable for Option<T> {
     fn expand(&self, context: &ExpandContext) -> Result<Self> {
-        self.as_ref()
-            .map(|value| value.expand(context))
-            .transpose()
+        self.as_ref().map(|value| value.expand(context)).transpose()
     }
 }
 
@@ -96,51 +92,52 @@ impl Expandable for HashMap<String, String> {
 }
 
 /// Docker Compose形式の変数展開を実行
-/// 
+///
 /// サポートする形式:
 /// - `${VAR}`: 環境変数または仮想環境変数を展開（未定義はエラー）
 /// - `${VAR:-default}`: 変数が未定義または空文字列の場合、デフォルト値を使用
 /// - `${VAR-default}`: 変数が未定義の場合のみ、デフォルト値を使用（空文字列は有効な値として扱う）
-/// 
+///
 /// # エラー
 /// 未定義の変数（デフォルト値なし）が見つかった場合、エラーを返す
 pub fn expand_variables(value: &str, context: &ExpandContext) -> Result<String> {
     use regex::Regex;
-    
+
     // ${VAR} または ${VAR:-default} または ${VAR-default} のパターンにマッチ
     // ネストした${}は考慮しない（Docker Composeと同じ動作）
     let re = Regex::new(r"\$\{([^}]+)\}").context("Failed to compile regex pattern")?;
-    
+
     let mut result = value.to_string();
     let mut replacements = Vec::new();
-    
+
     // すべてのマッチを収集
     for cap in re.captures_iter(value) {
         let full_match = cap.get(0).unwrap();
         let var_expr = cap.get(1).unwrap().as_str();
-        
+
         // デフォルト値の有無と形式をチェック
-        let (var_name, default_value, treat_empty_as_unset) = if let Some(colon_dash_pos) = var_expr.find(":-") {
-            // ${VAR:-default} 形式（未定義または空文字列の場合にデフォルト値を使用）
-            let name = &var_expr[..colon_dash_pos];
-            let default = &var_expr[colon_dash_pos + 2..];
-            (name, Some(default), true)
-        } else if let Some(dash_pos) = var_expr.find('-') {
-            // ${VAR-default} 形式（未定義の場合のみデフォルト値を使用）
-            // ただし、変数名に - が含まれる可能性があるため、最初の - がデフォルト値の区切りかどうかを確認
-            // 変数名は通常英数字とアンダースコアのみだが、Docker Composeでは変数名に - を含められる
-            // ここでは、最初の - を区切りとして扱う（Docker Composeの仕様に合わせる）
-            let name = &var_expr[..dash_pos];
-            let default = &var_expr[dash_pos + 1..];
-            (name, Some(default), false)
-        } else {
-            // ${VAR} 形式
-            (var_expr, None, false)
-        };
-        
+        let (var_name, default_value, treat_empty_as_unset) =
+            if let Some(colon_dash_pos) = var_expr.find(":-") {
+                // ${VAR:-default} 形式（未定義または空文字列の場合にデフォルト値を使用）
+                let name = &var_expr[..colon_dash_pos];
+                let default = &var_expr[colon_dash_pos + 2..];
+                (name, Some(default), true)
+            } else if let Some(dash_pos) = var_expr.find('-') {
+                // ${VAR-default} 形式（未定義の場合のみデフォルト値を使用）
+                // ただし、変数名に - が含まれる可能性があるため、最初の - がデフォルト値の区切りかどうかを確認
+                // 変数名は通常英数字とアンダースコアのみだが、Docker Composeでは変数名に - を含められる
+                // ここでは、最初の - を区切りとして扱う（Docker Composeの仕様に合わせる）
+                let name = &var_expr[..dash_pos];
+                let default = &var_expr[dash_pos + 1..];
+                (name, Some(default), false)
+            } else {
+                // ${VAR} 形式
+                (var_expr, None, false)
+            };
+
         // 変数の値を取得
         let var_value = context.get_var(var_name);
-        
+
         let replacement = match var_value {
             Some(value) if !value.is_empty() => {
                 // 変数が定義されていて空文字列でない場合、その値を使用
@@ -175,15 +172,15 @@ pub fn expand_variables(value: &str, context: &ExpandContext) -> Result<String> 
                 }
             }
         };
-        
+
         replacements.push((full_match.start(), full_match.end(), replacement));
     }
-    
+
     // 後ろから前に置換（インデックスがずれないように）
     for (start, end, replacement) in replacements.into_iter().rev() {
         result.replace_range(start..end, &replacement);
     }
-    
+
     Ok(result)
 }
 
@@ -335,7 +332,8 @@ mod tests {
         env::remove_var(var_name);
         env::set_var(var_name, "");
         let context = ExpandContext::new();
-        let result = expand_variables(&format!("${{{}-default_value}}", var_name), &context).unwrap();
+        let result =
+            expand_variables(&format!("${{{}-default_value}}", var_name), &context).unwrap();
         assert_eq!(result, "", "空文字列は有効な値として扱われるべき");
         env::remove_var(var_name);
     }
@@ -352,7 +350,7 @@ mod tests {
     fn test_expand_var_name_with_dash() {
         // 変数名に - を含む場合の動作確認
         // ${BASE-VAR} は ${BASE} と解釈され、-VAR がデフォルト値として扱われる（Docker Composeの仕様）
-        
+
         // 一意な変数名を使用して他のテストとの干渉を避ける
         // ランダムな数値を使用して環境変数の衝突を避ける
         let base_var_name = "BASEXYZ999DASHTEST";
@@ -361,17 +359,25 @@ mod tests {
         env::remove_var(base_var_name);
         let dash_var_name = format!("{}-VAR", base_var_name);
         env::remove_var(&dash_var_name);
-        
+
         // 環境変数が存在しないことを確認
-        assert!(env::var(base_var_name).is_err(), "{} は存在しないべき", base_var_name);
-        
+        assert!(
+            env::var(base_var_name).is_err(),
+            "{} は存在しないべき",
+            base_var_name
+        );
+
         let context = ExpandContext::new();
         // ${BASEXYZ999DASHTEST-VAR} は ${BASEXYZ999DASHTEST} と解釈され、-VAR がデフォルト値として扱われる
         // BASEXYZ999DASHTEST が未定義の場合、デフォルト値 "VAR" が使われる
         let pattern = format!("${{{}-VAR}}", base_var_name);
         let result = expand_variables(&pattern, &context).unwrap();
-        assert_eq!(result, "VAR", "{} が未定義の場合、デフォルト値 VAR が使われるべき", base_var_name);
-        
+        assert_eq!(
+            result, "VAR",
+            "{} が未定義の場合、デフォルト値 VAR が使われるべき",
+            base_var_name
+        );
+
         // 変数名に - を含む場合は :- を使う必要がある
         // ${BASEXYZ999DASHTEST-VAR:-default} では、:- の前まで（BASEXYZ999DASHTEST-VAR）が変数名として解釈される
         env::set_var(&dash_var_name, "dash-value");
@@ -380,7 +386,7 @@ mod tests {
         let result = expand_variables(&pattern, &context).unwrap();
         assert_eq!(result, "dash-value");
         env::remove_var(&dash_var_name);
-        
+
         // ${BASEXYZ999DASHTEST-VAR-default} では、最初の - が区切りとして扱われるため、
         // BASEXYZ999DASHTEST という変数名として解釈され、-VAR-default がデフォルト値として扱われる
         env::remove_var(base_var_name);
@@ -399,20 +405,19 @@ mod tests {
         let var_name = "EMPTY_VAR_DIFF_TEST";
         env::remove_var(var_name);
         env::set_var(var_name, "");
-        
+
         let context = ExpandContext::new();
-        
+
         // ${VAR:-default} は空文字列を未定義として扱う
         let pattern1 = format!("${{{}:-default}}", var_name);
         let result1 = expand_variables(&pattern1, &context).unwrap();
         assert_eq!(result1, "default");
-        
+
         // ${VAR-default} は空文字列を有効な値として扱う
         let pattern2 = format!("${{{}-default}}", var_name);
         let result2 = expand_variables(&pattern2, &context).unwrap();
         assert_eq!(result2, "");
-        
+
         env::remove_var(var_name);
     }
 }
-

@@ -1,4 +1,3 @@
-
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TopicInputBuffer {
     active_topic: Option<String>,
@@ -12,17 +11,24 @@ pub struct InputBufferManager {
 
 impl TopicInputBuffer {
     pub fn new() -> Self {
-        Self { active_topic: None, buffered_lines: Vec::new() }
+        Self {
+            active_topic: None,
+            buffered_lines: Vec::new(),
+        }
     }
 
-    pub fn is_active(&self) -> bool { self.active_topic.is_some() }
+    pub fn is_active(&self) -> bool {
+        self.active_topic.is_some()
+    }
 
     pub fn start(&mut self, topic: String) {
         self.active_topic = Some(topic);
         self.buffered_lines.clear();
     }
 
-    pub fn push_line(&mut self, line: String) { self.buffered_lines.push(line); }
+    pub fn push_line(&mut self, line: String) {
+        self.buffered_lines.push(line);
+    }
 
     pub fn try_finish(&mut self, closing_topic: &str) -> Option<(String, String)> {
         match &self.active_topic {
@@ -59,10 +65,16 @@ impl InputBufferManager {
     }
 
     pub fn get_or_create_buffer(&mut self, task_id: &str) -> &mut TopicInputBuffer {
-        self.buffers.entry(task_id.to_string()).or_insert_with(TopicInputBuffer::new)
+        self.buffers
+            .entry(task_id.to_string())
+            .or_insert_with(TopicInputBuffer::new)
     }
 
-    pub fn consume_stream_line(&mut self, task_id: &str, line: &str) -> Result<StreamOutcome, String> {
+    pub fn consume_stream_line(
+        &mut self,
+        task_id: &str,
+        line: &str,
+    ) -> Result<StreamOutcome, String> {
         let buffer = self.get_or_create_buffer(task_id);
         consume_stream_line(buffer, line)
     }
@@ -88,28 +100,35 @@ impl InputBufferManager {
 
 fn view_without_crlf(s: &str) -> &str {
     let bytes = s.as_bytes();
-    if bytes.ends_with(b"\r\n") { &s[..s.len()-2] }
-    else if bytes.ends_with(b"\n") || bytes.ends_with(b"\r") { &s[..s.len()-1] }
-    else { s }
+    if bytes.ends_with(b"\r\n") {
+        &s[..s.len() - 2]
+    } else if bytes.ends_with(b"\n") || bytes.ends_with(b"\r") {
+        &s[..s.len() - 1]
+    } else {
+        s
+    }
 }
 
 fn parse_quoted_topic(input: &str) -> Result<(String, usize), String> {
     let mut escaped = false;
     let mut topic = String::new();
-    
+
     // 文字境界を追跡しながら処理
-    for (i, c) in input.char_indices().skip(1) { // 最初の"をスキップ
-        if escaped { 
-            topic.push(c); 
-            escaped = false; 
-            continue; 
+    for (i, c) in input.char_indices().skip(1) {
+        // 最初の"をスキップ
+        if escaped {
+            topic.push(c);
+            escaped = false;
+            continue;
         }
-        if c == '\\' { 
-            escaped = true; 
-            continue; 
+        if c == '\\' {
+            escaped = true;
+            continue;
         }
         if c == '"' {
-            if topic.is_empty() { return Err("empty topic is not allowed".to_string()); }
+            if topic.is_empty() {
+                return Err("empty topic is not allowed".to_string());
+            }
             return Ok((topic, i + c.len_utf8())); // バイトインデックスを返す
         }
         topic.push(c);
@@ -126,7 +145,7 @@ pub enum LineParseResult {
 
 pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
     let input = view_without_crlf(input_raw);
-    if input.starts_with(' ') || input.starts_with('\t') { 
+    if input.starts_with(' ') || input.starts_with('\t') {
         let trimmed_left = input.trim_start_matches([' ', '\t']);
         if trimmed_left.starts_with('"') || trimmed_left.starts_with("::") {
             return Ok(LineParseResult::NotSpecial);
@@ -146,7 +165,10 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
                 if rest_trim_left.starts_with(':') {
                     let after_colon = &rest_trim_left[1..];
                     let value = after_colon.trim();
-                    return Ok(LineParseResult::SingleLine { topic, value: value.to_string() });
+                    return Ok(LineParseResult::SingleLine {
+                        topic,
+                        value: value.to_string(),
+                    });
                 }
             }
             Err(_) => {
@@ -192,13 +214,19 @@ pub fn strip_crlf(s: &str) -> &str {
     view_without_crlf(s)
 }
 
-pub fn consume_stream_line(buffer: &mut TopicInputBuffer, line: &str) -> Result<StreamOutcome, String> {
+pub fn consume_stream_line(
+    buffer: &mut TopicInputBuffer,
+    line: &str,
+) -> Result<StreamOutcome, String> {
     if buffer.is_active() {
         // アクティブ状態中は終了文字（::"key"）以外は通常のデータとしてバッファに追加
         match parse_line(line)? {
             LineParseResult::MultilineEnd { topic } => {
                 if let Some((active_topic, data)) = buffer.try_finish(&topic) {
-                    Ok(StreamOutcome::Emit { topic: active_topic, data })
+                    Ok(StreamOutcome::Emit {
+                        topic: active_topic,
+                        data,
+                    })
                 } else {
                     // トピック名が一致しない場合は通常のデータとしてバッファに追加
                     buffer.push_line(line.to_string());
@@ -213,8 +241,13 @@ pub fn consume_stream_line(buffer: &mut TopicInputBuffer, line: &str) -> Result<
         }
     } else {
         match parse_line(line)? {
-            LineParseResult::SingleLine { topic, value } => Ok(StreamOutcome::Emit { topic, data: value }),
-            LineParseResult::MultilineStart { topic } => { buffer.start(topic); Ok(StreamOutcome::None) }
+            LineParseResult::SingleLine { topic, value } => {
+                Ok(StreamOutcome::Emit { topic, data: value })
+            }
+            LineParseResult::MultilineStart { topic } => {
+                buffer.start(topic);
+                Ok(StreamOutcome::None)
+            }
             LineParseResult::MultilineEnd { .. } => {
                 Ok(StreamOutcome::Plain(strip_crlf(line).to_string()))
             }
@@ -226,7 +259,7 @@ pub fn consume_stream_line(buffer: &mut TopicInputBuffer, line: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::TopicInputBuffer;
-    use super::{consume_stream_line, StreamOutcome, strip_crlf, InputBufferManager};
+    use super::{consume_stream_line, strip_crlf, InputBufferManager, StreamOutcome};
 
     #[test]
     fn single_line_parsing() {
@@ -244,12 +277,18 @@ mod tests {
     #[test]
     fn multiline_basic() {
         let mut buf = TopicInputBuffer::new();
-        match super::parse_line("\"note\"::") { Ok(super::LineParseResult::MultilineStart { topic }) => assert_eq!(topic, "note"), _ => panic!("start") }
+        match super::parse_line("\"note\"::") {
+            Ok(super::LineParseResult::MultilineStart { topic }) => assert_eq!(topic, "note"),
+            _ => panic!("start"),
+        }
         buf.start("note".to_string());
         assert!(buf.is_active());
         buf.push_line("line1\n".to_string());
         buf.push_line("line2".to_string());
-        match super::parse_line("::\"note\"") { Ok(super::LineParseResult::MultilineEnd { topic }) => assert_eq!(topic, "note"), _ => panic!("end") }
+        match super::parse_line("::\"note\"") {
+            Ok(super::LineParseResult::MultilineEnd { topic }) => assert_eq!(topic, "note"),
+            _ => panic!("end"),
+        }
         let res = buf.try_finish("note");
         assert_eq!(res, Some(("note".to_string(), "line1\nline2".to_string())));
         assert!(!buf.is_active());
@@ -258,32 +297,53 @@ mod tests {
     #[test]
     fn nested_marker_should_not_start_new_buffer() {
         let mut buf = TopicInputBuffer::new();
-        match super::parse_line("\"key\"::") { Ok(super::LineParseResult::MultilineStart { topic }) => assert_eq!(topic, "key"), _ => panic!("start") }
+        match super::parse_line("\"key\"::") {
+            Ok(super::LineParseResult::MultilineStart { topic }) => assert_eq!(topic, "key"),
+            _ => panic!("start"),
+        }
         buf.start("key".to_string());
         assert!(buf.is_active());
         buf.push_line("\"key2\"::\n".to_string());
         buf.push_line("value\n".to_string());
         buf.push_line("::\"key2\"\n".to_string());
-        match super::parse_line("::\"key\"") { Ok(super::LineParseResult::MultilineEnd { topic }) => assert_eq!(topic, "key"), _ => panic!("end") }
+        match super::parse_line("::\"key\"") {
+            Ok(super::LineParseResult::MultilineEnd { topic }) => assert_eq!(topic, "key"),
+            _ => panic!("end"),
+        }
         let res = buf.try_finish("key");
-        assert_eq!(res, Some(("key".to_string(), "\"key2\"::\nvalue\n::\"key2\"\n".to_string())));
+        assert_eq!(
+            res,
+            Some((
+                "key".to_string(),
+                "\"key2\"::\nvalue\n::\"key2\"\n".to_string()
+            ))
+        );
     }
 
     #[test]
     fn spaces_rules_and_empty_value() {
         match super::parse_line("\"k\" :    ") {
-            Ok(super::LineParseResult::SingleLine { topic, value }) => { assert_eq!(topic, "k"); assert_eq!(value, ""); }
-            _ => panic!("single empty value")
+            Ok(super::LineParseResult::SingleLine { topic, value }) => {
+                assert_eq!(topic, "k");
+                assert_eq!(value, "");
+            }
+            _ => panic!("single empty value"),
         }
         match super::parse_line("\" k \": v") {
             Ok(super::LineParseResult::SingleLine { topic, value }) => {
                 assert_eq!(topic, " k ");
                 assert_eq!(value, "v");
             }
-            _ => panic!("topic with surrounding spaces should be allowed")
+            _ => panic!("topic with surrounding spaces should be allowed"),
         }
-        assert!(matches!(super::parse_line(" \"k\"::"), Ok(super::LineParseResult::NotSpecial)));
-        assert!(matches!(super::parse_line(":: \"k\""), Ok(super::LineParseResult::NotSpecial)));
+        assert!(matches!(
+            super::parse_line(" \"k\"::"),
+            Ok(super::LineParseResult::NotSpecial)
+        ));
+        assert!(matches!(
+            super::parse_line(":: \"k\""),
+            Ok(super::LineParseResult::NotSpecial)
+        ));
     }
 
     #[test]
@@ -293,18 +353,24 @@ mod tests {
                 assert_eq!(topic, "ke\"y");
                 assert_eq!(value, "v");
             }
-            _ => panic!("escaped topic")
+            _ => panic!("escaped topic"),
         }
     }
 
     #[test]
     fn multiline_no_normalization_and_trailing_empty_line() {
         let mut buf = TopicInputBuffer::new();
-        match super::parse_line("\"n\"::") { Ok(super::LineParseResult::MultilineStart { topic }) => assert_eq!(topic, "n"), _ => panic!() }
+        match super::parse_line("\"n\"::") {
+            Ok(super::LineParseResult::MultilineStart { topic }) => assert_eq!(topic, "n"),
+            _ => panic!(),
+        }
         buf.start("n".to_string());
         buf.push_line("line1\r\n".to_string());
         buf.push_line("\r\n".to_string());
-        match super::parse_line("::\"n\"") { Ok(super::LineParseResult::MultilineEnd { topic }) => assert_eq!(topic, "n"), _ => panic!() }
+        match super::parse_line("::\"n\"") {
+            Ok(super::LineParseResult::MultilineEnd { topic }) => assert_eq!(topic, "n"),
+            _ => panic!(),
+        }
         let res = buf.try_finish("n").unwrap();
         assert_eq!(res.1, "line1\r\n\r\n");
     }
@@ -316,25 +382,40 @@ mod tests {
                 assert_eq!(topic, "k");
                 assert_eq!(value, "\" v with space \"");
             }
-            _ => panic!("quoted value")
+            _ => panic!("quoted value"),
         }
     }
 
     #[test]
     fn leading_whitespace_is_error_for_special_lines() {
-        assert!(matches!(super::parse_line("  \"k\": v"), Ok(super::LineParseResult::NotSpecial)));
-        assert!(matches!(super::parse_line("\t\"k\"::"), Ok(super::LineParseResult::NotSpecial)));
-        assert!(matches!(super::parse_line("  ::\"k\""), Ok(super::LineParseResult::NotSpecial)));
+        assert!(matches!(
+            super::parse_line("  \"k\": v"),
+            Ok(super::LineParseResult::NotSpecial)
+        ));
+        assert!(matches!(
+            super::parse_line("\t\"k\"::"),
+            Ok(super::LineParseResult::NotSpecial)
+        ));
+        assert!(matches!(
+            super::parse_line("  ::\"k\""),
+            Ok(super::LineParseResult::NotSpecial)
+        ));
     }
 
     #[test]
     fn multiline_end_with_extra_chars_is_error() {
-        assert!(matches!(super::parse_line("::\"k\" extra"), Ok(super::LineParseResult::NotSpecial)));
+        assert!(matches!(
+            super::parse_line("::\"k\" extra"),
+            Ok(super::LineParseResult::NotSpecial)
+        ));
     }
 
     #[test]
     fn unexpected_end_emits_error_path_assumed_at_call_site() {
-        assert!(matches!(super::parse_line("::\"k\""), Ok(super::LineParseResult::MultilineEnd{..}) | Err(_)));
+        assert!(matches!(
+            super::parse_line("::\"k\""),
+            Ok(super::LineParseResult::MultilineEnd { .. }) | Err(_)
+        ));
     }
 
     #[test]
@@ -344,7 +425,10 @@ mod tests {
         buf.push_line("line A\n".to_string());
         buf.push_line("line B".to_string());
         let flushed = buf.flush_unfinished();
-        assert_eq!(flushed, Some(("note".to_string(), "line A\nline B".to_string())));
+        assert_eq!(
+            flushed,
+            Some(("note".to_string(), "line A\nline B".to_string()))
+        );
         assert!(!buf.is_active());
     }
 
@@ -443,21 +527,21 @@ mod tests {
     #[test]
     fn input_buffer_manager_basic_operations() {
         let mut manager = InputBufferManager::new();
-        
+
         // 新しいタスクのバッファを作成
         let buffer = manager.get_or_create_buffer("task1");
         assert!(!buffer.is_active());
-        
+
         // 複数行の処理
         let result = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
         assert!(matches!(result, StreamOutcome::None));
-        
+
         let result = manager.consume_stream_line("task1", "line1\n").unwrap();
         assert!(matches!(result, StreamOutcome::None));
-        
+
         let result = manager.consume_stream_line("task1", "line2").unwrap();
         assert!(matches!(result, StreamOutcome::None));
-        
+
         let result = manager.consume_stream_line("task1", "::\"msg\"").unwrap();
         match result {
             StreamOutcome::Emit { topic, data } => {
@@ -471,17 +555,23 @@ mod tests {
     #[test]
     fn input_buffer_manager_multiple_tasks() {
         let mut manager = InputBufferManager::new();
-        
+
         // タスク1の複数行処理
-        let _ = manager.consume_stream_line("task1", "\"stdout\"::").unwrap();
+        let _ = manager
+            .consume_stream_line("task1", "\"stdout\"::")
+            .unwrap();
         let _ = manager.consume_stream_line("task1", "task1_data").unwrap();
-        
+
         // タスク2の複数行処理（同時実行）
-        let _ = manager.consume_stream_line("task2", "\"stdout\"::").unwrap();
+        let _ = manager
+            .consume_stream_line("task2", "\"stdout\"::")
+            .unwrap();
         let _ = manager.consume_stream_line("task2", "task2_data").unwrap();
-        
+
         // タスク1を完了
-        let result1 = manager.consume_stream_line("task1", "::\"stdout\"").unwrap();
+        let result1 = manager
+            .consume_stream_line("task1", "::\"stdout\"")
+            .unwrap();
         match result1 {
             StreamOutcome::Emit { topic, data } => {
                 assert_eq!(topic, "stdout");
@@ -489,9 +579,11 @@ mod tests {
             }
             other => panic!("unexpected outcome: {:?}", other),
         }
-        
+
         // タスク2を完了
-        let result2 = manager.consume_stream_line("task2", "::\"stdout\"").unwrap();
+        let result2 = manager
+            .consume_stream_line("task2", "::\"stdout\"")
+            .unwrap();
         match result2 {
             StreamOutcome::Emit { topic, data } => {
                 assert_eq!(topic, "stdout");
@@ -504,11 +596,13 @@ mod tests {
     #[test]
     fn input_buffer_manager_flush_unfinished() {
         let mut manager = InputBufferManager::new();
-        
+
         // 未完了のバッファを作成
         let _ = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
-        let _ = manager.consume_stream_line("task1", "unfinished_data").unwrap();
-        
+        let _ = manager
+            .consume_stream_line("task1", "unfinished_data")
+            .unwrap();
+
         // フラッシュ
         let unfinished = manager.flush_all_unfinished();
         assert_eq!(unfinished.len(), 1);
@@ -520,19 +614,17 @@ mod tests {
     #[test]
     fn input_buffer_manager_remove_task() {
         let mut manager = InputBufferManager::new();
-        
+
         // タスクを作成
         let _ = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
         let _ = manager.consume_stream_line("task1", "data").unwrap();
-        
+
         // タスクを削除
         let removed = manager.remove_task("task1");
         assert!(removed.is_some());
-        
+
         // 削除されたタスクのバッファは存在しない
         let buffer = manager.get_or_create_buffer("task1");
         assert!(!buffer.is_active());
     }
 }
-
-

@@ -1,9 +1,9 @@
+use super::jsonrpc::JsonRpcMessage;
 use anyhow::{Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use super::jsonrpc::JsonRpcMessage;
 
 pub struct StdioTransport {
     stdin: ChildStdin,
@@ -13,9 +13,13 @@ pub struct StdioTransport {
 
 impl StdioTransport {
     pub async fn new(mut child: Child) -> Result<(Self, mpsc::UnboundedReceiver<JsonRpcMessage>)> {
-        let stdin = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| anyhow::anyhow!("Failed to take stdin from child process"))?;
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| anyhow::anyhow!("Failed to take stdout from child process"))?;
 
         let (message_tx, message_rx) = mpsc::unbounded_channel();
@@ -45,7 +49,11 @@ impl StdioTransport {
                                 }
                             }
                             Err(e) => {
-                                log::warn!("Failed to parse JSON-RPC message: {} - Line: {}", e, trimmed);
+                                log::warn!(
+                                    "Failed to parse JSON-RPC message: {} - Line: {}",
+                                    e,
+                                    trimmed
+                                );
                             }
                         }
                     }
@@ -68,15 +76,18 @@ impl StdioTransport {
     }
 
     pub async fn send(&mut self, message: JsonRpcMessage) -> Result<()> {
-        let json = serde_json::to_string(&message)
-            .context("Failed to serialize JSON-RPC message")?;
-        
-        self.stdin.write_all(json.as_bytes()).await
+        let json =
+            serde_json::to_string(&message).context("Failed to serialize JSON-RPC message")?;
+
+        self.stdin
+            .write_all(json.as_bytes())
+            .await
             .context("Failed to write to stdin")?;
-        self.stdin.write_all(b"\n").await
+        self.stdin
+            .write_all(b"\n")
+            .await
             .context("Failed to write newline to stdin")?;
-        self.stdin.flush().await
-            .context("Failed to flush stdin")?;
+        self.stdin.flush().await.context("Failed to flush stdin")?;
 
         Ok(())
     }
@@ -90,4 +101,3 @@ impl StdioTransport {
         let _ = self.stdout_worker.await;
     }
 }
-

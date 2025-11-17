@@ -1,4 +1,6 @@
-use crate::channels::{ExecutorEventReceiver, ExecutorEventSender, SystemResponseSender, InputSender, ShutdownSender};
+use crate::channels::{
+    ExecutorEventReceiver, ExecutorEventSender, InputSender, ShutdownSender, SystemResponseSender,
+};
 
 pub struct TaskBackendHandle {
     pub event_receiver: ExecutorEventReceiver,
@@ -7,4 +9,3 @@ pub struct TaskBackendHandle {
     pub input_sender: InputSender,
     pub shutdown_sender: ShutdownSender,
 }
-

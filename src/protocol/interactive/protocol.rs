@@ -1,12 +1,12 @@
+use crate::backend::TaskBackendHandle;
+use crate::channels::{ExecutorEventChannel, InputChannel, ShutdownChannel, SystemResponseChannel};
+use crate::config::TaskConfig;
+use crate::messages::ExecutorEvent;
+use crate::task_id::TaskId;
 use anyhow::{Error, Result};
-use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader, stdin};
+use tokio::io::{stdin, AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
-use crate::task_id::TaskId;
-use crate::backend::TaskBackendHandle;
-use crate::messages::ExecutorEvent;
-use crate::channels::{ExecutorEventChannel, InputChannel, SystemResponseChannel, ShutdownChannel};
-use crate::config::TaskConfig;
 
 #[derive(Clone)]
 pub struct InteractiveConfig {
@@ -19,19 +19,24 @@ impl InteractiveConfig {
     }
 }
 
-pub fn try_interactive_from_task_config(config: &TaskConfig) -> Result<InteractiveConfig, anyhow::Error> {
+pub fn try_interactive_from_task_config(
+    config: &TaskConfig,
+) -> Result<InteractiveConfig, anyhow::Error> {
     // InteractiveProtocol用のシステム入力トピック: stdout_topicが未設定の場合は"system"を使用
-    let system_input_topic: String = config.expand("stdout_topic")
+    let system_input_topic: String = config
+        .expand("stdout_topic")
         .unwrap_or_else(|| "system".to_string());
-    
+
     // バリデーション
     if system_input_topic.contains(' ') {
-        return Err(anyhow::anyhow!("Task '{}' stdout_topic '{}' contains spaces (not allowed)", config.name, system_input_topic));
+        return Err(anyhow::anyhow!(
+            "Task '{}' stdout_topic '{}' contains spaces (not allowed)",
+            config.name,
+            system_input_topic
+        ));
     }
-    
-    Ok(InteractiveConfig {
-        system_input_topic,
-    })
+
+    Ok(InteractiveConfig { system_input_topic })
 }
 
 pub async fn spawn_interactive_protocol(
@@ -39,21 +44,21 @@ pub async fn spawn_interactive_protocol(
     task_id: TaskId,
 ) -> Result<TaskBackendHandle, Error> {
     let system_input_topic = config.system_input_topic.clone();
-    
+
     let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
     let input_channel: InputChannel = InputChannel::new();
     let shutdown_channel = ShutdownChannel::new();
     let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
-    
+
     let event_tx_clone = event_channel.sender.clone();
     let cancel_token: CancellationToken = CancellationToken::new();
     let mut shutdown_receiver = shutdown_channel.receiver;
-    
+
     task::spawn(async move {
         let stdin = stdin();
         let reader = TokioBufReader::new(stdin);
         let mut lines = reader.lines();
-        
+
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
@@ -72,14 +77,14 @@ pub async fn spawn_interactive_protocol(
                             if trimmed.is_empty() {
                                 continue;
                             }
-                            
+
                             log::info!("Sending message topic:'{}' data:'{}'", system_input_topic, trimmed);
-                            
+
                             let event = ExecutorEvent::new_message(
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
                             );
-                            
+
                             if let Err(e) = event_tx_clone.send(event) {
                                 log::error!("Failed to send event from interactive backend: {}", e);
                                 break;
@@ -98,10 +103,10 @@ pub async fn spawn_interactive_protocol(
                 }
             }
         }
-        
+
         log::info!("Interactive mode task {} completed", task_id);
     });
-    
+
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
         event_sender: event_channel.sender,
@@ -110,4 +115,3 @@ pub async fn spawn_interactive_protocol(
         shutdown_sender: shutdown_channel.sender,
     })
 }
-

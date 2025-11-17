@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use tokio::sync::oneshot;
 use std::sync::{Arc, Mutex};
+use tokio::sync::oneshot;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -71,7 +71,11 @@ impl RequestIdManager {
         self.pending_requests.lock().unwrap().insert(id, sender);
     }
 
-    pub fn complete_request(&self, id: u64, response: JsonRpcResponse) -> Result<(), JsonRpcResponse> {
+    pub fn complete_request(
+        &self,
+        id: u64,
+        response: JsonRpcResponse,
+    ) -> Result<(), JsonRpcResponse> {
         let mut pending = self.pending_requests.lock().unwrap();
         if let Some(sender) = pending.remove(&id) {
             sender.send(response).map_err(|_| {
@@ -103,4 +107,3 @@ impl Default for RequestIdManager {
         Self::new()
     }
 }
-

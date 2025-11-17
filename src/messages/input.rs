@@ -24,7 +24,6 @@ pub struct ReturnMessage {
 #[derive(Clone, Debug)]
 pub struct FunctionMessage {
     pub message_id: MessageId,
-    pub task_name: String,
     pub data: String,
 }
 
@@ -35,4 +34,3 @@ pub enum InputDataMessage {
     Return(ReturnMessage),
     Function(FunctionMessage),
 }
-

@@ -1,28 +1,33 @@
-use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::{HashMap, HashSet};
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use crate::task_id::TaskId;
-use crate::message_id::MessageId;
-use crate::logging::{UserLogEvent, UserLogKind, spawn_user_log_aggregator, LogEvent, spawn_log_aggregator, set_channel_logger, level_from_env};
-use crate::messages::ExecutorEvent;
-use crate::channels::{ExecutorEventSender, ExecutorEventChannel};
-use crate::messages::{InputDataMessage, TopicMessage, SystemResponseMessage, ReturnMessage, FunctionMessage};
-use crate::channels::InputChannel;
-use crate::messages::SystemResponseEvent;
-use crate::channels::{SystemResponseChannel, ShutdownChannel, UserLogSender};
-use crate::system_control::system_control_action_from_event;
 use crate::backend::SpawnBackendResult;
+use crate::backend::TaskBackend;
+use crate::background_worker_registry::BackgroundWorkerRegistry;
+use crate::channels::InputChannel;
+use crate::channels::{ExecutorEventChannel, ExecutorEventSender};
+use crate::channels::{ShutdownChannel, SystemResponseChannel, UserLogSender};
+use crate::config::{SystemConfig, TaskConfig};
+use crate::logging::{
+    level_from_env, set_channel_logger, spawn_log_aggregator, spawn_user_log_aggregator, LogEvent,
+    UserLogEvent, UserLogKind,
+};
+use crate::message_id::MessageId;
+use crate::messages::ExecutorEvent;
+use crate::messages::SystemResponseEvent;
+use crate::messages::{
+    FunctionMessage, InputDataMessage, ReturnMessage, SystemResponseMessage, TopicMessage,
+};
+use crate::protocol::ProtocolBackend;
 use crate::running_task::RunningTask;
 use crate::start_context::StartContext;
+use crate::system_control::system_control_action_from_event;
 use crate::system_control::SystemControlQueue;
+use crate::task_id::TaskId;
 use crate::topic_broker::TopicBroker;
-use crate::backend::TaskBackend;
-use crate::protocol::ProtocolBackend;
-use crate::background_worker_registry::BackgroundWorkerRegistry;
-use crate::config::{TaskConfig, SystemConfig};
+use anyhow::Result;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 pub struct TaskSpawner {
     pub task_id: TaskId,
@@ -92,35 +97,45 @@ impl TaskSpawner {
             let mut topic_data_receiver = topic_data_channel.receiver;
 
             if let Some(topics) = subscribe_topics {
-                log::info!("Processing initial topic subscriptions for task {}: {:?}", task_id, topics);
+                log::info!(
+                    "Processing initial topic subscriptions for task {}: {:?}",
+                    task_id,
+                    topics
+                );
                 for topic in topics {
-                    topic_manager.add_subscriber(
-                        topic.clone(),
-                        task_id.clone(),
-                        topic_data_channel.sender.clone()
-                    ).await;
-                    log::info!("Added initial topic subscription for '{}' from task {}", topic, task_id);
+                    topic_manager
+                        .add_subscriber(
+                            topic.clone(),
+                            task_id.clone(),
+                            topic_data_channel.sender.clone(),
+                        )
+                        .await;
+                    log::info!(
+                        "Added initial topic subscription for '{}' from task {}",
+                        topic,
+                        task_id
+                    );
                 }
             }
 
             let return_message_channel: ExecutorEventChannel = ExecutorEventChannel::new();
             let mut return_message_receiver = return_message_channel.receiver;
-            
+
             loop {
                 tokio::select! {
                     biased;
-                    
+
                     _ = shutdown_token.cancelled() => {
                         log::info!("Task {} received shutdown signal", task_id);
                         let _ = backend_handle.shutdown_sender.shutdown();
                         break;
                     },
-                    
+
                     event = backend_handle.event_receiver.recv() => {
                         match event {
                             Some(event) => {
                                 let event: ExecutorEvent = event;
-                                
+
                                 match &event {
                                     ExecutorEvent::Message { topic, data } => {
                                         log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
@@ -182,10 +197,10 @@ impl TaskSpawner {
                                     },
                                     ExecutorEvent::Exit { exit_code } => {
                                         log::info!("Exit event for task {} with exit code: {}", task_id, exit_code);
-                                        
+
                                         let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(task_id.clone()).await;
                                         log::info!("Task {} exited, removed {} topic subscriptions", task_id, removed_topics.len());
-                                        
+
                                         if let Some(_removed_task) = task_executor.unregister_task_by_task_id(&task_id).await {
                                             log::info!("Removed task with TaskId={} (Human name index updated)", task_id);
                                         } else {
@@ -200,7 +215,7 @@ impl TaskSpawner {
                             }
                         }
                     },
-                    
+
                     topic_data = topic_data_receiver.recv() => {
                         match topic_data {
                             Some(topic_data) => {
@@ -226,7 +241,7 @@ impl TaskSpawner {
                             }
                         }
                     },
-                    
+
                     return_message = return_message_receiver.recv() => {
                         match return_message {
                             Some(message) => {
@@ -247,7 +262,7 @@ impl TaskSpawner {
                             }
                         }
                     },
-                    
+
                     system_response = system_response_receiver.recv() => {
                         match system_response {
                             Some(SystemResponseEvent::SystemResponse { topic, status, data }) => {
@@ -282,7 +297,7 @@ impl TaskSpawner {
                     }
                 }
             }
-            
+
             log::info!("Task {} completed", task_id);
         });
 
@@ -319,30 +334,40 @@ impl TaskExecutor {
         let mut name_to_id = self.name_to_id.write().await;
         let mut id_to_name = self.id_to_name.write().await;
         let task_id = task.task_id.clone();
-        
+
         running_tasks.insert(task_id.clone(), task);
-        name_to_id.entry(task_name.clone()).or_insert_with(Vec::new).push(task_id.clone());
+        name_to_id
+            .entry(task_name.clone())
+            .or_insert_with(Vec::new)
+            .push(task_id.clone());
         id_to_name.insert(task_id, task_name.clone());
-        
+
         // "system."で始まらないタスクは自動的に監視対象に追加
         if !task_name.starts_with("system.") {
             let mut monitored = self.monitored_task_names.write().await;
             monitored.insert(task_name);
         }
-        
+
         Ok(())
     }
 
-    pub async fn try_register_task(&self, task_name: String, task: RunningTask) -> Result<(), String> {
+    pub async fn try_register_task(
+        &self,
+        task_name: String,
+        task: RunningTask,
+    ) -> Result<(), String> {
         let name_to_id = self.name_to_id.read().await;
         if let Some(ids) = name_to_id.get(&task_name) {
             if !ids.is_empty() {
-                log::warn!("Task '{}' is already running - cancelling new task start", task_name);
+                log::warn!(
+                    "Task '{}' is already running - cancelling new task start",
+                    task_name
+                );
                 return Err(format!("Task '{}' is already running", task_name));
             }
         }
         drop(name_to_id);
-        
+
         self.register_task(task_name, task).await
     }
 
@@ -353,7 +378,7 @@ impl TaskExecutor {
         if let Some(task) = running_tasks.remove(task_id) {
             // タスク名を取得
             let task_name = id_to_name.get(task_id).cloned();
-            
+
             // Vecから該当のtask_idを削除
             for ids in name_to_id.values_mut() {
                 ids.retain(|id| id != task_id);
@@ -361,7 +386,7 @@ impl TaskExecutor {
             // 空になったVecのエントリを削除
             name_to_id.retain(|_name, ids| !ids.is_empty());
             id_to_name.remove(task_id);
-            
+
             // 監視対象タスクの終了をチェック
             if let Some(name) = task_name {
                 let mut monitored = self.monitored_task_names.write().await;
@@ -375,7 +400,7 @@ impl TaskExecutor {
                     }
                 }
             }
-            
+
             Some(task)
         } else {
             None
@@ -384,7 +409,8 @@ impl TaskExecutor {
     pub async fn unregister_task_by_name(&self, task_name: &str) -> Option<RunningTask> {
         let id = {
             let name_to_id = self.name_to_id.read().await;
-            name_to_id.get(task_name)
+            name_to_id
+                .get(task_name)
                 .and_then(|ids| ids.last())
                 .cloned()
         };
@@ -402,7 +428,10 @@ impl TaskExecutor {
         };
         match running_task {
             Some(task) => {
-                log::info!("Stopped task with TaskId={} (Human name index updated)", task_id);
+                log::info!(
+                    "Stopped task with TaskId={} (Human name index updated)",
+                    task_id
+                );
                 let mut name_to_id = self.name_to_id.write().await;
                 let mut id_to_name = self.id_to_name.write().await;
                 // Vecから該当のtask_idを削除
@@ -414,7 +443,7 @@ impl TaskExecutor {
                 id_to_name.remove(task_id);
                 task.task_handle.abort();
                 Ok(())
-            },
+            }
             None => {
                 log::warn!("Attempted to stop non-running task TaskId={}", task_id);
                 Err(anyhow::anyhow!("TaskId '{}' is not running", task_id))
@@ -424,14 +453,17 @@ impl TaskExecutor {
 
     pub async fn get_running_tasks_info(&self) -> Vec<(String, TaskId)> {
         let name_to_id = self.name_to_id.read().await;
-        name_to_id.iter()
+        name_to_id
+            .iter()
             .filter_map(|(name, ids)| ids.last().map(|task_id| (name.clone(), task_id.clone())))
             .collect()
     }
 
     pub async fn get_view_flags_by_task_id(&self, task_id: &TaskId) -> Option<(bool, bool)> {
         let running_tasks_guard = self.running_tasks.read().await;
-        running_tasks_guard.get(task_id).map(|t| (t.view_stdout, t.view_stderr))
+        running_tasks_guard
+            .get(task_id)
+            .map(|t| (t.view_stdout, t.view_stderr))
     }
 
     pub async fn get_task_name_by_id(&self, task_id: &TaskId) -> Option<String> {
@@ -461,36 +493,47 @@ impl TaskExecutor {
         }
     }
 
-    pub async fn start_task_from_config(
-        &self,
-        context: StartContext,
-    ) -> Result<()> {
+    pub async fn start_task_from_config(&self, context: StartContext) -> Result<()> {
         let task_config = &context.task_config;
         log::info!("Starting task '{}'", task_config.name);
-        
+
         let task_id_new = TaskId::new();
-        
+
         // ProtocolBackendへの変換（バリデーションも含む）
         let backend: ProtocolBackend = ProtocolBackend::try_from(task_config.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to create protocol backend for task '{}': {}", task_config.name, e))
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to create protocol backend for task '{}': {}",
+                    task_config.name,
+                    e
+                )
+            })
             .unwrap_or_else(|e| {
-                eprintln!("Config validation failed for task '{}': {}", task_config.name, e);
+                eprintln!(
+                    "Config validation failed for task '{}': {}",
+                    task_config.name, e
+                );
                 eprintln!("\nError details:");
                 for (i, cause) in e.chain().enumerate() {
                     eprintln!("  {}: {}", i, cause);
                 }
                 std::process::exit(1);
             });
-        
+
         // コマンドの存在確認（MiclowStdinプロトコルの場合のみ）
         if let ProtocolBackend::MiclowStdin(ref config) = backend {
-            if !std::path::Path::new(&config.command).exists() && !which::which(&config.command).is_ok() {
-                return Err(anyhow::anyhow!("Command '{}' not found in PATH or file system", config.command));
+            if !std::path::Path::new(&config.command).exists()
+                && !which::which(&config.command).is_ok()
+            {
+                return Err(anyhow::anyhow!(
+                    "Command '{}' not found in PATH or file system",
+                    config.command
+                ));
             }
         }
-        
+
         let subscribe_topics = task_config.subscribe_topics.clone();
-        
+
         let task_spawner = TaskSpawner::new(
             task_id_new.clone(),
             context.topic_manager,
@@ -499,22 +542,24 @@ impl TaskExecutor {
             task_config.name.clone(),
             context.userlog_sender,
         );
-        
-        let spawn_result = task_spawner.spawn_backend(
-            backend.clone(),
-            context.shutdown_token,
-            subscribe_topics,
-            context.return_message_sender.clone(),
-        ).await;
-        
+
+        let spawn_result = task_spawner
+            .spawn_backend(
+                backend.clone(),
+                context.shutdown_token,
+                subscribe_topics,
+                context.return_message_sender.clone(),
+            )
+            .await;
+
         // view_stdoutとview_stderrをProtocolBackendから取得
         let (view_stdout, view_stderr) = match &backend {
             ProtocolBackend::MiclowStdin(config) => (config.view_stdout, config.view_stderr),
             ProtocolBackend::Interactive(_) => (false, false), // Interactiveプロトコルでは使用しない
-            ProtocolBackend::McpServer(_) => (false, false), // McpServerプロトコルでは使用しない
-            // あまり気持ちの良い設計じゃない可能性がある
+            ProtocolBackend::McpServer(_) => (false, false),   // McpServerプロトコルでは使用しない
+                                                                // あまり気持ちの良い設計じゃない可能性がある
         };
-        
+
         let running_task = RunningTask {
             task_id: task_id_new.clone(),
             shutdown_sender: spawn_result.shutdown_sender.clone(),
@@ -528,44 +573,80 @@ impl TaskExecutor {
         // Send FunctionMessage even if initial_input is None (for functions called without arguments)
         if context.return_message_sender.is_some() {
             let input_sender_for_initial = spawn_result.input_sender.clone();
-            let initial_input_for_log = context.initial_input.clone().unwrap_or_else(|| "".to_string());
-            let caller_name = context.caller_task_name.clone().unwrap_or_else(|| "unknown".to_string());
+            let initial_input_for_log = context
+                .initial_input
+                .clone()
+                .unwrap_or_else(|| "".to_string());
             let task_id_for_log = task_id_new.clone();
             tokio::task::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                
+
                 let function_msg = FunctionMessage {
                     message_id: MessageId::new(),
-                    task_name: caller_name.clone(),
                     data: initial_input_for_log.clone(),
                 };
-                
-                if let Err(e) = input_sender_for_initial.send(InputDataMessage::Function(function_msg)) {
-                    log::warn!("Failed to send function message to task {}: {}", task_id_for_log, e);
+
+                if let Err(e) =
+                    input_sender_for_initial.send(InputDataMessage::Function(function_msg))
+                {
+                    log::warn!(
+                        "Failed to send function message to task {}: {}",
+                        task_id_for_log,
+                        e
+                    );
                 }
-                
-                log::info!("Sent function message to {}: caller='{}', data='{}'", task_id_for_log, caller_name, initial_input_for_log);
+
+                log::info!(
+                    "Sent function message to {} with data='{}'",
+                    task_id_for_log,
+                    initial_input_for_log
+                );
             });
         }
-        
+
         // Register task based on allow_duplicate flag
         if task_config.allow_duplicate {
-            if let Err(e) = self.register_task(task_config.name.clone(), running_task).await {
-                return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
+            if let Err(e) = self
+                .register_task(task_config.name.clone(), running_task)
+                .await
+            {
+                return Err(anyhow::anyhow!(
+                    "Failed to register task '{}': {}",
+                    task_config.name,
+                    e
+                ));
             }
-            log::debug!("Registered task '{}' (ID: {}) - duplicate instances allowed", task_config.name, task_id_new);
+            log::debug!(
+                "Registered task '{}' (ID: {}) - duplicate instances allowed",
+                task_config.name,
+                task_id_new
+            );
         } else {
-            if let Err(e) = self.try_register_task(task_config.name.clone(), running_task).await {
-                return Err(anyhow::anyhow!("Failed to register task '{}': {}", task_config.name, e));
+            if let Err(e) = self
+                .try_register_task(task_config.name.clone(), running_task)
+                .await
+            {
+                return Err(anyhow::anyhow!(
+                    "Failed to register task '{}': {}",
+                    task_config.name,
+                    e
+                ));
             }
-            log::debug!("Registered task '{}' (ID: {}) - duplicate instances not allowed", task_config.name, task_id_new);
+            log::debug!(
+                "Registered task '{}' (ID: {}) - duplicate instances not allowed",
+                task_config.name,
+                task_id_new
+            );
         }
-        
-        log::info!("Successfully started task '{}' (ID: {})", task_config.name, task_id_new);
+
+        log::info!(
+            "Successfully started task '{}' (ID: {})",
+            task_config.name,
+            task_id_new
+        );
         Ok(())
     }
 }
-
 
 pub struct MiclowSystem {
     pub config: SystemConfig,
@@ -580,7 +661,8 @@ impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
         let topic_manager: TopicBroker = TopicBroker::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
-        let system_control_manager: SystemControlQueue = SystemControlQueue::new(shutdown_token.clone());
+        let system_control_manager: SystemControlQueue =
+            SystemControlQueue::new(shutdown_token.clone());
         let task_executor: TaskExecutor = TaskExecutor::new(shutdown_token.clone());
         Self {
             config,
@@ -614,13 +696,12 @@ impl MiclowSystem {
                 userlog_sender.clone(),
                 None,
                 None,
-                None,
             );
 
             match task_executor.start_task_from_config(ready_context).await {
                 Ok(_) => {
                     log::info!("Started user task '{}'", task_name);
-                },
+                }
                 Err(e) => {
                     log::error!("Failed to start task '{}': {}", task_name, e);
                     continue;
@@ -635,9 +716,7 @@ impl MiclowSystem {
         }
     }
 
-    pub async fn start_system(
-        mut self,
-    ) -> Result<()> {
+    pub async fn start_system(mut self) -> Result<()> {
         let topic_manager: TopicBroker = self.topic_manager.clone();
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
@@ -652,10 +731,12 @@ impl MiclowSystem {
         let (userlog_tx, userlog_rx) = mpsc::unbounded_channel::<UserLogEvent>();
         let userlog_sender = UserLogSender::new(userlog_tx);
         let (userlog_ready_tx, userlog_ready_rx) = tokio::sync::oneshot::channel();
-        let h_userlog = spawn_user_log_aggregator(userlog_rx, logging_shutdown.clone(), Some(userlog_ready_tx));
+        let h_userlog =
+            spawn_user_log_aggregator(userlog_rx, logging_shutdown.clone(), Some(userlog_ready_tx));
         // ユーザーログタスクの起動を待機
         let _ = userlog_ready_rx.await;
-        self.background_tasks.register("user_log_aggregator", h_userlog);
+        self.background_tasks
+            .register("user_log_aggregator", h_userlog);
 
         let h_sys = crate::system_control::start_system_control_worker(
             self.system_control_manager.clone(),
@@ -665,7 +746,8 @@ impl MiclowSystem {
             self.shutdown_token.clone(),
             userlog_sender.clone(),
         );
-        self.background_tasks.register("system_control_worker", h_sys);
+        self.background_tasks
+            .register("system_control_worker", h_sys);
 
         Self::start_user_tasks(
             &self.config,
@@ -674,12 +756,13 @@ impl MiclowSystem {
             self.system_control_manager.clone(),
             self.shutdown_token.clone(),
             userlog_sender.clone(),
-        ).await;
-        
+        )
+        .await;
+
         log::info!("System running. Press Ctrl+C to stop.");
-        
+
         let shutdown_token = self.shutdown_token.clone();
-        
+
         let ctrlc_fut = async {
             if let Err(e) = tokio::signal::ctrl_c().await {
                 log::error!("Ctrl+C signal error: {}", e);
@@ -703,10 +786,7 @@ impl MiclowSystem {
         logging_shutdown.cancel();
         self.background_tasks.abort_all().await;
 
-        Self::shutdown_workers(
-            self.task_executor,
-            self.shutdown_token,
-        ).await;
+        Self::shutdown_workers(self.task_executor, self.shutdown_token).await;
 
         log::logger().flush();
 
@@ -714,17 +794,16 @@ impl MiclowSystem {
         return Ok(());
     }
 
-    async fn shutdown_workers(
-        task_executor: TaskExecutor,
-        shutdown_token: CancellationToken,
-    ) {
+    async fn shutdown_workers(task_executor: TaskExecutor, shutdown_token: CancellationToken) {
         log::info!("Starting graceful shutdown...");
 
         log::info!("Cancelling shutdown token");
         shutdown_token.cancel();
 
         log::info!("Waiting for running tasks to finish...");
-        task_executor.graceful_shutdown_all(std::time::Duration::from_secs(5)).await;
+        task_executor
+            .graceful_shutdown_all(std::time::Duration::from_secs(5))
+            .await;
 
         log::info!("All user tasks stopped");
     }

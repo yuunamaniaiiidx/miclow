@@ -1,8 +1,7 @@
-pub mod queue;
 pub mod action;
+pub mod queue;
 pub mod worker;
 
-pub use queue::{SystemControlQueue, SystemControlMessage};
-pub use action::{SystemControlAction, system_control_action_from_event};
+pub use action::{system_control_action_from_event, SystemControlAction};
+pub use queue::{SystemControlMessage, SystemControlQueue};
 pub use worker::start_system_control_worker;
-
