@@ -417,10 +417,7 @@ impl SystemConfig {
                 return Err(anyhow::anyhow!("Task '{}' has empty protocol", task.name));
             }
 
-            if matches!(
-                task.protocol.as_str(),
-                "McpServerStdIO" | "McpServerTcp"
-            ) {
+            if matches!(task.protocol.as_str(), "McpServerStdIO" | "McpServerTcp") {
                 return Err(anyhow::anyhow!(
                     "Task '{}' uses '{}' protocol, but MCP server definitions must be placed under [[functions]]",
                     task.name,

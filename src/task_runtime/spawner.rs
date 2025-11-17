@@ -6,7 +6,7 @@ use crate::channels::{
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, SystemResponseEvent};
-use crate::system_control::{system_control_action_from_event, SystemControlQueue};
+use crate::system_control::SystemControlQueue;
 use crate::task_id::TaskId;
 use crate::topic_broker::TopicBroker;
 use tokio_util::sync::CancellationToken;
@@ -134,22 +134,18 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorOutputEvent::SystemControl { .. } => {
-                                        if let Some(system_control_action) = system_control_action_from_event(&event) {
-                                            log::info!("SystemControl detected from task {}", task_id);
-                                            if let Err(e) = system_control_manager.send_system_control_action(
-                                                system_control_action,
-                                                task_id.clone(),
-                                                backend_handle.system_response_sender.clone(),
-                                                topic_data_channel.sender.clone(),
-                                                return_message_channel.sender.clone()
-                                            ).await {
-                                                log::warn!("Failed to send system control action to worker (task {}): {}", task_id, e);
-                                            } else {
-                                                log::info!("Sent system control action to worker for task {}", task_id);
-                                            }
+                                    ExecutorOutputEvent::SystemControl { action } => {
+                                        log::info!("SystemControl detected from task {}", task_id);
+                                        if let Err(e) = system_control_manager.send_system_control_action(
+                                            action.clone(),
+                                            task_id.clone(),
+                                            backend_handle.system_response_sender.clone(),
+                                            topic_data_channel.sender.clone(),
+                                            return_message_channel.sender.clone()
+                                        ).await {
+                                            log::warn!("Failed to send system control action to worker (task {}): {}", task_id, e);
                                         } else {
-                                            log::warn!("Failed to convert SystemControl event to action for task {}", task_id);
+                                            log::info!("Sent system control action to worker for task {}", task_id);
                                         }
                                     },
                                     ExecutorOutputEvent::ReturnMessage { data } => {

@@ -1,9 +1,11 @@
+use crate::system_control::SystemControlAction;
+
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
     Message { topic: String, data: String },
     TaskStdout { data: String },
     TaskStderr { data: String },
-    SystemControl { key: String, data: String },
+    SystemControl { action: SystemControlAction },
     ReturnMessage { data: String },
     FunctionResponse { function_name: String, data: String },
     Error { error: String },
@@ -31,8 +33,8 @@ impl ExecutorOutputEvent {
         Self::TaskStderr { data }
     }
 
-    pub fn new_system_control(key: String, data: String) -> Self {
-        Self::SystemControl { key, data }
+    pub fn new_system_control(action: SystemControlAction) -> Self {
+        Self::SystemControl { action }
     }
 
     pub fn new_return_message(data: String) -> Self {

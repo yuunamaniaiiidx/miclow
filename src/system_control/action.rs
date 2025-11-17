@@ -2,13 +2,40 @@ use crate::channels::ExecutorOutputEventSender;
 use crate::channels::SystemResponseSender;
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
-use crate::messages::ExecutorOutputEvent;
-use crate::messages::{SystemResponseEvent, SystemResponseStatus};
+use crate::messages::{ExecutorOutputEvent, SystemResponseEvent, SystemResponseStatus};
 use crate::system_control::queue::SystemControlQueue;
 use crate::task_id::TaskId;
 use crate::task_runtime::{ParentInvocationContext, StartContext, TaskExecutor};
 use crate::topic_broker::TopicBroker;
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+
+#[derive(Serialize)]
+struct StatusResponse {
+    tasks: Vec<StatusTaskInfo>,
+    topics: Vec<StatusTopicInfo>,
+    functions: Vec<StatusFunctionInfo>,
+}
+
+#[derive(Serialize)]
+struct StatusTaskInfo {
+    name: String,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct StatusTopicInfo {
+    name: String,
+    subscribers: usize,
+}
+
+#[derive(Serialize)]
+struct StatusFunctionInfo {
+    name: String,
+    protocol: String,
+    allow_duplicate: bool,
+    auto_start: bool,
+}
 
 #[derive(Debug, Clone)]
 pub enum SystemControlAction {
@@ -111,35 +138,53 @@ impl SystemControlAction {
 
                 let tasks_info = task_executor.get_running_tasks_info().await;
                 let topics_info = topic_manager.get_topics_info().await;
+                let mut functions_info: Vec<StatusFunctionInfo> = system_config
+                    .functions
+                    .iter()
+                    .map(|(name, config)| StatusFunctionInfo {
+                        name: name.clone(),
+                        protocol: config.protocol.clone(),
+                        allow_duplicate: config.allow_duplicate,
+                        auto_start: config.auto_start,
+                    })
+                    .collect();
 
-                let mut json_response = String::from("{\n");
-                json_response.push_str("  \"tasks\": [\n");
+                functions_info.sort_by(|a, b| a.name.cmp(&b.name));
 
-                for (i, (task_name, task_id)) in tasks_info.iter().enumerate() {
-                    if i > 0 {
-                        json_response.push_str(",\n");
+                let status_payload = StatusResponse {
+                    tasks: tasks_info
+                        .into_iter()
+                        .map(|(task_name, task_id)| StatusTaskInfo {
+                            name: task_name,
+                            id: task_id.to_string(),
+                        })
+                        .collect(),
+                    topics: topics_info
+                        .into_iter()
+                        .map(|(topic_name, subscriber_count)| StatusTopicInfo {
+                            name: topic_name,
+                            subscribers: subscriber_count,
+                        })
+                        .collect(),
+                    functions: functions_info,
+                };
+
+                let json_response = match serde_json::to_string_pretty(&status_payload)
+                    .map_err(|e| e.to_string())
+                {
+                    Ok(json) => json,
+                    Err(err) => {
+                        log::error!("Failed to serialize status response: {}", err);
+                        let status = SystemResponseStatus::Error;
+                        let error_event = SystemResponseEvent::new_system_error(
+                            "system.status".to_string(),
+                            status.to_string(),
+                            format!("Failed to serialize status response: {}", err),
+                        );
+                        let _ = response_channel.send(error_event);
+                        return Err(err);
                     }
-                    json_response.push_str(&format!(
-                        "    {{\"name\": \"{}\", \"id\": \"{}\"}}",
-                        task_name, task_id
-                    ));
-                }
-
-                json_response.push_str("\n  ],\n");
-                json_response.push_str("  \"topics\": [\n");
-
-                for (i, (topic_name, subscriber_count)) in topics_info.iter().enumerate() {
-                    if i > 0 {
-                        json_response.push_str(",\n");
-                    }
-                    json_response.push_str(&format!(
-                        "    {{\"name\": \"{}\", \"subscribers\": {}}}",
-                        topic_name, subscriber_count
-                    ));
-                }
-
-                json_response.push_str("\n  ]\n");
-                json_response.push_str("}");
+                };
 
                 let status = SystemResponseStatus::Success;
                 let status_event = SystemResponseEvent::new_system_response(
@@ -287,55 +332,4 @@ impl SystemControlAction {
             }
         }
     }
-}
-
-pub fn system_control_action_from_event(
-    event: &ExecutorOutputEvent,
-) -> Option<SystemControlAction> {
-    let ExecutorOutputEvent::SystemControl { key, data } = event else {
-        return None;
-    };
-
-    let key_lower = key.to_lowercase();
-    let data_trimmed = data.trim();
-
-    let action = match key_lower.as_str() {
-        "system.subscribe-topic" => SystemControlAction::SubscribeTopic {
-            topic: data_trimmed.to_string(),
-        },
-        "system.unsubscribe-topic" => SystemControlAction::UnsubscribeTopic {
-            topic: data_trimmed.to_string(),
-        },
-        "system.status" => SystemControlAction::Status,
-        "system.get-latest-message" => {
-            if data_trimmed.is_empty() {
-                return None;
-            }
-            SystemControlAction::GetLatestMessage {
-                topic: data_trimmed.to_string(),
-            }
-        }
-        _ if key_lower.starts_with("system.function.") => {
-            let function_name = key_lower.strip_prefix("system.function.").unwrap_or("");
-            if function_name.is_empty() {
-                return None;
-            }
-            let initial_input = if data_trimmed.is_empty() {
-                None
-            } else {
-                Some(data_trimmed.to_string())
-            };
-            SystemControlAction::CallFunction {
-                task_name: function_name.to_string(),
-                initial_input,
-            }
-        }
-        _ if key_lower.starts_with("system.") => SystemControlAction::Unknown {
-            command: key_lower.clone(),
-            data: data_trimmed.to_string(),
-        },
-        _ => return None,
-    };
-
-    Some(action)
 }

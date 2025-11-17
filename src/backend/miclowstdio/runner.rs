@@ -6,6 +6,7 @@ use crate::channels::{
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::config::TaskConfig;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
+use crate::system_control::SystemControlAction;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use std::collections::HashMap;
@@ -233,10 +234,42 @@ pub fn parse_system_control_command_from_outcome(
             data_trimmed.to_string()
         };
 
-        return Some(ExecutorOutputEvent::new_system_control(
-            actual_topic,
-            actual_data,
-        ));
+        // Convert string-based command to SystemControlAction
+        let action = match actual_topic.as_str() {
+            "system.subscribe-topic" => SystemControlAction::SubscribeTopic { topic: actual_data },
+            "system.unsubscribe-topic" => {
+                SystemControlAction::UnsubscribeTopic { topic: actual_data }
+            }
+            "system.status" => SystemControlAction::Status,
+            "system.get-latest-message" => {
+                if actual_data.is_empty() {
+                    return None;
+                }
+                SystemControlAction::GetLatestMessage { topic: actual_data }
+            }
+            _ if actual_topic.starts_with("system.function.") => {
+                let function_name = actual_topic.strip_prefix("system.function.").unwrap_or("");
+                if function_name.is_empty() {
+                    return None;
+                }
+                let initial_input = if actual_data.is_empty() {
+                    None
+                } else {
+                    Some(actual_data)
+                };
+                SystemControlAction::CallFunction {
+                    task_name: function_name.to_string(),
+                    initial_input,
+                }
+            }
+            _ if actual_topic.starts_with("system.") => SystemControlAction::Unknown {
+                command: actual_topic,
+                data: actual_data,
+            },
+            _ => return None,
+        };
+
+        return Some(ExecutorOutputEvent::new_system_control(action));
     }
 
     None
