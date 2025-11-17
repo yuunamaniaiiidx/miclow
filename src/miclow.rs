@@ -138,25 +138,21 @@ impl MiclowSystem {
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         self.background_tasks.abort_all().await;
 
-        Self::shutdown_workers(self.task_executor, self.shutdown_token).await;
-
-        log::logger().flush();
-
-        log::info!("Graceful shutdown completed");
-        return Ok(());
-    }
-
-    async fn shutdown_workers(task_executor: TaskExecutor, shutdown_token: CancellationToken) {
         log::info!("Starting graceful shutdown...");
 
         log::info!("Cancelling shutdown token");
         shutdown_token.cancel();
 
         log::info!("Waiting for running tasks to finish...");
-        task_executor
+        self.task_executor
             .graceful_shutdown_all(std::time::Duration::from_secs(5))
             .await;
 
         log::info!("All user tasks stopped");
+
+        log::logger().flush();
+
+        log::info!("Graceful shutdown completed");
+        return Ok(());
     }
 }
