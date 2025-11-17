@@ -1,6 +1,6 @@
 use crate::backend::{TaskBackend, TaskBackendHandle};
 use crate::config::TaskConfig;
-use crate::protocol::{self, InteractiveConfig, McpServerConfig, MiclowStdinConfig};
+use crate::backend::protocol::{self, InteractiveConfig, McpServerConfig, MiclowStdinConfig};
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use async_trait::async_trait;

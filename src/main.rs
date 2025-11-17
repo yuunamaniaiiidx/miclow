@@ -6,7 +6,6 @@ mod logging;
 mod message_id;
 mod messages;
 mod miclow;
-mod protocol;
 mod running_task;
 mod start_context;
 mod system_control;

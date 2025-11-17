@@ -1,5 +1,4 @@
-use crate::backend::SpawnBackendResult;
-use crate::backend::TaskBackend;
+use crate::backend::{ProtocolBackend, SpawnBackendResult, TaskBackend};
 use crate::background_worker_registry::BackgroundWorkerRegistry;
 use crate::channels::InputChannel;
 use crate::channels::{ExecutorEventChannel, ExecutorEventSender};
@@ -15,7 +14,6 @@ use crate::messages::SystemResponseEvent;
 use crate::messages::{
     FunctionMessage, InputDataMessage, ReturnMessage, SystemResponseMessage, TopicMessage,
 };
-use crate::protocol::ProtocolBackend;
 use crate::running_task::RunningTask;
 use crate::start_context::StartContext;
 use crate::system_control::system_control_action_from_event;
