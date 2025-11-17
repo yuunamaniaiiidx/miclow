@@ -217,7 +217,7 @@ impl TaskExecutor {
                 std::process::exit(1);
             });
 
-        if let ProtocolBackend::MiclowStdin(ref config) = backend {
+        if let ProtocolBackend::MiclowStdIO(ref config) = backend {
             if !Path::new(&config.command).exists() && !which::which(&config.command).is_ok() {
                 return Err(anyhow::anyhow!(
                     "Command '{}' not found in PATH or file system",

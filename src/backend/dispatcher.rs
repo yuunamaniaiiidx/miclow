@@ -3,7 +3,7 @@ use crate::backend::interactive::{
 };
 use crate::backend::mcp::{spawn_mcp_protocol, try_mcp_server_from_task_config, McpServerConfig};
 use crate::backend::miclowstdio::{
-    spawn_miclow_protocol, try_miclow_stdin_from_task_config, MiclowStdinConfig,
+    spawn_miclow_stdio_protocol, try_miclow_stdio_from_task_config, MiclowStdIOConfig,
 };
 use crate::backend::{TaskBackend, TaskBackendHandle};
 use crate::config::TaskConfig;
@@ -14,7 +14,7 @@ use std::convert::TryFrom;
 
 #[derive(Clone)]
 pub enum ProtocolBackend {
-    MiclowStdin(MiclowStdinConfig),
+    MiclowStdIO(MiclowStdIOConfig),
     Interactive(InteractiveConfig),
     McpServer(McpServerConfig),
 }
@@ -33,9 +33,9 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
         }
 
         match protocol {
-            "MiclowStdin" => {
-                let config = try_miclow_stdin_from_task_config(&config)?;
-                Ok(ProtocolBackend::MiclowStdin(config))
+            "MiclowStdIO" => {
+                let config = try_miclow_stdio_from_task_config(&config)?;
+                Ok(ProtocolBackend::MiclowStdIO(config))
             }
             "Interactive" => {
                 let config = try_interactive_from_task_config(&config)?;
@@ -46,7 +46,7 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
                 Ok(ProtocolBackend::McpServer(config))
             }
             _ => {
-                Err(anyhow::anyhow!("Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdin, Interactive, McpServer", protocol, config.name))
+                Err(anyhow::anyhow!("Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdIO, Interactive, McpServer", protocol, config.name))
             }
         }
     }
@@ -56,7 +56,9 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
 impl TaskBackend for ProtocolBackend {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         match self {
-            ProtocolBackend::MiclowStdin(config) => spawn_miclow_protocol(config, task_id).await,
+            ProtocolBackend::MiclowStdIO(config) => {
+                spawn_miclow_stdio_protocol(config, task_id).await
+            }
             ProtocolBackend::Interactive(config) => {
                 spawn_interactive_protocol(config, task_id).await
             }

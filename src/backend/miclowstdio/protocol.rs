@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use toml::Value as TomlValue;
 
 #[derive(Clone)]
-pub struct MiclowStdinConfig {
+pub struct MiclowStdIOConfig {
     pub command: String,
     pub args: Vec<String>,
     pub working_directory: Option<String>,
@@ -32,20 +32,20 @@ use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
 
-pub trait StdinProtocol: Send + Sync {
+pub trait StdIOProtocol: Send + Sync {
     fn to_input_lines(&self) -> Vec<String> {
         let lines = self.to_input_lines_raw();
 
         if lines.len() < 2 {
             panic!(
-                "StdinProtocol validation failed: must have at least 2 lines, got {}",
+                "StdIOProtocol validation failed: must have at least 2 lines, got {}",
                 lines.len()
             );
         }
 
         let line_count: usize = lines[1].parse().unwrap_or_else(|_| {
             panic!(
-                "StdinProtocol validation failed: line 2 must be a number, got '{}'",
+                "StdIOProtocol validation failed: line 2 must be a number, got '{}'",
                 lines[1]
             );
         });
@@ -53,7 +53,7 @@ pub trait StdinProtocol: Send + Sync {
         let data_line_count = lines.len() - 2;
         if data_line_count != line_count {
             panic!(
-                "StdinProtocol validation failed: expected {} data lines (from line 2), but got {} (total lines: {})",
+                "StdIOProtocol validation failed: expected {} data lines (from line 2), but got {} (total lines: {})",
                 line_count, data_line_count, lines.len()
             );
         }
@@ -64,7 +64,7 @@ pub trait StdinProtocol: Send + Sync {
     fn to_input_lines_raw(&self) -> Vec<String>;
 }
 
-impl StdinProtocol for ExecutorInputEvent {
+impl StdIOProtocol for ExecutorInputEvent {
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self {
             ExecutorInputEvent::Topic { topic, data, .. } => {
@@ -103,20 +103,20 @@ impl StdinProtocol for ExecutorInputEvent {
     }
 }
 
-pub fn try_miclow_stdin_from_task_config(
+pub fn try_miclow_stdio_from_task_config(
     config: &TaskConfig,
-) -> Result<MiclowStdinConfig, anyhow::Error> {
+) -> Result<MiclowStdIOConfig, anyhow::Error> {
     // プロトコル固有のフィールドを抽出・バリデーション
     let command: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
-            "Command field is required for MiclowStdin in task '{}'",
+            "Command field is required for MiclowStdIO in task '{}'",
             config.name
         )
     })?;
 
     if command.is_empty() {
         return Err(anyhow::anyhow!(
-            "Command field is required for MiclowStdin in task '{}'",
+            "Command field is required for MiclowStdIO in task '{}'",
             config.name
         ));
     }
@@ -180,7 +180,7 @@ pub fn try_miclow_stdin_from_task_config(
         }
     }
 
-    Ok(MiclowStdinConfig {
+    Ok(MiclowStdIOConfig {
         command,
         args,
         working_directory,
@@ -255,8 +255,8 @@ pub fn parse_return_message_from_outcome(topic: &str, data: &str) -> Option<Exec
     None
 }
 
-pub async fn spawn_miclow_protocol(
-    config: &MiclowStdinConfig,
+pub async fn spawn_miclow_stdio_protocol(
+    config: &MiclowStdIOConfig,
     task_id: TaskId,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();

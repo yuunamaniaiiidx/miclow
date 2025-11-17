@@ -630,7 +630,7 @@ mod tests {
             &include_file,
             r#"
 [[functions]]
-protocol = "MiclowStdin"
+protocol = "MiclowStdIO"
 task_name = "test_function"
 command = "echo"
 args = ["test"]
@@ -647,7 +647,7 @@ args = ["test"]
 include_paths = ["include.toml"]
 
 [[tasks]]
-protocol = "MiclowStdin"
+protocol = "MiclowStdIO"
 task_name = "main_task"
 command = "echo"
 args = ["main"]
