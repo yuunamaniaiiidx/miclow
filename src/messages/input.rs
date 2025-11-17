@@ -16,12 +16,6 @@ pub struct SystemResponseMessage {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReturnMessage {
-    pub message_id: MessageId,
-    pub data: String,
-}
-
-#[derive(Clone, Debug)]
 pub struct FunctionMessage {
     pub message_id: MessageId,
     pub data: String,
@@ -38,7 +32,6 @@ pub struct FunctionResponseMessage {
 pub enum InputDataMessage {
     Topic(TopicMessage),
     SystemResponse(SystemResponseMessage),
-    Return(ReturnMessage),
     Function(FunctionMessage),
     FunctionResponse(FunctionResponseMessage),
 }

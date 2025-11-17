@@ -5,8 +5,8 @@ use crate::channels::{InputChannel, InputReceiver, ShutdownChannel, SystemRespon
 use crate::config::TaskConfig;
 use crate::messages::ExecutorEvent;
 use crate::messages::{
-    FunctionMessage, FunctionResponseMessage, InputDataMessage, ReturnMessage,
-    SystemResponseMessage, TopicMessage,
+    FunctionMessage, FunctionResponseMessage, InputDataMessage, SystemResponseMessage,
+    TopicMessage,
 };
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
@@ -87,15 +87,6 @@ impl StdinProtocol for SystemResponseMessage {
     }
 }
 
-impl StdinProtocol for ReturnMessage {
-    fn to_input_lines_raw(&self) -> Vec<String> {
-        let data_lines: Vec<&str> = self.data.lines().collect();
-        let mut lines = vec!["system.return".to_string(), data_lines.len().to_string()];
-        lines.extend(data_lines.iter().map(|s| s.to_string()));
-        lines
-    }
-}
-
 impl StdinProtocol for FunctionResponseMessage {
     fn to_input_lines_raw(&self) -> Vec<String> {
         let data_lines: Vec<&str> = self.data.lines().collect();
@@ -119,7 +110,6 @@ impl StdinProtocol for InputDataMessage {
         match self {
             InputDataMessage::Topic(msg) => msg.to_input_lines_raw(),
             InputDataMessage::SystemResponse(msg) => msg.to_input_lines_raw(),
-            InputDataMessage::Return(msg) => msg.to_input_lines_raw(),
             InputDataMessage::Function(msg) => msg.to_input_lines_raw(),
             InputDataMessage::FunctionResponse(msg) => msg.to_input_lines_raw(),
         }

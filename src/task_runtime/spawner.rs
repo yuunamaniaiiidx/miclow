@@ -6,7 +6,7 @@ use crate::channels::{
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{
-    ExecutorEvent, FunctionResponseMessage, InputDataMessage, ReturnMessage, SystemResponseEvent,
+    ExecutorEvent, FunctionResponseMessage, InputDataMessage, SystemResponseEvent,
     SystemResponseMessage, TopicMessage,
 };
 use crate::system_control::{system_control_action_from_event, SystemControlQueue};
@@ -268,13 +268,14 @@ impl TaskSpawner {
                                         }
                                     }
                                     ExecutorEvent::ReturnMessage { data } => {
-                                        let return_msg = ReturnMessage {
+                                        let return_topic_msg = TopicMessage {
                                             message_id: MessageId::new(),
+                                            topic: "system.return".to_string(),
                                             data,
                                         };
                                         if let Err(e) = backend_handle
                                             .input_sender
-                                            .send(InputDataMessage::Return(return_msg))
+                                            .send(InputDataMessage::Topic(return_topic_msg))
                                         {
                                             log::warn!(
                                                 "Failed to send return message to task backend for task {}: {}",
