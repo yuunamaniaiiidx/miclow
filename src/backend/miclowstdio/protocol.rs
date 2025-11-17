@@ -1,7 +1,9 @@
 use super::buffer::{InputBufferManager, StreamOutcome};
 use crate::backend::TaskBackendHandle;
+use crate::channels::{
+    ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel,
+};
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
-use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::task_id::TaskId;
@@ -87,15 +89,13 @@ impl StdinProtocol for ExecutorInputEvent {
             }
             ExecutorInputEvent::Function { data, .. } => {
                 let data_lines: Vec<&str> = data.lines().collect();
-                let mut lines =
-                    vec!["system.function".to_string(), data_lines.len().to_string()];
+                let mut lines = vec!["system.function".to_string(), data_lines.len().to_string()];
                 lines.extend(data_lines.iter().map(|s| s.to_string()));
                 lines
             }
             ExecutorInputEvent::FunctionResponse { data, .. } => {
                 let data_lines: Vec<&str> = data.lines().collect();
-                let mut lines =
-                    vec!["system.return".to_string(), data_lines.len().to_string()];
+                let mut lines = vec!["system.return".to_string(), data_lines.len().to_string()];
                 lines.extend(data_lines.iter().map(|s| s.to_string()));
                 lines
             }
@@ -193,7 +193,10 @@ pub fn try_miclow_stdin_from_task_config(
     })
 }
 
-pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Option<ExecutorOutputEvent> {
+pub fn parse_system_control_command_from_outcome(
+    topic: &str,
+    data: &str,
+) -> Option<ExecutorOutputEvent> {
     let topic_lower = topic.to_lowercase();
     let data_trimmed = data.trim();
 
@@ -231,7 +234,10 @@ pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Opt
             data_trimmed.to_string()
         };
 
-        return Some(ExecutorOutputEvent::new_system_control(actual_topic, actual_data));
+        return Some(ExecutorOutputEvent::new_system_control(
+            actual_topic,
+            actual_data,
+        ));
     }
 
     None
@@ -242,7 +248,9 @@ pub fn parse_return_message_from_outcome(topic: &str, data: &str) -> Option<Exec
     let data_trimmed = data.trim();
 
     if topic_lower == "system.return" {
-        return Some(ExecutorOutputEvent::new_return_message(data_trimmed.to_string()));
+        return Some(ExecutorOutputEvent::new_return_message(
+            data_trimmed.to_string(),
+        ));
     }
 
     None

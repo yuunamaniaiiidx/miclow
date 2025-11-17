@@ -23,4 +23,3 @@ pub enum ExecutorInputEvent {
         data: String,
     },
 }
-

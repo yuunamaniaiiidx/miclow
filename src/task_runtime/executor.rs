@@ -242,7 +242,10 @@ impl TaskExecutor {
                 backend.clone(),
                 context.shutdown_token,
                 subscribe_topics,
-                context.return_message_sender.clone(),
+                context
+                    .parent_invocation
+                    .as_ref()
+                    .map(|parent| parent.return_channel.clone()),
             )
             .await;
 
@@ -261,9 +264,9 @@ impl TaskExecutor {
             view_stderr,
         };
 
-        if context.return_message_sender.is_some() {
+        if let Some(parent_invocation) = &context.parent_invocation {
             let input_sender_for_initial = spawn_result.input_sender.clone();
-            let initial_input_for_log = context
+            let initial_input_for_log = parent_invocation
                 .initial_input
                 .clone()
                 .unwrap_or_else(|| "".to_string());
@@ -274,8 +277,7 @@ impl TaskExecutor {
                 if let Err(e) = input_sender_for_initial.send(ExecutorInputEvent::Function {
                     message_id: MessageId::new(),
                     data: initial_input_for_log.clone(),
-                })
-                {
+                }) {
                     log::warn!(
                         "Failed to send function message to task {}: {}",
                         task_id_for_log,

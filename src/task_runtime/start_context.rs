@@ -1,10 +1,17 @@
-use crate::channels::ExecutorOutputEventSender;
 use crate::channels::UserLogSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::system_control::SystemControlQueue;
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
+
+use crate::channels::ExecutorOutputEventSender;
+
+#[derive(Clone)]
+pub struct ParentInvocationContext {
+    pub return_channel: ExecutorOutputEventSender,
+    pub initial_input: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct StartContext {
@@ -13,8 +20,7 @@ pub struct StartContext {
     pub system_control_manager: SystemControlQueue,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
-    pub return_message_sender: Option<ExecutorOutputEventSender>,
-    pub initial_input: Option<String>,
+    pub parent_invocation: Option<ParentInvocationContext>,
 }
 
 impl StartContext {
@@ -25,8 +31,7 @@ impl StartContext {
         system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
-        return_message_sender: Option<ExecutorOutputEventSender>,
-        initial_input: Option<String>,
+        parent_invocation: Option<ParentInvocationContext>,
     ) -> Self {
         Self {
             task_config,
@@ -34,8 +39,7 @@ impl StartContext {
             system_control_manager,
             shutdown_token,
             userlog_sender,
-            return_message_sender,
-            initial_input,
+            parent_invocation,
         }
     }
 
@@ -47,8 +51,7 @@ impl StartContext {
         system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
-        return_message_sender: Option<ExecutorOutputEventSender>,
-        initial_input: Option<String>,
+        parent_invocation: Option<ParentInvocationContext>,
     ) -> Result<Self> {
         let task_config = config
             .tasks
@@ -62,8 +65,7 @@ impl StartContext {
             system_control_manager,
             shutdown_token,
             userlog_sender,
-            return_message_sender,
-            initial_input,
+            parent_invocation,
         })
     }
 }

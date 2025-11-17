@@ -162,7 +162,10 @@ impl TopicBroker {
         removed_topics
     }
 
-    pub async fn get_subscribers(&self, topic: &str) -> Option<Vec<Arc<ExecutorOutputEventSender>>> {
+    pub async fn get_subscribers(
+        &self,
+        topic: &str,
+    ) -> Option<Vec<Arc<ExecutorOutputEventSender>>> {
         let subscribers = self.subscribers.read().await;
         subscribers
             .get(topic)

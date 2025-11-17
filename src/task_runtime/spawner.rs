@@ -1,7 +1,7 @@
 use crate::backend::{ProtocolBackend, SpawnBackendResult, TaskBackend};
 use crate::channels::{
-    ExecutorOutputEventChannel, ExecutorOutputEventSender, ExecutorInputEventChannel, ShutdownChannel,
-    SystemResponseChannel, UserLogSender,
+    ExecutorInputEventChannel, ExecutorOutputEventChannel, ExecutorOutputEventSender,
+    ShutdownChannel, SystemResponseChannel, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
@@ -103,7 +103,8 @@ impl TaskSpawner {
                 }
             }
 
-            let return_message_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
+            let return_message_channel: ExecutorOutputEventChannel =
+                ExecutorOutputEventChannel::new();
             let mut return_message_receiver = return_message_channel.receiver;
 
             loop {

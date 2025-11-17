@@ -1,5 +1,7 @@
 use crate::backend::TaskBackendHandle;
-use crate::channels::{ExecutorOutputEventChannel, ExecutorInputEventChannel, ShutdownChannel, SystemResponseChannel};
+use crate::channels::{
+    ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, SystemResponseChannel,
+};
 use crate::config::TaskConfig;
 use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;

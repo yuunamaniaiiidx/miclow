@@ -34,10 +34,7 @@ impl ExecutorOutputEventSender {
         self.send(ExecutorOutputEvent::new_error(error))
     }
 
-    pub fn send_exit(
-        &self,
-        code: i32,
-    ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
+    pub fn send_exit(&self, code: i32) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.send(ExecutorOutputEvent::new_exit(code))
     }
 }

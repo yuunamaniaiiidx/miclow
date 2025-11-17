@@ -1,5 +1,6 @@
 use crate::channels::{
-    ExecutorOutputEventReceiver, ExecutorOutputEventSender, ExecutorInputEventSender, ShutdownSender, SystemResponseSender,
+    ExecutorInputEventSender, ExecutorOutputEventReceiver, ExecutorOutputEventSender,
+    ShutdownSender, SystemResponseSender,
 };
 
 pub struct TaskBackendHandle {

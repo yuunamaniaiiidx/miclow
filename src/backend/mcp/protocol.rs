@@ -1,10 +1,12 @@
 use super::client::McpClient;
 use crate::backend::TaskBackendHandle;
+use crate::channels::{
+    ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel,
+};
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
-use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
-use crate::messages::ExecutorOutputEvent;
 use crate::messages::ExecutorInputEvent;
+use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use serde_json::Value as JsonValue;

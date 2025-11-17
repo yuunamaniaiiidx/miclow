@@ -6,7 +6,7 @@ use crate::messages::ExecutorOutputEvent;
 use crate::messages::{SystemResponseEvent, SystemResponseStatus};
 use crate::system_control::queue::SystemControlQueue;
 use crate::task_id::TaskId;
-use crate::task_runtime::{StartContext, TaskExecutor};
+use crate::task_runtime::{ParentInvocationContext, StartContext, TaskExecutor};
 use crate::topic_broker::TopicBroker;
 use tokio_util::sync::CancellationToken;
 
@@ -219,6 +219,11 @@ impl SystemControlAction {
                     task_name
                 );
 
+                let parent_invocation = ParentInvocationContext {
+                    return_channel: return_message_sender.clone(),
+                    initial_input: initial_input.clone(),
+                };
+
                 let ready_context = match StartContext::from_task_name(
                     task_name.clone(),
                     system_config,
@@ -226,8 +231,7 @@ impl SystemControlAction {
                     system_control_manager.clone(),
                     shutdown_token.clone(),
                     userlog_sender.clone(),
-                    Some(return_message_sender.clone()),
-                    initial_input.clone(),
+                    Some(parent_invocation),
                 ) {
                     Ok(ctx) => ctx,
                     Err(e) => {
@@ -285,7 +289,9 @@ impl SystemControlAction {
     }
 }
 
-pub fn system_control_action_from_event(event: &ExecutorOutputEvent) -> Option<SystemControlAction> {
+pub fn system_control_action_from_event(
+    event: &ExecutorOutputEvent,
+) -> Option<SystemControlAction> {
     let ExecutorOutputEvent::SystemControl { key, data } = event else {
         return None;
     };
