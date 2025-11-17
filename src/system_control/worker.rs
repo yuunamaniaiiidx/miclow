@@ -1,3 +1,4 @@
+use crate::background_worker_registry::BackgroundWorker;
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
 use crate::messages::{SystemResponseEvent, SystemResponseStatus};
@@ -5,42 +6,78 @@ use crate::system_control::queue::SystemControlQueue;
 use crate::task_id::TaskId;
 use crate::task_runtime::TaskExecutor;
 use crate::topic_broker::TopicBroker;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::task;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-pub fn start_system_control_worker(
+pub struct SystemControlWorker {
     system_control_manager: SystemControlQueue,
     topic_manager: TopicBroker,
     task_executor: TaskExecutor,
     system_config: SystemConfig,
     shutdown_token: CancellationToken,
     userlog_sender: UserLogSender,
-) -> tokio::task::JoinHandle<()> {
-    task::spawn(async move {
+}
+
+impl SystemControlWorker {
+    pub fn new(
+        system_control_manager: SystemControlQueue,
+        topic_manager: TopicBroker,
+        task_executor: TaskExecutor,
+        system_config: SystemConfig,
+        shutdown_token: CancellationToken,
+        userlog_sender: UserLogSender,
+    ) -> Self {
+        Self {
+            system_control_manager,
+            topic_manager,
+            task_executor,
+            system_config,
+            shutdown_token,
+            userlog_sender,
+        }
+    }
+}
+
+#[async_trait]
+impl BackgroundWorker for SystemControlWorker {
+    fn name(&self) -> &str {
+        "system_control_worker"
+    }
+
+    async fn run(self) {
+        let SystemControlWorker {
+            system_control_manager,
+            topic_manager,
+            task_executor,
+            system_config,
+            shutdown_token,
+            userlog_sender,
+        } = self;
+
         let running_commands: Arc<RwLock<HashMap<TaskId, JoinHandle<()>>>> =
             Arc::new(RwLock::new(HashMap::new()));
 
         loop {
             tokio::select! {
-            biased;
+                biased;
 
-            _ = shutdown_token.cancelled() => {
-                log::info!("SystemControl worker received shutdown signal, aborting all running commands");
+                _ = shutdown_token.cancelled() => {
+                    log::info!("SystemControl worker received shutdown signal, aborting all running commands");
 
-                let mut commands = running_commands.write().await;
-                for (task_id, handle) in commands.drain() {
-                    log::info!("Aborting SystemControl execution for task {}", task_id);
-                    handle.abort();
+                    let mut commands = running_commands.write().await;
+                    for (task_id, handle) in commands.drain() {
+                        log::info!("Aborting SystemControl execution for task {}", task_id);
+                        handle.abort();
+                    }
+
+                    break;
                 }
 
-                break;
-            }
-
-            maybe = async { system_control_manager.recv_command().await } => {
+                maybe = async { system_control_manager.recv_command().await } => {
                     match maybe {
                         Some(message) => {
                             let task_id: TaskId = message.task_id.clone();
@@ -147,5 +184,5 @@ pub fn start_system_control_worker(
         }
 
         log::info!("SystemControl worker stopped");
-    })
+    }
 }

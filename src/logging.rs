@@ -1,10 +1,11 @@
+use crate::background_worker_registry::BackgroundWorker;
+use async_trait::async_trait;
 use console::{style, Style, Term};
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
@@ -187,18 +188,39 @@ fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
     16 + 36 * r6 + 6 * g6 + b6
 }
 
-/// Spawn the log aggregator that prints to console with colors
-/// ready_notifierが提供された場合、タスクが起動したことを通知します
-pub fn spawn_log_aggregator(
-    mut rx: UnboundedReceiver<LogEvent>,
+pub struct LogAggregatorWorker {
+    rx: UnboundedReceiver<LogEvent>,
     shutdown: CancellationToken,
     ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
+}
+
+impl LogAggregatorWorker {
+    pub fn new(
+        rx: UnboundedReceiver<LogEvent>,
+        shutdown: CancellationToken,
+        ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Self {
+        Self {
+            rx,
+            shutdown,
+            ready_notifier,
+        }
+    }
+}
+
+#[async_trait]
+impl BackgroundWorker for LogAggregatorWorker {
+    fn name(&self) -> &str {
+        "log_aggregator"
+    }
+
+    async fn run(self) {
+        let mut rx = self.rx;
+        let shutdown = self.shutdown;
+        let mut ready_notifier = self.ready_notifier;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        // タスクが起動したことを通知
-        if let Some(notifier) = ready_notifier {
+        if let Some(notifier) = ready_notifier.take() {
             let _ = notifier.send(());
         }
         loop {
@@ -227,21 +249,42 @@ pub fn spawn_log_aggregator(
                 }
             }
         }
-    })
+    }
 }
 
-/// User task logs (stdout/stderr) aggregator: color by task_id, red for stderr, etc.
-/// ready_notifierが提供された場合、タスクが起動したことを通知します
-pub fn spawn_user_log_aggregator(
-    mut rx: UnboundedReceiver<UserLogEvent>,
+pub struct UserLogAggregatorWorker {
+    rx: UnboundedReceiver<UserLogEvent>,
     shutdown: CancellationToken,
     ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
+}
+
+impl UserLogAggregatorWorker {
+    pub fn new(
+        rx: UnboundedReceiver<UserLogEvent>,
+        shutdown: CancellationToken,
+        ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Self {
+        Self {
+            rx,
+            shutdown,
+            ready_notifier,
+        }
+    }
+}
+
+#[async_trait]
+impl BackgroundWorker for UserLogAggregatorWorker {
+    fn name(&self) -> &str {
+        "user_log_aggregator"
+    }
+
+    async fn run(self) {
+        let mut rx = self.rx;
+        let shutdown = self.shutdown;
+        let mut ready_notifier = self.ready_notifier;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        // タスクが起動したことを通知
-        if let Some(notifier) = ready_notifier {
+        if let Some(notifier) = ready_notifier.take() {
             let _ = notifier.send(());
         }
         loop {
@@ -264,5 +307,5 @@ pub fn spawn_user_log_aggregator(
                 }
             }
         }
-    })
+    }
 }

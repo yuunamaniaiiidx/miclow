@@ -2,10 +2,10 @@ use crate::background_worker_registry::BackgroundWorkerRegistry;
 use crate::channels::UserLogSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::logging::{
-    level_from_env, set_channel_logger, spawn_log_aggregator, spawn_user_log_aggregator, LogEvent,
+    level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
-use crate::system_control::SystemControlQueue;
+use crate::system_control::{SystemControlQueue, SystemControlWorker};
 use crate::task_runtime::{StartContext, TaskExecutor};
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
@@ -87,22 +87,23 @@ impl MiclowSystem {
         let _ = set_channel_logger(log_tx, level_from_env());
         let logging_shutdown = CancellationToken::new();
         let (log_ready_tx, log_ready_rx) = tokio::sync::oneshot::channel();
-        let h_log = spawn_log_aggregator(log_rx, logging_shutdown.clone(), Some(log_ready_tx));
-        // ログタスクの起動を待機
+        let log_worker =
+            LogAggregatorWorker::new(log_rx, logging_shutdown.clone(), Some(log_ready_tx));
+        self.background_tasks.register_worker(log_worker);
         let _ = log_ready_rx.await;
-        self.background_tasks.register("log_aggregator", h_log);
 
         let (userlog_tx, userlog_rx) = mpsc::unbounded_channel::<UserLogEvent>();
         let userlog_sender = UserLogSender::new(userlog_tx);
         let (userlog_ready_tx, userlog_ready_rx) = tokio::sync::oneshot::channel();
-        let h_userlog =
-            spawn_user_log_aggregator(userlog_rx, logging_shutdown.clone(), Some(userlog_ready_tx));
-        // ユーザーログタスクの起動を待機
+        let userlog_worker = UserLogAggregatorWorker::new(
+            userlog_rx,
+            logging_shutdown.clone(),
+            Some(userlog_ready_tx),
+        );
+        self.background_tasks.register_worker(userlog_worker);
         let _ = userlog_ready_rx.await;
-        self.background_tasks
-            .register("user_log_aggregator", h_userlog);
 
-        let h_sys = crate::system_control::start_system_control_worker(
+        let sys_worker = SystemControlWorker::new(
             self.system_control_manager.clone(),
             topic_manager.clone(),
             self.task_executor.clone(),
@@ -110,8 +111,7 @@ impl MiclowSystem {
             self.shutdown_token.clone(),
             userlog_sender.clone(),
         );
-        self.background_tasks
-            .register("system_control_worker", h_sys);
+        self.background_tasks.register_worker(sys_worker);
 
         Self::start_user_tasks(
             &self.config,

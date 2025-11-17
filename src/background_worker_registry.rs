@@ -1,4 +1,13 @@
+use async_trait::async_trait;
 use tokio::task::JoinHandle;
+
+/// Backend 系など独自にライフサイクルを管理するコンポーネントは登録対象外とし、
+/// ここでは Miclow 本体が管理するバックグラウンドワーカーのみ扱う。
+#[async_trait]
+pub trait BackgroundWorker: Send + 'static {
+    fn name(&self) -> &str;
+    async fn run(self);
+}
 
 #[derive(Default)]
 pub struct BackgroundWorkerRegistry {
@@ -12,8 +21,15 @@ impl BackgroundWorkerRegistry {
         }
     }
 
-    pub fn register(&mut self, name: &str, handle: JoinHandle<()>) {
-        self.handles.push((name.to_string(), handle));
+    pub fn register_worker<W>(&mut self, worker: W)
+    where
+        W: BackgroundWorker,
+    {
+        let name = worker.name().to_string();
+        let handle = tokio::spawn(async move {
+            worker.run().await;
+        });
+        self.handles.push((name, handle));
     }
 
     pub async fn shutdown_all(&mut self, timeout: std::time::Duration) {
