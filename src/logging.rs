@@ -190,19 +190,16 @@ fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
 
 pub struct LogAggregatorWorker {
     rx: UnboundedReceiver<LogEvent>,
-    shutdown: CancellationToken,
     ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl LogAggregatorWorker {
     pub fn new(
         rx: UnboundedReceiver<LogEvent>,
-        shutdown: CancellationToken,
         ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Self {
         Self {
             rx,
-            shutdown,
             ready_notifier,
         }
     }
@@ -214,9 +211,8 @@ impl BackgroundWorker for LogAggregatorWorker {
         "log_aggregator"
     }
 
-    async fn run(self) {
+    async fn run(self, shutdown: CancellationToken) {
         let mut rx = self.rx;
-        let shutdown = self.shutdown;
         let mut ready_notifier = self.ready_notifier;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
@@ -254,19 +250,16 @@ impl BackgroundWorker for LogAggregatorWorker {
 
 pub struct UserLogAggregatorWorker {
     rx: UnboundedReceiver<UserLogEvent>,
-    shutdown: CancellationToken,
     ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl UserLogAggregatorWorker {
     pub fn new(
         rx: UnboundedReceiver<UserLogEvent>,
-        shutdown: CancellationToken,
         ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Self {
         Self {
             rx,
-            shutdown,
             ready_notifier,
         }
     }
@@ -278,9 +271,8 @@ impl BackgroundWorker for UserLogAggregatorWorker {
         "user_log_aggregator"
     }
 
-    async fn run(self) {
+    async fn run(self, shutdown: CancellationToken) {
         let mut rx = self.rx;
-        let shutdown = self.shutdown;
         let mut ready_notifier = self.ready_notifier;
         let term = Term::stdout();
         let mut colors = ColorBook::new();

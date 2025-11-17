@@ -28,13 +28,14 @@ impl MiclowSystem {
         let system_control_manager: SystemControlQueue =
             SystemControlQueue::new(shutdown_token.clone());
         let task_executor: TaskExecutor = TaskExecutor::new(shutdown_token.clone());
+        let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
         Self {
             config,
             topic_manager,
             system_control_manager,
             task_executor,
             shutdown_token,
-            background_tasks: BackgroundWorkerRegistry::new(),
+            background_tasks,
         }
     }
 
@@ -84,33 +85,30 @@ impl MiclowSystem {
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());
-        let logging_shutdown = CancellationToken::new();
         let (log_ready_tx, log_ready_rx) = tokio::sync::oneshot::channel();
-        let log_worker =
-            LogAggregatorWorker::new(log_rx, logging_shutdown.clone(), Some(log_ready_tx));
-        self.background_tasks.register_worker(log_worker);
-        let _ = log_ready_rx.await;
+        let log_worker = LogAggregatorWorker::new(log_rx, Some(log_ready_tx));
+        self.background_tasks
+            .register_worker(log_worker, Some(log_ready_rx))
+            .await;
 
         let (userlog_tx, userlog_rx) = mpsc::unbounded_channel::<UserLogEvent>();
         let userlog_sender = UserLogSender::new(userlog_tx);
         let (userlog_ready_tx, userlog_ready_rx) = tokio::sync::oneshot::channel();
-        let userlog_worker = UserLogAggregatorWorker::new(
-            userlog_rx,
-            logging_shutdown.clone(),
-            Some(userlog_ready_tx),
-        );
-        self.background_tasks.register_worker(userlog_worker);
-        let _ = userlog_ready_rx.await;
+        let userlog_worker = UserLogAggregatorWorker::new(userlog_rx, Some(userlog_ready_tx));
+        self.background_tasks
+            .register_worker(userlog_worker, Some(userlog_ready_rx))
+            .await;
 
         let sys_worker = SystemControlWorker::new(
             self.system_control_manager.clone(),
             topic_manager.clone(),
             self.task_executor.clone(),
             self.config.clone(),
-            self.shutdown_token.clone(),
             userlog_sender.clone(),
         );
-        self.background_tasks.register_worker(sys_worker);
+        self.background_tasks
+            .register_worker(sys_worker, None)
+            .await;
 
         Self::start_user_tasks(
             &self.config,
@@ -146,7 +144,6 @@ impl MiclowSystem {
         log::info!("Received shutdown signal, stopping all workers...");
 
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        logging_shutdown.cancel();
         self.background_tasks.abort_all().await;
 
         Self::shutdown_workers(self.task_executor, self.shutdown_token).await;

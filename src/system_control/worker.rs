@@ -18,7 +18,6 @@ pub struct SystemControlWorker {
     topic_manager: TopicBroker,
     task_executor: TaskExecutor,
     system_config: SystemConfig,
-    shutdown_token: CancellationToken,
     userlog_sender: UserLogSender,
 }
 
@@ -28,7 +27,6 @@ impl SystemControlWorker {
         topic_manager: TopicBroker,
         task_executor: TaskExecutor,
         system_config: SystemConfig,
-        shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) -> Self {
         Self {
@@ -36,7 +34,6 @@ impl SystemControlWorker {
             topic_manager,
             task_executor,
             system_config,
-            shutdown_token,
             userlog_sender,
         }
     }
@@ -48,13 +45,12 @@ impl BackgroundWorker for SystemControlWorker {
         "system_control_worker"
     }
 
-    async fn run(self) {
+    async fn run(self, shutdown_token: CancellationToken) {
         let SystemControlWorker {
             system_control_manager,
             topic_manager,
             task_executor,
             system_config,
-            shutdown_token,
             userlog_sender,
         } = self;
 
