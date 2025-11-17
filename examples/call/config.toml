@@ -1,0 +1,20 @@
+[[tasks]]
+protocol = "MiclowStdin"
+task_name = "main"
+command = "uv"
+args = ["run", "python3", "main.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+environment_vars = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
+
+[[functions]]
+protocol = "MiclowStdin"
+task_name = "function"
+command = "uv"
+args = ["run", "python3", "function.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+environment_vars = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
+subscribe_topics = ["function"]

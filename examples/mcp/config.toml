@@ -8,8 +8,8 @@ working_directory = "./"
 [[tasks]]
 protocol = "MiclowStdin"
 task_name = "main"
-command = "python3"
-args = ["main.py"]
+command = "uv"
+args = ["run", "python3", "main.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment_vars = { PYTHONUNBUFFERED = "1" }
 view_stdout = true

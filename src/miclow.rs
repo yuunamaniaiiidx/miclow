@@ -26,7 +26,7 @@ use crate::config::{TaskConfig, SystemConfig};
 
 pub struct TaskSpawner {
     pub task_id: TaskId,
-    pub     topic_manager: TopicBroker,
+    pub topic_manager: TopicBroker,
     pub system_control_manager: SystemControlQueue,
     pub task_executor: TaskExecutor,
     pub task_name: String,
