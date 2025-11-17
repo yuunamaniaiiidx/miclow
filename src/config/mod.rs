@@ -50,6 +50,8 @@ struct RawTaskConfig {
     pub subscribe_topics: Option<TomlValue>,
     pub allow_duplicate: Option<TomlValue>,
     pub auto_start: Option<TomlValue>,
+    pub view_stdout: Option<TomlValue>,
+    pub view_stderr: Option<TomlValue>,
 
     /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
     pub protocol_config: HashMap<String, TomlValue>,
@@ -63,6 +65,8 @@ pub struct TaskConfig {
     pub subscribe_topics: Option<Vec<String>>,
     pub allow_duplicate: bool,
     pub auto_start: bool,
+    pub view_stdout: bool,
+    pub view_stderr: bool,
 
     /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
     pub protocol_config: HashMap<String, TomlValue>,
@@ -89,6 +93,8 @@ impl<'de> serde::Deserialize<'de> for RawTaskConfig {
 
         let allow_duplicate = protocol_config.remove("allow_duplicate");
         let auto_start = protocol_config.remove("auto_start");
+        let view_stdout = protocol_config.remove("view_stdout");
+        let view_stderr = protocol_config.remove("view_stderr");
 
         // 残りが全てprotocol_configに入っている
 
@@ -98,6 +104,8 @@ impl<'de> serde::Deserialize<'de> for RawTaskConfig {
             subscribe_topics,
             allow_duplicate,
             auto_start,
+            view_stdout,
+            view_stderr,
             protocol_config,
         })
     }
@@ -148,6 +156,26 @@ impl RawTaskConfig {
             .transpose()?
             .unwrap_or(false); // normalize_defaults()で既に設定されているはずだが、念のため
 
+        let view_stdout = self
+            .view_stdout
+            .map(|raw_value| {
+                let expanded_value = expand_toml_value(&raw_value, context)?;
+                bool::from_toml_value(&expanded_value)
+                    .ok_or_else(|| anyhow::anyhow!("view_stdout must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+
+        let view_stderr = self
+            .view_stderr
+            .map(|raw_value| {
+                let expanded_value = expand_toml_value(&raw_value, context)?;
+                bool::from_toml_value(&expanded_value)
+                    .ok_or_else(|| anyhow::anyhow!("view_stderr must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+
         // プロトコル固有設定の展開
         let mut protocol_config = HashMap::new();
         for (key, value) in self.protocol_config {
@@ -162,6 +190,8 @@ impl RawTaskConfig {
             subscribe_topics,
             allow_duplicate,
             auto_start,
+            view_stdout,
+            view_stderr,
             protocol_config,
         })
     }
@@ -557,6 +587,12 @@ impl RawSystemConfig {
             if task.auto_start.is_none() {
                 task.auto_start = Some(TomlValue::Boolean(true));
             }
+            if task.view_stdout.is_none() {
+                task.view_stdout = Some(TomlValue::Boolean(false));
+            }
+            if task.view_stderr.is_none() {
+                task.view_stderr = Some(TomlValue::Boolean(false));
+            }
         }
 
         // Functions: allow_duplicate = true, auto_start = false
@@ -566,6 +602,12 @@ impl RawSystemConfig {
             }
             if task.auto_start.is_none() {
                 task.auto_start = Some(TomlValue::Boolean(false));
+            }
+            if task.view_stdout.is_none() {
+                task.view_stdout = Some(TomlValue::Boolean(false));
+            }
+            if task.view_stderr.is_none() {
+                task.view_stderr = Some(TomlValue::Boolean(false));
             }
         }
     }

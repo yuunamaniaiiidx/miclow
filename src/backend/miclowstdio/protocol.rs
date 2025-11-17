@@ -150,10 +150,9 @@ pub fn try_miclow_stdin_from_task_config(
         .expand("stderr_topic")
         .unwrap_or_else(|| format!("{}.stderr", config.name));
 
-    // view_stdoutとview_stderrを取得（デフォルトはfalse）
-    let view_stdout: bool = config.expand("view_stdout").unwrap_or(false);
-
-    let view_stderr: bool = config.expand("view_stderr").unwrap_or(false);
+    // view_stdoutとview_stderrはTaskConfigの共通フィールドとして扱う
+    let view_stdout: bool = config.view_stdout;
+    let view_stderr: bool = config.view_stderr;
 
     // バリデーション
     if stdout_topic.contains(' ') {

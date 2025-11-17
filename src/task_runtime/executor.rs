@@ -249,11 +249,8 @@ impl TaskExecutor {
             )
             .await;
 
-        let (view_stdout, view_stderr) = match &backend {
-            ProtocolBackend::MiclowStdin(config) => (config.view_stdout, config.view_stderr),
-            ProtocolBackend::Interactive(_) => (false, false),
-            ProtocolBackend::McpServer(_) => (false, false),
-        };
+        let view_stdout = task_config.view_stdout;
+        let view_stderr = task_config.view_stderr;
 
         let running_task = RunningTask {
             task_id: task_id_new.clone(),
