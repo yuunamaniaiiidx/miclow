@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::backend::ProtocolBackend;
 use crate::message_id::MessageId;
-use crate::messages::{FunctionMessage, ExecutorInputEvent};
+use crate::messages::ExecutorInputEvent;
 use crate::task_id::TaskId;
 
 use super::running_task::RunningTask;
@@ -271,13 +271,10 @@ impl TaskExecutor {
             tokio::task::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-                let function_msg = FunctionMessage {
+                if let Err(e) = input_sender_for_initial.send(ExecutorInputEvent::Function {
                     message_id: MessageId::new(),
                     data: initial_input_for_log.clone(),
-                };
-
-                if let Err(e) =
-                    input_sender_for_initial.send(ExecutorInputEvent::Function(function_msg))
+                })
                 {
                     log::warn!(
                         "Failed to send function message to task {}: {}",

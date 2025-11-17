@@ -5,10 +5,7 @@ use crate::channels::{
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
-use crate::messages::{
-    ExecutorOutputEvent, FunctionResponseMessage, ExecutorInputEvent, SystemResponseEvent,
-    SystemResponseMessage, TopicMessage,
-};
+use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, SystemResponseEvent};
 use crate::system_control::{system_control_action_from_event, SystemControlQueue};
 use crate::task_id::TaskId;
 use crate::topic_broker::TopicBroker;
@@ -225,12 +222,13 @@ impl TaskSpawner {
                             Some(topic_data) => {
                                 if let Some(data) = topic_data.data() {
                                     if let Some(topic_name) = topic_data.topic() {
-                                        let topic_msg = TopicMessage {
-                                            message_id: MessageId::new(),
-                                            topic: topic_name.clone(),
-                                            data: data.clone(),
-                                        };
-                                        if let Err(e) = backend_handle.input_sender.send(ExecutorInputEvent::Topic(topic_msg)) {
+                                        if let Err(e) = backend_handle.input_sender.send(
+                                            ExecutorInputEvent::Topic {
+                                                message_id: MessageId::new(),
+                                                topic: topic_name.clone(),
+                                                data: data.clone(),
+                                            },
+                                        ) {
                                             log::warn!("Failed to send topic message to task backend for task {}: {}", task_id, e);
                                         }
                                     } else {
@@ -252,13 +250,12 @@ impl TaskSpawner {
                                 log::info!("Return message received for task {}: {:?}", task_id, &message);
                                 match message {
                                     ExecutorOutputEvent::FunctionResponse { function_name, data } => {
-                                        let function_response_msg = FunctionResponseMessage {
-                                            message_id: MessageId::new(),
-                                            function_name,
-                                            data,
-                                        };
                                         if let Err(e) = backend_handle.input_sender.send(
-                                            ExecutorInputEvent::FunctionResponse(function_response_msg),
+                                            ExecutorInputEvent::FunctionResponse {
+                                                message_id: MessageId::new(),
+                                                function_name,
+                                                data,
+                                            },
                                         ) {
                                             log::warn!(
                                                 "Failed to send function response to task backend for task {}: {}",
@@ -268,14 +265,13 @@ impl TaskSpawner {
                                         }
                                     }
                                     ExecutorOutputEvent::ReturnMessage { data } => {
-                                        let return_topic_msg = TopicMessage {
-                                            message_id: MessageId::new(),
-                                            topic: "system.return".to_string(),
-                                            data,
-                                        };
                                         if let Err(e) = backend_handle
                                             .input_sender
-                                            .send(ExecutorInputEvent::Topic(return_topic_msg))
+                                            .send(ExecutorInputEvent::Topic {
+                                                message_id: MessageId::new(),
+                                                topic: "system.return".to_string(),
+                                                data,
+                                            })
                                         {
                                             log::warn!(
                                                 "Failed to send return message to task backend for task {}: {}",
@@ -304,25 +300,27 @@ impl TaskSpawner {
                         match system_response {
                             Some(SystemResponseEvent::SystemResponse { topic, status, data }) => {
                                 log::info!("SystemResponse event for task {}: topic='{}', status='{}', data='{}'", task_id, topic, status, data);
-                                let system_response_msg = SystemResponseMessage {
-                                    message_id: MessageId::new(),
-                                    topic,
-                                    status,
-                                    data,
-                                };
-                                if let Err(e) = backend_handle.input_sender.send(ExecutorInputEvent::SystemResponse(system_response_msg)) {
+                                if let Err(e) = backend_handle.input_sender.send(
+                                    ExecutorInputEvent::SystemResponse {
+                                        message_id: MessageId::new(),
+                                        topic,
+                                        status,
+                                        data,
+                                    },
+                                ) {
                                     log::warn!("Failed to send system response message to task backend for task {}: {}", task_id, e);
                                 }
                             },
                             Some(SystemResponseEvent::SystemError { topic, status, error }) => {
                                 log::error!("SystemError event for task {}: topic='{}', status='{}', error='{}'", task_id, topic, status, error);
-                                let system_response_msg = SystemResponseMessage {
-                                    message_id: MessageId::new(),
-                                    topic,
-                                    status,
-                                    data: error,
-                                };
-                                if let Err(e) = backend_handle.input_sender.send(ExecutorInputEvent::SystemResponse(system_response_msg)) {
+                                if let Err(e) = backend_handle.input_sender.send(
+                                    ExecutorInputEvent::SystemResponse {
+                                        message_id: MessageId::new(),
+                                        topic,
+                                        status,
+                                        data: error,
+                                    },
+                                ) {
                                     log::warn!("Failed to send system error message to task backend for task {}: {}", task_id, e);
                                 }
                             },

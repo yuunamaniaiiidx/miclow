@@ -3,11 +3,7 @@ use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
-use crate::messages::ExecutorOutputEvent;
-use crate::messages::{
-    FunctionMessage, FunctionResponseMessage, ExecutorInputEvent, SystemResponseMessage,
-    TopicMessage,
-};
+use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use std::collections::HashMap;
@@ -66,52 +62,43 @@ pub trait StdinProtocol: Send + Sync {
     fn to_input_lines_raw(&self) -> Vec<String>;
 }
 
-impl StdinProtocol for TopicMessage {
-    fn to_input_lines_raw(&self) -> Vec<String> {
-        let mut lines = vec![self.topic.clone()];
-        let data_lines: Vec<&str> = self.data.lines().collect();
-        lines.push(data_lines.len().to_string());
-        lines.extend(data_lines.iter().map(|s| s.to_string()));
-        lines
-    }
-}
-
-impl StdinProtocol for SystemResponseMessage {
-    fn to_input_lines_raw(&self) -> Vec<String> {
-        let mut lines = vec![self.topic.clone()];
-        let data_lines: Vec<&str> = self.data.lines().collect();
-        lines.push((data_lines.len() + 1).to_string());
-        lines.push(self.status.clone());
-        lines.extend(data_lines.iter().map(|s| s.to_string()));
-        lines
-    }
-}
-
-impl StdinProtocol for FunctionResponseMessage {
-    fn to_input_lines_raw(&self) -> Vec<String> {
-        let data_lines: Vec<&str> = self.data.lines().collect();
-        let mut lines = vec!["system.return".to_string(), data_lines.len().to_string()];
-        lines.extend(data_lines.iter().map(|s| s.to_string()));
-        lines
-    }
-}
-
-impl StdinProtocol for FunctionMessage {
-    fn to_input_lines_raw(&self) -> Vec<String> {
-        let data_lines: Vec<&str> = self.data.lines().collect();
-        let mut lines = vec!["system.function".to_string(), data_lines.len().to_string()];
-        lines.extend(data_lines.iter().map(|s| s.to_string()));
-        lines
-    }
-}
-
 impl StdinProtocol for ExecutorInputEvent {
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self {
-            ExecutorInputEvent::Topic(msg) => msg.to_input_lines_raw(),
-            ExecutorInputEvent::SystemResponse(msg) => msg.to_input_lines_raw(),
-            ExecutorInputEvent::Function(msg) => msg.to_input_lines_raw(),
-            ExecutorInputEvent::FunctionResponse(msg) => msg.to_input_lines_raw(),
+            ExecutorInputEvent::Topic { topic, data, .. } => {
+                let mut lines = vec![topic.clone()];
+                let data_lines: Vec<&str> = data.lines().collect();
+                lines.push(data_lines.len().to_string());
+                lines.extend(data_lines.iter().map(|s| s.to_string()));
+                lines
+            }
+            ExecutorInputEvent::SystemResponse {
+                topic,
+                status,
+                data,
+                ..
+            } => {
+                let mut lines = vec![topic.clone()];
+                let data_lines: Vec<&str> = data.lines().collect();
+                lines.push((data_lines.len() + 1).to_string());
+                lines.push(status.clone());
+                lines.extend(data_lines.iter().map(|s| s.to_string()));
+                lines
+            }
+            ExecutorInputEvent::Function { data, .. } => {
+                let data_lines: Vec<&str> = data.lines().collect();
+                let mut lines =
+                    vec!["system.function".to_string(), data_lines.len().to_string()];
+                lines.extend(data_lines.iter().map(|s| s.to_string()));
+                lines
+            }
+            ExecutorInputEvent::FunctionResponse { data, .. } => {
+                let data_lines: Vec<&str> = data.lines().collect();
+                let mut lines =
+                    vec!["system.return".to_string(), data_lines.len().to_string()];
+                lines.extend(data_lines.iter().map(|s| s.to_string()));
+                lines
+            }
         }
     }
 }

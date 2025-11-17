@@ -1,37 +1,26 @@
 use crate::message_id::MessageId;
 
 #[derive(Clone, Debug)]
-pub struct TopicMessage {
-    pub message_id: MessageId,
-    pub topic: String,
-    pub data: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct SystemResponseMessage {
-    pub message_id: MessageId,
-    pub topic: String,
-    pub status: String,
-    pub data: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct FunctionMessage {
-    pub message_id: MessageId,
-    pub data: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct FunctionResponseMessage {
-    pub message_id: MessageId,
-    pub function_name: String,
-    pub data: String,
-}
-
-#[derive(Clone, Debug)]
 pub enum ExecutorInputEvent {
-    Topic(TopicMessage),
-    SystemResponse(SystemResponseMessage),
-    Function(FunctionMessage),
-    FunctionResponse(FunctionResponseMessage),
+    Topic {
+        message_id: MessageId,
+        topic: String,
+        data: String,
+    },
+    SystemResponse {
+        message_id: MessageId,
+        topic: String,
+        status: String,
+        data: String,
+    },
+    Function {
+        message_id: MessageId,
+        data: String,
+    },
+    FunctionResponse {
+        message_id: MessageId,
+        function_name: String,
+        data: String,
+    },
 }
+

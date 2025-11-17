@@ -4,7 +4,7 @@ use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
 use crate::messages::ExecutorOutputEvent;
-use crate::messages::{FunctionMessage, ExecutorInputEvent};
+use crate::messages::ExecutorInputEvent;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use serde_json::Value as JsonValue;
@@ -143,7 +143,7 @@ pub async fn spawn_mcp_protocol(
                             Some(input_data_msg) => {
                                 // MCPプロトコルでは、入力メッセージをツール呼び出しとして解釈
                                 match input_data_msg {
-                                    ExecutorInputEvent::Function(FunctionMessage { data, .. }) => {
+                                    ExecutorInputEvent::Function { data, .. } => {
                                         // dataをパースしてツール名と引数を取得
                                         // dataはJSON形式で、{"name": "ツール名", "arguments": {...}} または
                                         // 単純にツール名の文字列の場合もある
