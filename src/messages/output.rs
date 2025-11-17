@@ -5,6 +5,7 @@ pub enum ExecutorEvent {
     TaskStderr { data: String },
     SystemControl { key: String, data: String },
     ReturnMessage { data: String },
+    FunctionResponse { function_name: String, data: String },
     Error { error: String },
     Exit { exit_code: i32 },
 }
@@ -38,12 +39,20 @@ impl ExecutorEvent {
         Self::ReturnMessage { data }
     }
 
+    pub fn new_function_response(function_name: String, data: String) -> Self {
+        Self::FunctionResponse {
+            function_name,
+            data,
+        }
+    }
+
     pub fn data(&self) -> Option<&String> {
         match self {
             Self::Message { data, .. } => Some(data),
             Self::TaskStdout { data } => Some(data),
             Self::TaskStderr { data } => Some(data),
             Self::ReturnMessage { data } => Some(data),
+            Self::FunctionResponse { data, .. } => Some(data),
             _ => None,
         }
     }

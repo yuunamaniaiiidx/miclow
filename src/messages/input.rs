@@ -28,9 +28,17 @@ pub struct FunctionMessage {
 }
 
 #[derive(Clone, Debug)]
+pub struct FunctionResponseMessage {
+    pub message_id: MessageId,
+    pub function_name: String,
+    pub data: String,
+}
+
+#[derive(Clone, Debug)]
 pub enum InputDataMessage {
     Topic(TopicMessage),
     SystemResponse(SystemResponseMessage),
     Return(ReturnMessage),
     Function(FunctionMessage),
+    FunctionResponse(FunctionResponseMessage),
 }

@@ -4,7 +4,8 @@ pub mod system;
 
 // メッセージ型を再エクスポート
 pub use input::{
-    FunctionMessage, InputDataMessage, ReturnMessage, SystemResponseMessage, TopicMessage,
+    FunctionMessage, FunctionResponseMessage, InputDataMessage, ReturnMessage, SystemResponseMessage,
+    TopicMessage,
 };
 
 pub use output::ExecutorEvent;

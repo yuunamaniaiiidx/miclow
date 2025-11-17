@@ -12,7 +12,8 @@ use crate::message_id::MessageId;
 use crate::messages::ExecutorEvent;
 use crate::messages::SystemResponseEvent;
 use crate::messages::{
-    FunctionMessage, InputDataMessage, ReturnMessage, SystemResponseMessage, TopicMessage,
+    FunctionMessage, FunctionResponseMessage, InputDataMessage, ReturnMessage, SystemResponseMessage,
+    TopicMessage,
 };
 use crate::running_task::RunningTask;
 use crate::start_context::StartContext;
@@ -167,12 +168,28 @@ impl TaskSpawner {
                                     ExecutorEvent::ReturnMessage { data } => {
                                         log::info!("ReturnMessage received from task {}: '{}'", task_id, data);
                                         if let Some(ref sender) = other_return_message_sender {
-                                            if let Err(e) = sender.send(ExecutorEvent::new_return_message(data.clone())) {
-                                                log::warn!("Failed to send return message to other_return_message_sender for task {}: {}", task_id, e);
+                                            if let Err(e) = sender.send(ExecutorEvent::new_function_response(
+                                                task_name.clone(),
+                                                data.clone(),
+                                            )) {
+                                                log::warn!(
+                                                    "Failed to send function response to other_return_message_sender for task {}: {}",
+                                                    task_id,
+                                                    e
+                                                );
                                             }
                                         } else {
-                                            log::warn!("ReturnMessage received but other_return_message_sender is not available for task {}", task_id);
+                                            log::warn!(
+                                                "ReturnMessage received but other_return_message_sender is not available for task {}",
+                                                task_id
+                                            );
                                         }
+                                    },
+                                    ExecutorEvent::FunctionResponse { .. } => {
+                                        log::debug!(
+                                            "FunctionResponse event emitted directly by task {} - ignoring",
+                                            task_id
+                                        );
                                     },
                                     ExecutorEvent::TaskStdout { data } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
@@ -243,14 +260,46 @@ impl TaskSpawner {
                     return_message = return_message_receiver.recv() => {
                         match return_message {
                             Some(message) => {
-                                log::info!("Return message received for task {}: {:?}", task_id, message);
-                                if let Some(data) = message.data() {
-                                    let return_msg = ReturnMessage {
-                                        message_id: MessageId::new(),
-                                        data: data.clone(),
-                                    };
-                                    if let Err(e) = backend_handle.input_sender.send(InputDataMessage::Return(return_msg)) {
-                                        log::warn!("Failed to send return message to task backend for task {}: {}", task_id, e);
+                                log::info!("Return message received for task {}: {:?}", task_id, &message);
+                                match message {
+                                    ExecutorEvent::FunctionResponse { function_name, data } => {
+                                        let function_response_msg = FunctionResponseMessage {
+                                            message_id: MessageId::new(),
+                                            function_name,
+                                            data,
+                                        };
+                                        if let Err(e) = backend_handle.input_sender.send(
+                                            InputDataMessage::FunctionResponse(function_response_msg),
+                                        ) {
+                                            log::warn!(
+                                                "Failed to send function response to task backend for task {}: {}",
+                                                task_id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                    ExecutorEvent::ReturnMessage { data } => {
+                                        let return_msg = ReturnMessage {
+                                            message_id: MessageId::new(),
+                                            data,
+                                        };
+                                        if let Err(e) = backend_handle
+                                            .input_sender
+                                            .send(InputDataMessage::Return(return_msg))
+                                        {
+                                            log::warn!(
+                                                "Failed to send return message to task backend for task {}: {}",
+                                                task_id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                    unexpected => {
+                                        log::warn!(
+                                            "Unexpected event variant received on return channel for task {}: {:?}",
+                                            task_id,
+                                            unexpected
+                                        );
                                     }
                                 }
                             },
