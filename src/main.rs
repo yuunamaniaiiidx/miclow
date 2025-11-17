@@ -6,7 +6,6 @@ mod logging;
 mod message_id;
 mod messages;
 mod miclow;
-mod start_context;
 mod system_control;
 mod task_id;
 mod task_runtime;

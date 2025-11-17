@@ -9,11 +9,11 @@ use tokio_util::sync::CancellationToken;
 use crate::backend::ProtocolBackend;
 use crate::message_id::MessageId;
 use crate::messages::{FunctionMessage, InputDataMessage};
-use crate::start_context::StartContext;
 use crate::task_id::TaskId;
 
 use super::running_task::RunningTask;
 use super::spawner::TaskSpawner;
+use super::start_context::StartContext;
 
 #[derive(Clone)]
 pub struct TaskExecutor {
