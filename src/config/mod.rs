@@ -417,6 +417,17 @@ impl SystemConfig {
                 return Err(anyhow::anyhow!("Task '{}' has empty protocol", task.name));
             }
 
+            if matches!(
+                task.protocol.as_str(),
+                "McpServerStdIO" | "McpServerTcp"
+            ) {
+                return Err(anyhow::anyhow!(
+                    "Task '{}' uses '{}' protocol, but MCP server definitions must be placed under [[functions]]",
+                    task.name,
+                    task.protocol
+                ));
+            }
+
             if let Some(subscribe_topics) = &task.subscribe_topics {
                 for (topic_index, topic) in subscribe_topics.iter().enumerate() {
                     if topic.is_empty() {

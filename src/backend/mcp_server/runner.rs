@@ -13,6 +13,7 @@ use rmcp::model::{
     ProgressNotificationParam,
 };
 use rmcp::service::{Peer, QuitReason, RoleClient, ServiceExt};
+use rmcp::transport::async_rw::AsyncRwTransport;
 use rmcp::transport::child_process::TokioChildProcess;
 use serde::Deserialize;
 use serde_json::{self, Value as JsonValue};
@@ -20,29 +21,30 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader as TokioBufReader};
+use tokio::net::TcpStream;
 use tokio::process::{ChildStderr, Command};
 use tokio::task;
 use toml::Value as TomlValue;
 
 #[derive(Clone, Debug)]
-pub struct McpServerConfig {
+pub struct McpServerStdIOConfig {
     pub command: String,
     pub args: Vec<String>,
     pub working_directory: Option<String>,
     pub environment_vars: Option<HashMap<String, String>>,
 }
 
-pub fn try_mcp_server_from_task_config(config: &TaskConfig) -> Result<McpServerConfig> {
+pub fn try_mcp_server_stdio_from_task_config(config: &TaskConfig) -> Result<McpServerStdIOConfig> {
     let command: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
-            "Command field is required for McpServer in task '{}'",
+            "Command field is required for McpServerStdIO in task '{}'",
             config.name
         )
     })?;
 
     if command.trim().is_empty() {
         bail!(
-            "Command field is required for McpServer in task '{}'",
+            "Command field is required for McpServerStdIO in task '{}'",
             config.name
         );
     }
@@ -77,7 +79,7 @@ pub fn try_mcp_server_from_task_config(config: &TaskConfig) -> Result<McpServerC
         }
     }
 
-    Ok(McpServerConfig {
+    Ok(McpServerStdIOConfig {
         command,
         args,
         working_directory,
@@ -85,8 +87,43 @@ pub fn try_mcp_server_from_task_config(config: &TaskConfig) -> Result<McpServerC
     })
 }
 
-pub async fn spawn_mcp_protocol(
-    config: &McpServerConfig,
+#[derive(Clone, Debug)]
+pub struct McpServerTcpConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+pub fn try_mcp_server_tcp_from_task_config(config: &TaskConfig) -> Result<McpServerTcpConfig> {
+    let host: String = config
+        .expand("host")
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
+    let port = config
+        .get_protocol_value("port")
+        .and_then(|value| match value {
+            TomlValue::Integer(i) if *i >= 0 && *i <= u16::MAX as i64 => Some(*i as u16),
+            TomlValue::String(s) => s.parse::<u16>().ok(),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Port field is required for McpServerTcp in task '{}' and must be a valid u16",
+                config.name
+            )
+        })?;
+
+    if host.trim().is_empty() {
+        bail!(
+            "Host field is required for McpServerTcp in task '{}'",
+            config.name
+        );
+    }
+
+    Ok(McpServerTcpConfig { host, port })
+}
+
+pub async fn spawn_mcp_stdio_protocol(
+    config: &McpServerStdIOConfig,
     task_id: TaskId,
 ) -> Result<TaskBackendHandle> {
     let event_channel = ExecutorOutputEventChannel::new();
@@ -100,16 +137,36 @@ pub async fn spawn_mcp_protocol(
     let config = config.clone();
 
     task::spawn(async move {
-        if let Err(err) = run_mcp_task(
-            config,
-            task_id,
-            input_receiver,
-            shutdown_receiver,
-            event_sender.clone(),
-        )
-        .await
-        {
-            let _ = event_sender.send_error(format!("MCP backend error: {err:#}"));
+        match spawn_child_transport(&config) {
+            Ok((transport, stderr_stream)) => {
+                let stderr_forwarder = stderr_stream.map(|stderr| {
+                    spawn_stream_forwarder(
+                        stderr,
+                        event_sender.clone(),
+                        ExecutorOutputEvent::new_task_stderr,
+                        "stderr",
+                    )
+                });
+
+                if let Err(err) = run_mcp_session(
+                    transport,
+                    stderr_forwarder,
+                    task_id,
+                    input_receiver,
+                    shutdown_receiver,
+                    event_sender.clone(),
+                )
+                .await
+                {
+                    let _ = event_sender.send_error(format!("MCP StdIO backend error: {err:#}"));
+                }
+            }
+            Err(err) => {
+                let _ = event_sender.send_error(format!(
+                    "Failed to start MCP StdIO process for task {}: {err:#}",
+                    task_id
+                ));
+            }
         }
     });
 
@@ -122,16 +179,73 @@ pub async fn spawn_mcp_protocol(
     })
 }
 
-async fn run_mcp_task(
-    config: McpServerConfig,
+pub async fn spawn_mcp_tcp_protocol(
+    config: &McpServerTcpConfig,
+    task_id: TaskId,
+) -> Result<TaskBackendHandle> {
+    let event_channel = ExecutorOutputEventChannel::new();
+    let input_channel = ExecutorInputEventChannel::new();
+    let shutdown_channel = ShutdownChannel::new();
+    let system_response_channel = SystemResponseChannel::new();
+
+    let event_sender = event_channel.sender.clone();
+    let input_receiver = input_channel.receiver;
+    let shutdown_receiver = shutdown_channel.receiver;
+    let config = config.clone();
+
+    task::spawn(async move {
+        let address = format!("{}:{}", config.host, config.port);
+        match TcpStream::connect(&address).await {
+            Ok(stream) => {
+                let (reader, writer) = tokio::io::split(stream);
+                let transport = AsyncRwTransport::<RoleClient, _, _>::new(reader, writer);
+
+                if let Err(err) = run_mcp_session(
+                    transport,
+                    None,
+                    task_id,
+                    input_receiver,
+                    shutdown_receiver,
+                    event_sender.clone(),
+                )
+                .await
+                {
+                    let _ = event_sender.send_error(format!("MCP TCP backend error: {err:#}"));
+                }
+            }
+            Err(err) => {
+                let _ = event_sender.send_error(format!(
+                    "Failed to connect to MCP server at {}:{}: {}",
+                    config.host, config.port, err
+                ));
+            }
+        }
+    });
+
+    Ok(TaskBackendHandle {
+        event_receiver: event_channel.receiver,
+        event_sender: event_channel.sender,
+        system_response_sender: system_response_channel.sender,
+        input_sender: input_channel.sender,
+        shutdown_sender: shutdown_channel.sender,
+    })
+}
+
+async fn run_mcp_session<T>(
+    transport: T,
+    mut stderr_forwarder: Option<task::JoinHandle<()>>,
     task_id: TaskId,
     mut input_receiver: ExecutorInputEventReceiver,
     mut shutdown_receiver: tokio::sync::mpsc::UnboundedReceiver<()>,
     event_sender: ExecutorOutputEventSender,
-) -> Result<()> {
-    let (transport, stderr_stream) =
-        spawn_child_transport(&config).context("failed to spawn MCP child process transport")?;
-
+) -> Result<()>
+where
+    T: rmcp::transport::IntoTransport<
+        RoleClient,
+        std::io::Error,
+        rmcp::transport::TransportAdapterIdentity,
+    >,
+{
     let handler = MiclowClientHandler::new(task_id.clone(), event_sender.clone());
     let service = handler
         .serve(transport)
@@ -139,14 +253,6 @@ async fn run_mcp_task(
         .context("failed to initialize MCP client service")?;
 
     let peer = service.peer().clone();
-    let mut stderr_forwarder = stderr_stream.map(|stderr| {
-        spawn_stream_forwarder(
-            stderr,
-            event_sender.clone(),
-            ExecutorOutputEvent::new_task_stderr,
-            "stderr",
-        )
-    });
 
     loop {
         tokio::select! {
@@ -221,7 +327,7 @@ async fn run_mcp_task(
 }
 
 fn spawn_child_transport(
-    config: &McpServerConfig,
+    config: &McpServerStdIOConfig,
 ) -> Result<(TokioChildProcess, Option<ChildStderr>)> {
     let mut command = Command::new(&config.command);
     command.args(&config.args);

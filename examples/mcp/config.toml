@@ -1,5 +1,5 @@
 [[functions]]
-protocol = "McpServer"
+protocol = "McpServerStdIO"
 task_name = "filesystem_mcp"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coding/coto/miclow/examples/mcp"]
@@ -7,6 +7,13 @@ working_directory = "./"
 view_stdout = true
 view_stderr = true
 
+[[functions]]
+protocol = "McpServerTcp"
+task_name = "filesystem_mcp_tcp"
+host = "127.0.0.1"
+port = 8890
+view_stdout = true
+view_stderr = true
 
 [[tasks]]
 protocol = "MiclowStdIO"

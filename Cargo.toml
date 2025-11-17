@@ -49,6 +49,7 @@ rmcp = { version = "0.8.5", default-features = false, features = [
     "server",
     "client",
     "transport-child-process",
+    "transport-async-rw",
 ] }
 
 [dev-dependencies]
