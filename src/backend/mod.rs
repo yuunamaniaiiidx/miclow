@@ -4,7 +4,7 @@ pub mod handle;
 pub mod interactive;
 pub mod mcp;
 pub mod miclowstdio;
-pub mod protocol_backend;
+pub mod dispatcher;
 pub mod protocol;
 pub mod spawn_result;
 
