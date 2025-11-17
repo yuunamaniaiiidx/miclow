@@ -1,10 +1,10 @@
 use crate::backend::interactive::{
     spawn_interactive_protocol, try_interactive_from_task_config, InteractiveConfig,
 };
+use crate::backend::mcp::{spawn_mcp_protocol, try_mcp_server_from_task_config, McpServerConfig};
 use crate::backend::miclowstdio::{
     spawn_miclow_protocol, try_miclow_stdin_from_task_config, MiclowStdinConfig,
 };
-use crate::backend::mcp::{spawn_mcp_protocol, try_mcp_server_from_task_config, McpServerConfig};
 use crate::backend::{TaskBackend, TaskBackendHandle};
 use crate::config::TaskConfig;
 use crate::task_id::TaskId;
@@ -56,15 +56,11 @@ impl TryFrom<TaskConfig> for ProtocolBackend {
 impl TaskBackend for ProtocolBackend {
     async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
         match self {
-            ProtocolBackend::MiclowStdin(config) => {
-                spawn_miclow_protocol(config, task_id).await
-            }
+            ProtocolBackend::MiclowStdin(config) => spawn_miclow_protocol(config, task_id).await,
             ProtocolBackend::Interactive(config) => {
                 spawn_interactive_protocol(config, task_id).await
             }
-            ProtocolBackend::McpServer(config) => {
-                spawn_mcp_protocol(config, task_id).await
-            }
+            ProtocolBackend::McpServer(config) => spawn_mcp_protocol(config, task_id).await,
         }
     }
 }
