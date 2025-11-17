@@ -56,7 +56,6 @@ impl StartContext {
         let task_config = config
             .tasks
             .get(&task_name)
-            .or_else(|| config.functions.get(&task_name))
             .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in configuration", task_name))?;
 
         Ok(Self {

@@ -197,25 +197,7 @@ impl TaskExecutor {
 
         let task_id_new = TaskId::new();
 
-        let backend: ProtocolBackend = ProtocolBackend::try_from(task_config.clone())
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Failed to create protocol backend for task '{}': {}",
-                    task_config.name,
-                    e
-                )
-            })
-            .unwrap_or_else(|e| {
-                eprintln!(
-                    "Config validation failed for task '{}': {}",
-                    task_config.name, e
-                );
-                eprintln!("\nError details:");
-                for (i, cause) in e.chain().enumerate() {
-                    eprintln!("  {}: {}", i, cause);
-                }
-                std::process::exit(1);
-            });
+        let backend: ProtocolBackend = task_config.protocol_backend.clone();
 
         if let ProtocolBackend::MiclowStdIO(ref config) = backend {
             if !Path::new(&config.command).exists() && !which::which(&config.command).is_ok() {

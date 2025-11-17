@@ -1,5 +1,4 @@
-[[tasks]]
-protocol = "MiclowStdIO"
+[[MiclowStdIO]]
 task_name = "status"
 command = "uv"
 args = ["run", "python3", "status.py"]

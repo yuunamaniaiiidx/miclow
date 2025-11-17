@@ -14,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 struct StatusResponse {
     tasks: Vec<StatusTaskInfo>,
     topics: Vec<StatusTopicInfo>,
-    functions: Vec<StatusFunctionInfo>,
 }
 
 #[derive(Serialize)]
@@ -27,14 +26,6 @@ struct StatusTaskInfo {
 struct StatusTopicInfo {
     name: String,
     subscribers: usize,
-}
-
-#[derive(Serialize)]
-struct StatusFunctionInfo {
-    name: String,
-    protocol: String,
-    allow_duplicate: bool,
-    auto_start: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -138,18 +129,6 @@ impl SystemControlAction {
 
                 let tasks_info = task_executor.get_running_tasks_info().await;
                 let topics_info = topic_manager.get_topics_info().await;
-                let mut functions_info: Vec<StatusFunctionInfo> = system_config
-                    .functions
-                    .iter()
-                    .map(|(name, config)| StatusFunctionInfo {
-                        name: name.clone(),
-                        protocol: config.protocol.clone(),
-                        allow_duplicate: config.allow_duplicate,
-                        auto_start: config.auto_start,
-                    })
-                    .collect();
-
-                functions_info.sort_by(|a, b| a.name.cmp(&b.name));
 
                 let status_payload = StatusResponse {
                     tasks: tasks_info
@@ -166,7 +145,6 @@ impl SystemControlAction {
                             subscribers: subscriber_count,
                         })
                         .collect(),
-                    functions: functions_info,
                 };
 
                 let json_response = match serde_json::to_string_pretty(&status_payload)

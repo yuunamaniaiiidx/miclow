@@ -1,5 +1,4 @@
-[[tasks]]
-protocol = "MiclowStdIO"
+[[MiclowStdIO]]
 task_name = "main"
 command = "uv"
 args = ["run", "python3", "main.py"]
@@ -8,8 +7,7 @@ environment_vars = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
-[[functions]]
-protocol = "MiclowStdIO"
+[[MiclowStdIOFunction]]
 task_name = "function"
 command = "uv"
 args = ["run", "python3", "function.py"]
