@@ -14,10 +14,13 @@ use rmcp::model::{
 };
 use rmcp::service::{Peer, QuitReason, RoleClient, ServiceExt};
 use rmcp::transport::child_process::TokioChildProcess;
+use serde::Deserialize;
 use serde_json::{self, Value as JsonValue};
 use std::borrow::Cow;
 use std::collections::HashMap;
-use tokio::process::Command;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader as TokioBufReader};
+use tokio::process::{ChildStderr, Command};
 use tokio::task;
 use toml::Value as TomlValue;
 
@@ -126,7 +129,7 @@ async fn run_mcp_task(
     mut shutdown_receiver: tokio::sync::mpsc::UnboundedReceiver<()>,
     event_sender: ExecutorOutputEventSender,
 ) -> Result<()> {
-    let transport =
+    let (transport, stderr_stream) =
         spawn_child_transport(&config).context("failed to spawn MCP child process transport")?;
 
     let handler = MiclowClientHandler::new(task_id.clone(), event_sender.clone());
@@ -136,6 +139,14 @@ async fn run_mcp_task(
         .context("failed to initialize MCP client service")?;
 
     let peer = service.peer().clone();
+    let mut stderr_forwarder = stderr_stream.map(|stderr| {
+        spawn_stream_forwarder(
+            stderr,
+            event_sender.clone(),
+            ExecutorOutputEvent::new_task_stderr,
+            "stderr",
+        )
+    });
 
     loop {
         tokio::select! {
@@ -147,10 +158,33 @@ async fn run_mcp_task(
             }
             input = input_receiver.recv() => {
                 match input {
-                    Some(event) => {
-                        if let Err(err) = handle_input_event(peer.clone(), event_sender.clone(), event).await {
-                            let _ = event_sender.send_error(format!("MCP request failed: {err:#}"));
+                    Some(ExecutorInputEvent::Function { data, .. }) => {
+                        match parse_tool_invocation(&data) {
+                            Ok((tool_name, arguments_raw)) => {
+                                let arguments = match to_argument_map(arguments_raw) {
+                                    Ok(arguments) => arguments,
+                                    Err(err) => {
+                                        emit_stderr(&event_sender, format!("Invalid MCP function arguments: {err}"));
+                                        continue;
+                                    }
+                                };
+
+                                if let Err(err) = dispatch_call_tool(peer.clone(), event_sender.clone(), tool_name, arguments).await {
+                                    let _ = event_sender.send_error(format!("MCP request failed: {err:#}"));
+                                }
+                            }
+                            Err(err) => {
+                                emit_stderr(&event_sender, format!("Invalid MCP function payload: {err}"));
+                                continue;
+                            }
                         }
+                    }
+                    Some(other_event) => {
+                        emit_stderr(
+                            &event_sender,
+                            format!("Unsupported ExecutorInputEvent for MCP backend: {:?}", other_event),
+                        );
+                        continue;
                     }
                     None => {
                         service.cancellation_token().cancel();
@@ -165,6 +199,10 @@ async fn run_mcp_task(
                 event_sender.send_error("MCP server connection closed unexpectedly".to_string());
             break;
         }
+    }
+
+    if let Some(handle) = stderr_forwarder.take() {
+        let _ = handle.await;
     }
 
     match service.waiting().await {
@@ -182,7 +220,9 @@ async fn run_mcp_task(
     Ok(())
 }
 
-fn spawn_child_transport(config: &McpServerConfig) -> Result<TokioChildProcess> {
+fn spawn_child_transport(
+    config: &McpServerConfig,
+) -> Result<(TokioChildProcess, Option<ChildStderr>)> {
     let mut command = Command::new(&config.command);
     command.args(&config.args);
 
@@ -196,53 +236,44 @@ fn spawn_child_transport(config: &McpServerConfig) -> Result<TokioChildProcess> 
         }
     }
 
-    TokioChildProcess::new(command).context("failed to spawn MCP child process")
+    TokioChildProcess::builder(command)
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to spawn MCP child process")
 }
 
-async fn handle_input_event(
+async fn dispatch_call_tool(
     peer: Peer<RoleClient>,
     event_sender: ExecutorOutputEventSender,
-    event: ExecutorInputEvent,
+    tool_name: String,
+    arguments: Option<JsonObject>,
 ) -> Result<()> {
-    match event {
-        ExecutorInputEvent::Function { data, .. } => {
-            if data.trim().is_empty() {
-                bail!("MCP function payload is empty");
-            }
+    let request = CallToolRequestParam {
+        name: Cow::Owned(tool_name.clone()),
+        arguments,
+    };
 
-            let (tool_name, arguments) = parse_tool_invocation(&data)?;
-            let arguments = to_argument_map(arguments)?;
-            let request = CallToolRequestParam {
-                name: Cow::Owned(tool_name.clone()),
-                arguments,
-            };
-
-            let result = peer.call_tool(request).await?;
-            forward_call_result(tool_name, result, event_sender)?;
-        }
-        _ => {
-            // ignore non-function inputs for MCP backend
-        }
-    }
-
+    let result = peer.call_tool(request).await?;
+    forward_call_result(tool_name, result, event_sender)?;
     Ok(())
 }
 
+#[derive(Deserialize)]
+struct CallToolPayload {
+    name: String,
+    #[serde(default)]
+    arguments: Option<JsonValue>,
+}
+
 fn parse_tool_invocation(payload: &str) -> Result<(String, Option<JsonValue>)> {
-    match serde_json::from_str::<JsonValue>(payload) {
-        Ok(JsonValue::Object(obj)) => {
-            if let Some(name) = obj.get("name").and_then(|value| value.as_str()) {
-                Ok((name.to_string(), obj.get("arguments").cloned()))
-            } else {
-                bail!("MCP tool invocation JSON missing 'name' field");
-            }
-        }
-        Ok(JsonValue::String(name)) => Ok((name, None)),
-        Ok(other) => {
-            bail!("Unsupported MCP invocation payload: expected string or object, got {other}")
-        }
-        Err(_) => Ok((payload.to_string(), None)),
+    let parsed: CallToolPayload = serde_json::from_str(payload)
+        .context("MCP function payload must be valid JSON with a name field")?;
+
+    if parsed.name.trim().is_empty() {
+        bail!("MCP tool invocation JSON missing non-empty 'name' field");
     }
+
+    Ok((parsed.name, parsed.arguments))
 }
 
 fn to_argument_map(value: Option<JsonValue>) -> Result<Option<JsonObject>> {
@@ -285,6 +316,43 @@ fn format_tool_result(result: &CallToolResult) -> Result<String> {
     serde_json::to_string(result).context("failed to serialize CallToolResult")
 }
 
+fn spawn_stream_forwarder<R>(
+    reader: R,
+    event_sender: ExecutorOutputEventSender,
+    to_event: fn(String) -> ExecutorOutputEvent,
+    stream_name: &'static str,
+) -> task::JoinHandle<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    task::spawn(async move {
+        let mut reader = TokioBufReader::new(reader);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches(&['\r', '\n'][..]).to_string();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let _ = event_sender.send(to_event(trimmed));
+                }
+                Err(err) => {
+                    let _ =
+                        event_sender.send_error(format!("Failed to read MCP {stream_name}: {err}"));
+                    break;
+                }
+            }
+        }
+    })
+}
+
+fn emit_stderr(event_sender: &ExecutorOutputEventSender, message: String) {
+    let _ = event_sender.send(ExecutorOutputEvent::new_task_stderr(message));
+}
+
 #[derive(Clone)]
 struct MiclowClientHandler {
     task_id: TaskId,
@@ -299,11 +367,11 @@ impl MiclowClientHandler {
         }
     }
 
-    fn publish_topic<T: ToString>(&self, topic: &str, data: T) {
-        let _ = self.event_sender.send(ExecutorOutputEvent::new_message(
-            topic.to_string(),
-            data.to_string(),
-        ));
+    fn publish_stdout<T: ToString>(&self, prefix: &str, data: T) {
+        let message = format!("{} {}", prefix, data.to_string());
+        let _ = self
+            .event_sender
+            .send(ExecutorOutputEvent::new_task_stdout(message));
     }
 }
 
@@ -321,10 +389,9 @@ impl ClientHandler for MiclowClientHandler {
         params: LoggingMessageNotificationParam,
         _context: rmcp::service::NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let topic = format!("mcp.{}.log", self.task_id);
         let payload = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
         async move {
-            self.publish_topic(&topic, payload);
+            self.publish_stdout("[mcp.log]", payload);
         }
     }
 
@@ -333,10 +400,9 @@ impl ClientHandler for MiclowClientHandler {
         params: ProgressNotificationParam,
         _context: rmcp::service::NotificationContext<RoleClient>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
-        let topic = format!("mcp.{}.progress", self.task_id);
         let payload = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
         async move {
-            self.publish_topic(&topic, payload);
+            self.publish_stdout("[mcp.progress]", payload);
         }
     }
 }
