@@ -1,4 +1,6 @@
-use crate::background_worker_registry::BackgroundWorker;
+use crate::background_worker_registry::{
+    BackgroundWorker, BackgroundWorkerContext, WorkerReadiness,
+};
 use async_trait::async_trait;
 use console::{style, Style, Term};
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
@@ -6,7 +8,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
 pub struct LogEvent {
@@ -190,18 +191,11 @@ fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
 
 pub struct LogAggregatorWorker {
     rx: UnboundedReceiver<LogEvent>,
-    ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl LogAggregatorWorker {
-    pub fn new(
-        rx: UnboundedReceiver<LogEvent>,
-        ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> Self {
-        Self {
-            rx,
-            ready_notifier,
-        }
+    pub fn new(rx: UnboundedReceiver<LogEvent>) -> Self {
+        Self { rx }
     }
 }
 
@@ -211,14 +205,17 @@ impl BackgroundWorker for LogAggregatorWorker {
         "log_aggregator"
     }
 
-    async fn run(self, shutdown: CancellationToken) {
+    fn readiness(&self) -> WorkerReadiness {
+        WorkerReadiness::NeedsSignal
+    }
+
+    async fn run(self, ctx: BackgroundWorkerContext) {
         let mut rx = self.rx;
-        let mut ready_notifier = self.ready_notifier;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        if let Some(notifier) = ready_notifier.take() {
-            let _ = notifier.send(());
-        }
+        let mut ready_handle = ctx.ready;
+        ready_handle.notify();
+        let shutdown = ctx.shutdown;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }
@@ -250,18 +247,11 @@ impl BackgroundWorker for LogAggregatorWorker {
 
 pub struct UserLogAggregatorWorker {
     rx: UnboundedReceiver<UserLogEvent>,
-    ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl UserLogAggregatorWorker {
-    pub fn new(
-        rx: UnboundedReceiver<UserLogEvent>,
-        ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> Self {
-        Self {
-            rx,
-            ready_notifier,
-        }
+    pub fn new(rx: UnboundedReceiver<UserLogEvent>) -> Self {
+        Self { rx }
     }
 }
 
@@ -271,14 +261,17 @@ impl BackgroundWorker for UserLogAggregatorWorker {
         "user_log_aggregator"
     }
 
-    async fn run(self, shutdown: CancellationToken) {
+    fn readiness(&self) -> WorkerReadiness {
+        WorkerReadiness::NeedsSignal
+    }
+
+    async fn run(self, ctx: BackgroundWorkerContext) {
         let mut rx = self.rx;
-        let mut ready_notifier = self.ready_notifier;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        if let Some(notifier) = ready_notifier.take() {
-            let _ = notifier.send(());
-        }
+        let mut ready_handle = ctx.ready;
+        ready_handle.notify();
+        let shutdown = ctx.shutdown;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }

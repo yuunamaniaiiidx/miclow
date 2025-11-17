@@ -85,19 +85,13 @@ impl MiclowSystem {
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());
-        let (log_ready_tx, log_ready_rx) = tokio::sync::oneshot::channel();
-        let log_worker = LogAggregatorWorker::new(log_rx, Some(log_ready_tx));
-        self.background_tasks
-            .register_worker(log_worker, Some(log_ready_rx))
-            .await;
+        let log_worker = LogAggregatorWorker::new(log_rx);
+        self.background_tasks.register_worker(log_worker).await;
 
         let (userlog_tx, userlog_rx) = mpsc::unbounded_channel::<UserLogEvent>();
         let userlog_sender = UserLogSender::new(userlog_tx);
-        let (userlog_ready_tx, userlog_ready_rx) = tokio::sync::oneshot::channel();
-        let userlog_worker = UserLogAggregatorWorker::new(userlog_rx, Some(userlog_ready_tx));
-        self.background_tasks
-            .register_worker(userlog_worker, Some(userlog_ready_rx))
-            .await;
+        let userlog_worker = UserLogAggregatorWorker::new(userlog_rx);
+        self.background_tasks.register_worker(userlog_worker).await;
 
         let sys_worker = SystemControlWorker::new(
             self.system_control_manager.clone(),
@@ -106,9 +100,7 @@ impl MiclowSystem {
             self.config.clone(),
             userlog_sender.clone(),
         );
-        self.background_tasks
-            .register_worker(sys_worker, None)
-            .await;
+        self.background_tasks.register_worker(sys_worker).await;
 
         Self::start_user_tasks(
             &self.config,

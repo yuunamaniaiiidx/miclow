@@ -1,4 +1,4 @@
-use crate::background_worker_registry::BackgroundWorker;
+use crate::background_worker_registry::{BackgroundWorker, BackgroundWorkerContext};
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
 use crate::messages::{SystemResponseEvent, SystemResponseStatus};
@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 pub struct SystemControlWorker {
     system_control_manager: SystemControlQueue,
@@ -45,7 +44,7 @@ impl BackgroundWorker for SystemControlWorker {
         "system_control_worker"
     }
 
-    async fn run(self, shutdown_token: CancellationToken) {
+    async fn run(self, ctx: BackgroundWorkerContext) {
         let SystemControlWorker {
             system_control_manager,
             topic_manager,
@@ -56,6 +55,7 @@ impl BackgroundWorker for SystemControlWorker {
 
         let running_commands: Arc<RwLock<HashMap<TaskId, JoinHandle<()>>>> =
             Arc::new(RwLock::new(HashMap::new()));
+        let shutdown_token = ctx.shutdown;
 
         loop {
             tokio::select! {

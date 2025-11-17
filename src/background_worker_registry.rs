@@ -7,7 +7,42 @@ use tokio_util::sync::CancellationToken;
 #[async_trait]
 pub trait BackgroundWorker: Send + 'static {
     fn name(&self) -> &str;
-    async fn run(self, shutdown: CancellationToken);
+    fn readiness(&self) -> WorkerReadiness {
+        WorkerReadiness::Immediate
+    }
+    async fn run(self, ctx: BackgroundWorkerContext);
+}
+
+pub enum WorkerReadiness {
+    Immediate,
+    NeedsSignal,
+}
+
+pub struct ReadyHandle {
+    sender: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl ReadyHandle {
+    pub fn new(sender: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self {
+            sender: Some(sender),
+        }
+    }
+
+    pub fn noop() -> Self {
+        Self { sender: None }
+    }
+
+    pub fn notify(&mut self) {
+        if let Some(tx) = self.sender.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+pub struct BackgroundWorkerContext {
+    pub shutdown: CancellationToken,
+    pub ready: ReadyHandle,
 }
 
 pub struct BackgroundWorkerRegistry {
@@ -23,20 +58,28 @@ impl BackgroundWorkerRegistry {
         }
     }
 
-    pub async fn register_worker<W>(
-        &mut self,
-        worker: W,
-        mut ready: Option<tokio::sync::oneshot::Receiver<()>>,
-    ) where
+    pub async fn register_worker<W>(&mut self, worker: W)
+    where
         W: BackgroundWorker,
     {
         let name = worker.name().to_string();
         let shutdown = self.shutdown_token.clone();
+        let (ready_handle, mut ready_rx) = match worker.readiness() {
+            WorkerReadiness::Immediate => (ReadyHandle::noop(), None),
+            WorkerReadiness::NeedsSignal => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                (ReadyHandle::new(tx), Some(rx))
+            }
+        };
         let handle = tokio::spawn(async move {
-            worker.run(shutdown).await;
+            let ctx = BackgroundWorkerContext {
+                shutdown,
+                ready: ready_handle,
+            };
+            worker.run(ctx).await;
         });
         self.handles.push((name, handle));
-        if let Some(ref mut ready_rx) = ready {
+        if let Some(ref mut ready_rx) = ready_rx {
             let _ = ready_rx.await;
         }
     }
