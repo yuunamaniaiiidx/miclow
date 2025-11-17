@@ -1,11 +1,13 @@
+use crate::background_worker_registry::{
+    BackgroundWorker, BackgroundWorkerContext, WorkerReadiness,
+};
+use async_trait::async_trait;
 use console::{style, Style, Term};
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
 pub struct LogEvent {
@@ -90,7 +92,9 @@ struct ColorBook {
 
 impl ColorBook {
     fn new() -> Self {
-        Self { map: HashMap::new() }
+        Self {
+            map: HashMap::new(),
+        }
     }
 
     fn style_for(&mut self, key: &str) -> Style {
@@ -109,7 +113,7 @@ impl ColorBook {
 
 fn task_name_to_rgb_256(name: &str) -> (u8, u8, u8) {
     let hue = simhash_hue(name) as f32; // 0..360
-    // Fix saturation/lightness for readability
+                                        // Fix saturation/lightness for readability
     let (r, g, b) = hsl_to_rgb(hue, 0.65, 0.55);
     (r, g, b)
 }
@@ -131,7 +135,9 @@ fn simhash_hue(text: &str) -> u16 {
     }
     let mut value: u64 = 0;
     for i in 0..64 {
-        if accum[i] >= 0 { value |= 1u64 << i; }
+        if accum[i] >= 0 {
+            value |= 1u64 << i;
+        }
     }
     (value % 360) as u16
 }
@@ -139,10 +145,12 @@ fn simhash_hue(text: &str) -> u16 {
 fn ngrams(s: &str, n: usize) -> Vec<String> {
     let lower = s.to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
-    if chars.len() < n { return vec![lower]; }
+    if chars.len() < n {
+        return vec![lower];
+    }
     let mut out = Vec::with_capacity(chars.len().saturating_sub(n) + 1);
-    for i in 0..=chars.len()-n {
-        let g: String = chars[i..i+n].iter().collect();
+    for i in 0..=chars.len() - n {
+        let g: String = chars[i..i + n].iter().collect();
         out.push(g);
     }
     out
@@ -150,15 +158,22 @@ fn ngrams(s: &str, n: usize) -> Vec<String> {
 
 fn hsl_to_rgb(h_deg: f32, s: f32, l: f32) -> (u8, u8, u8) {
     let h = (h_deg % 360.0) / 60.0; // 0..6
-    let c = (1.0 - (2.0*l - 1.0).abs()) * s;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
-    let (r1, g1, b1) = if h < 1.0 { (c, x, 0.0) }
-        else if h < 2.0 { (x, c, 0.0) }
-        else if h < 3.0 { (0.0, c, x) }
-        else if h < 4.0 { (0.0, x, c) }
-        else if h < 5.0 { (x, 0.0, c) }
-        else { (c, 0.0, x) };
-    let m = l - c/2.0;
+    let (r1, g1, b1) = if h < 1.0 {
+        (c, x, 0.0)
+    } else if h < 2.0 {
+        (x, c, 0.0)
+    } else if h < 3.0 {
+        (0.0, c, x)
+    } else if h < 4.0 {
+        (0.0, x, c)
+    } else if h < 5.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
+    let m = l - c / 2.0;
     let r = ((r1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
     let g = ((g1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
     let b = ((b1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -174,20 +189,33 @@ fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
     16 + 36 * r6 + 6 * g6 + b6
 }
 
-/// Spawn the log aggregator that prints to console with colors
-/// ready_notifierが提供された場合、タスクが起動したことを通知します
-pub fn spawn_log_aggregator(
-    mut rx: UnboundedReceiver<LogEvent>,
-    shutdown: CancellationToken,
-    ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
+pub struct LogAggregatorWorker {
+    rx: UnboundedReceiver<LogEvent>,
+}
+
+impl LogAggregatorWorker {
+    pub fn new(rx: UnboundedReceiver<LogEvent>) -> Self {
+        Self { rx }
+    }
+}
+
+#[async_trait]
+impl BackgroundWorker for LogAggregatorWorker {
+    fn name(&self) -> &str {
+        "log_aggregator"
+    }
+
+    fn readiness(&self) -> WorkerReadiness {
+        WorkerReadiness::NeedsSignal
+    }
+
+    async fn run(self, ctx: BackgroundWorkerContext) {
+        let mut rx = self.rx;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        // タスクが起動したことを通知
-        if let Some(notifier) = ready_notifier {
-            let _ = notifier.send(());
-        }
+        let mut ready_handle = ctx.ready;
+        ready_handle.notify();
+        let shutdown = ctx.shutdown;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }
@@ -214,23 +242,36 @@ pub fn spawn_log_aggregator(
                 }
             }
         }
-    })
+    }
 }
 
-/// User task logs (stdout/stderr) aggregator: color by task_id, red for stderr, etc.
-/// ready_notifierが提供された場合、タスクが起動したことを通知します
-pub fn spawn_user_log_aggregator(
-    mut rx: UnboundedReceiver<UserLogEvent>,
-    shutdown: CancellationToken,
-    ready_notifier: Option<tokio::sync::oneshot::Sender<()>>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
+pub struct UserLogAggregatorWorker {
+    rx: UnboundedReceiver<UserLogEvent>,
+}
+
+impl UserLogAggregatorWorker {
+    pub fn new(rx: UnboundedReceiver<UserLogEvent>) -> Self {
+        Self { rx }
+    }
+}
+
+#[async_trait]
+impl BackgroundWorker for UserLogAggregatorWorker {
+    fn name(&self) -> &str {
+        "user_log_aggregator"
+    }
+
+    fn readiness(&self) -> WorkerReadiness {
+        WorkerReadiness::NeedsSignal
+    }
+
+    async fn run(self, ctx: BackgroundWorkerContext) {
+        let mut rx = self.rx;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        // タスクが起動したことを通知
-        if let Some(notifier) = ready_notifier {
-            let _ = notifier.send(());
-        }
+        let mut ready_handle = ctx.ready;
+        ready_handle.notify();
+        let shutdown = ctx.shutdown;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }
@@ -251,7 +292,5 @@ pub fn spawn_user_log_aggregator(
                 }
             }
         }
-    })
+    }
 }
-
-

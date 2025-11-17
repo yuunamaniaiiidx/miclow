@@ -1,36 +1,18 @@
 #[derive(Debug, Clone)]
-pub enum ExecutorEvent {
-    Message {
-        topic: String,
-        data: String,
-    },
-    TaskStdout {
-        data: String,
-    },
-    TaskStderr {
-        data: String,
-    },
-    SystemControl {
-        key: String,
-        data: String,
-    },
-    ReturnMessage {
-        data: String,
-    },
-    Error {
-        error: String,
-    },
-    Exit {
-        exit_code: i32,
-    },
+pub enum ExecutorOutputEvent {
+    Message { topic: String, data: String },
+    TaskStdout { data: String },
+    TaskStderr { data: String },
+    SystemControl { key: String, data: String },
+    ReturnMessage { data: String },
+    FunctionResponse { function_name: String, data: String },
+    Error { error: String },
+    Exit { exit_code: i32 },
 }
 
-impl ExecutorEvent {
+impl ExecutorOutputEvent {
     pub fn new_message(topic: String, data: String) -> Self {
-        Self::Message { 
-            topic, 
-            data 
-        }
+        Self::Message { topic, data }
     }
 
     pub fn new_error(error: String) -> Self {
@@ -50,14 +32,18 @@ impl ExecutorEvent {
     }
 
     pub fn new_system_control(key: String, data: String) -> Self {
-        Self::SystemControl { 
-            key, 
-            data 
-        }
+        Self::SystemControl { key, data }
     }
 
     pub fn new_return_message(data: String) -> Self {
         Self::ReturnMessage { data }
+    }
+
+    pub fn new_function_response(function_name: String, data: String) -> Self {
+        Self::FunctionResponse {
+            function_name,
+            data,
+        }
     }
 
     pub fn data(&self) -> Option<&String> {
@@ -66,6 +52,7 @@ impl ExecutorEvent {
             Self::TaskStdout { data } => Some(data),
             Self::TaskStderr { data } => Some(data),
             Self::ReturnMessage { data } => Some(data),
+            Self::FunctionResponse { data, .. } => Some(data),
             _ => None,
         }
     }
@@ -77,4 +64,3 @@ impl ExecutorEvent {
         }
     }
 }
-

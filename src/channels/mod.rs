@@ -1,31 +1,20 @@
-pub mod input_channel;
-pub mod executor_channel;
-pub mod system_response_channel;
+pub mod executor_input_channel;
+pub mod executor_output_channel;
 pub mod shutdown_channel;
+pub mod system_response_channel;
 pub mod user_log;
 
 // チャネルを再エクスポート
-pub use input_channel::{
-    InputSender,
-    InputReceiver,
-    InputChannel,
+pub use executor_input_channel::{
+    ExecutorInputEventChannel, ExecutorInputEventReceiver, ExecutorInputEventSender,
 };
 
-pub use executor_channel::{
-    ExecutorEventSender,
-    ExecutorEventReceiver,
-    ExecutorEventChannel,
+pub use executor_output_channel::{
+    ExecutorOutputEventChannel, ExecutorOutputEventReceiver, ExecutorOutputEventSender,
 };
 
-pub use system_response_channel::{
-    SystemResponseSender,
-    SystemResponseChannel,
-};
+pub use system_response_channel::{SystemResponseChannel, SystemResponseSender};
 
-pub use shutdown_channel::{
-    ShutdownSender,
-    ShutdownChannel,
-};
+pub use shutdown_channel::{ShutdownChannel, ShutdownSender};
 
 pub use user_log::UserLogSender;
-

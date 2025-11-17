@@ -1,6 +1,6 @@
-use tokio::sync::mpsc;
-use anyhow::Result;
 use crate::logging::UserLogEvent;
+use anyhow::Result;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct UserLogSender {
@@ -16,4 +16,3 @@ impl UserLogSender {
         self.sender.send(event)
     }
 }
-

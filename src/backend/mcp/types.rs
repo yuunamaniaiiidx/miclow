@@ -199,4 +199,3 @@ pub struct ProgressNotification {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<f64>,
 }
-

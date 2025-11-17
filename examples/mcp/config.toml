@@ -6,7 +6,7 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coding/coto/micl
 working_directory = "./"
 
 [[tasks]]
-protocol = "MiclowStdin"
+protocol = "MiclowStdIO"
 task_name = "main"
 command = "uv"
 args = ["run", "python3", "main.py"]

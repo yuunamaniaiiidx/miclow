@@ -1,5 +1,5 @@
-use tokio::sync::mpsc;
 use anyhow::Result;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ShutdownSender {
@@ -30,4 +30,3 @@ impl ShutdownChannel {
         }
     }
 }
-

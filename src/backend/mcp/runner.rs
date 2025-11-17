@@ -1,17 +1,19 @@
+use super::client::McpClient;
+use crate::backend::TaskBackendHandle;
+use crate::channels::{
+    ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel,
+};
+use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
+use crate::config::TaskConfig;
+use crate::messages::ExecutorInputEvent;
+use crate::messages::ExecutorOutputEvent;
+use crate::task_id::TaskId;
 use anyhow::{Error, Result};
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use tokio::task;
 use tokio_util::sync::CancellationToken;
-use std::collections::HashMap;
 use toml::Value as TomlValue;
-use crate::task_id::TaskId;
-use crate::backend::TaskBackendHandle;
-use crate::messages::ExecutorEvent;
-use crate::channels::{ExecutorEventSender, ExecutorEventChannel};
-use crate::messages::{FunctionMessage, InputDataMessage};
-use crate::channels::{InputChannel, InputReceiver, SystemResponseChannel, ShutdownChannel};
-use crate::config::TaskConfig;
-use super::client::McpClient;
-use serde_json::Value as JsonValue;
 
 #[derive(Clone)]
 pub struct McpServerConfig {
@@ -21,41 +23,53 @@ pub struct McpServerConfig {
     pub environment_vars: Option<HashMap<String, String>>,
 }
 
-pub fn try_mcp_server_from_task_config(config: &TaskConfig) -> Result<McpServerConfig, anyhow::Error> {
-    let command: String = config.expand("command")
-        .ok_or_else(|| anyhow::anyhow!("Command field is required for McpServer in task '{}'", config.name))?;
-    
+pub fn try_mcp_server_from_task_config(
+    config: &TaskConfig,
+) -> Result<McpServerConfig, anyhow::Error> {
+    let command: String = config.expand("command").ok_or_else(|| {
+        anyhow::anyhow!(
+            "Command field is required for McpServer in task '{}'",
+            config.name
+        )
+    })?;
+
     if command.is_empty() {
-        return Err(anyhow::anyhow!("Command field is required for McpServer in task '{}'", config.name));
+        return Err(anyhow::anyhow!(
+            "Command field is required for McpServer in task '{}'",
+            config.name
+        ));
     }
-    
+
     let args: Vec<String> = config.expand("args").unwrap_or_default();
-    
+
     let working_directory: Option<String> = config.expand("working_directory");
-    
-    let environment_vars = config.get_protocol_value("environment_vars")
-        .and_then(|v| {
-            if let TomlValue::Table(table) = v {
-                let mut env_map = HashMap::new();
-                for (key, value) in table {
-                    if let Some(val_str) = value.as_str() {
-                        env_map.insert(key.clone(), val_str.to_string());
-                    } else {
-                        return None;
-                    }
+
+    let environment_vars = config.get_protocol_value("environment_vars").and_then(|v| {
+        if let TomlValue::Table(table) = v {
+            let mut env_map = HashMap::new();
+            for (key, value) in table {
+                if let Some(val_str) = value.as_str() {
+                    env_map.insert(key.clone(), val_str.to_string());
+                } else {
+                    return None;
                 }
-                Some(env_map)
-            } else {
-                None
             }
-        });
-    
+            Some(env_map)
+        } else {
+            None
+        }
+    });
+
     if let Some(ref working_dir) = working_directory {
         if !std::path::Path::new(working_dir).exists() {
-            return Err(anyhow::anyhow!("Task '{}' working directory '{}' does not exist", config.name, working_dir));
+            return Err(anyhow::anyhow!(
+                "Task '{}' working directory '{}' does not exist",
+                config.name,
+                working_dir
+            ));
         }
     }
-    
+
     Ok(McpServerConfig {
         command,
         args,
@@ -73,13 +87,13 @@ pub async fn spawn_mcp_protocol(
     let working_directory = config.working_directory.clone();
     let environment_vars = config.environment_vars.clone();
 
-    let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
-    let input_channel: InputChannel = InputChannel::new();
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
+    let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let mut shutdown_channel = ShutdownChannel::new();
     let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
-    
-    let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
-    let mut input_receiver: InputReceiver = input_channel.receiver;
+
+    let event_tx_clone: ExecutorOutputEventSender = event_channel.sender.clone();
+    let mut input_receiver: ExecutorInputEventReceiver = input_channel.receiver;
 
     task::spawn(async move {
         let mut client = match McpClient::new(
@@ -87,7 +101,9 @@ pub async fn spawn_mcp_protocol(
             &args,
             working_directory.as_deref(),
             environment_vars.as_ref(),
-        ).await {
+        )
+        .await
+        {
             Ok(client) => client,
             Err(e) => {
                 let _ = event_tx_clone.send_error(format!("Failed to create MCP client: {}", e));
@@ -101,10 +117,15 @@ pub async fn spawn_mcp_protocol(
         // 初期化
         match client.initialize().await {
             Ok(init_result) => {
-                log::info!("MCP server initialized: {} {}", init_result.server_info.name, init_result.server_info.version);
+                log::info!(
+                    "MCP server initialized: {} {}",
+                    init_result.server_info.name,
+                    init_result.server_info.version
+                );
             }
             Err(e) => {
-                let _ = event_tx_clone.send_error(format!("Failed to initialize MCP server: {}", e));
+                let _ =
+                    event_tx_clone.send_error(format!("Failed to initialize MCP server: {}", e));
                 return;
             }
         }
@@ -113,7 +134,7 @@ pub async fn spawn_mcp_protocol(
 
         // 入力処理ワーカー
         let cancel_input: CancellationToken = cancel_token.clone();
-        let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
+        let event_tx_input: ExecutorOutputEventSender = event_tx_clone.clone();
         let input_worker = task::spawn(async move {
             let mut client = client;
             loop {
@@ -124,7 +145,7 @@ pub async fn spawn_mcp_protocol(
                             Some(input_data_msg) => {
                                 // MCPプロトコルでは、入力メッセージをツール呼び出しとして解釈
                                 match input_data_msg {
-                                    InputDataMessage::Function(FunctionMessage { task_name: _mcp_task_name, data, .. }) => {
+                                    ExecutorInputEvent::Function { data, .. } => {
                                         // dataをパースしてツール名と引数を取得
                                         // dataはJSON形式で、{"name": "ツール名", "arguments": {...}} または
                                         // 単純にツール名の文字列の場合もある
@@ -139,7 +160,7 @@ pub async fn spawn_mcp_protocol(
                                                             .and_then(|v| v.as_str())
                                                             .map(|s| s.to_string());
                                                         let args = obj.get("arguments").cloned();
-                                                        
+
                                                         if let Some(name) = name {
                                                             (name, args)
                                                         } else {
@@ -163,18 +184,18 @@ pub async fn spawn_mcp_protocol(
 
                                         match client.call_tool(tool_name, arguments).await {
                                             Ok(result) => {
-                                                // 結果をExecutorEventとして送信
+                                                // 結果をExecutorOutputEventとして送信
                                                 let result_json = serde_json::to_string(&result)
                                                     .unwrap_or_else(|_| "{}".to_string());
-                                                
+
                                                 // ツール呼び出し結果を返す
                                                 let result_text = result.content.as_ref()
                                                     .and_then(|c| c.first())
                                                     .map(|c| c.text.clone())
                                                     .unwrap_or_else(|| result_json.clone());
-                                                
+
                                                 // system.returnとして送信
-                                                let _ = event_tx_input.send(ExecutorEvent::new_return_message(result_text));
+                                                let _ = event_tx_input.send(ExecutorOutputEvent::new_return_message(result_text));
                                             }
                                             Err(e) => {
                                                 let _ = event_tx_input.send_error(format!("MCP tool call failed: {}", e));
@@ -211,7 +232,7 @@ pub async fn spawn_mcp_protocol(
         cancel_token.cancel();
         let _ = input_worker.await;
     });
-    
+
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
         event_sender: event_channel.sender,
@@ -220,4 +241,3 @@ pub async fn spawn_mcp_protocol(
         shutdown_sender: shutdown_channel.sender,
     })
 }
-

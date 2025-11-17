@@ -1,22 +1,20 @@
-mod task_id;
+mod backend;
+mod background_worker_registry;
+mod channels;
+mod config;
+mod logging;
 mod message_id;
 mod messages;
-mod channels;
-mod system_control;
-mod backend;
-mod protocol;
-mod running_task;
-mod start_context;
-mod topic_broker;
-mod background_worker_registry;
-mod config;
 mod miclow;
-mod logging;
+mod system_control;
+mod task_id;
+mod task_runtime;
+mod topic_broker;
 
-use anyhow::Result;
 use crate::config::SystemConfig;
-use miclow::MiclowSystem;
+use anyhow::Result;
 use clap::Parser;
+use miclow::MiclowSystem;
 use std::process::exit;
 
 #[derive(Parser)]
@@ -30,7 +28,7 @@ pub struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     run_miclow(cli.config).await?;
 
     Ok(())
@@ -38,7 +36,7 @@ async fn main() -> Result<()> {
 
 async fn run_miclow(config_file: String) -> Result<()> {
     let config = SystemConfig::from_file(config_file)?;
-    
+
     let miclow_system = MiclowSystem::new(config);
     miclow_system.start_system().await?;
 

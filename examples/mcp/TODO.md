@@ -208,7 +208,7 @@ match timeout(Duration::from_secs(30), rx).await {
 
 2. **MCPプロトコルがシンプル**
    - JSON-RPC 2.0ベースで標準的
-   - stdio経由の通信で、MiclowStdinと似たパターン
+   - stdio経由の通信で、MiclowStdIOと似たパターン
 
 3. **基本的なエラーハンドリングが実装済み**
    - タイムアウト処理（30秒）

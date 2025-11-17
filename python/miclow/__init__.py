@@ -180,28 +180,20 @@ class FunctionMessage:
 
     def __init__(
         self,
-        caller_task_name: str,
         data: str
     ):
         """Initialize FunctionMessage."""
         self.topic = "system.function"
-        self.caller_task_name = caller_task_name
         self.data = data
 
     @classmethod
     def from_message(cls, topic: str, message: str) -> "FunctionMessage":
         """Create a FunctionMessage from a message."""
-        lines = message.split('\n')
-        if lines:
-            caller_task_name = lines[0].strip()
-            data = '\n'.join(lines[1:]) if len(lines) > 1 else ''
-            return cls(caller_task_name, data)
-        else:
-            raise RuntimeError(f"Expected FunctionMessage but got {type(message)}")
+        return cls(message)
 
     def __str__(self) -> str:
         """Return string representation of FunctionMessage."""
-        return f"FunctionMessage(caller_task_name='{self.caller_task_name}', data='{self.data}')"
+        return f"FunctionMessage(data='{self.data}')"
 
     def __repr__(self) -> str:
         """Return string representation of FunctionMessage."""

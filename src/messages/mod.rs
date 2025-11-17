@@ -1,20 +1,10 @@
-pub mod input;
-pub mod output;
+pub mod executor_input_event;
+pub mod executor_output_event;
 pub mod system;
 
 // メッセージ型を再エクスポート
-pub use input::{
-    TopicMessage,
-    SystemResponseMessage,
-    ReturnMessage,
-    FunctionMessage,
-    InputDataMessage,
-};
+pub use executor_input_event::ExecutorInputEvent;
 
-pub use output::ExecutorEvent;
+pub use executor_output_event::ExecutorOutputEvent;
 
-pub use system::{
-    SystemResponseStatus,
-    SystemResponseEvent,
-};
-
+pub use system::{SystemResponseEvent, SystemResponseStatus};
