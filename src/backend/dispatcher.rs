@@ -1,7 +1,9 @@
 use crate::backend::interactive::{
     spawn_interactive_protocol, try_interactive_from_task_config, InteractiveConfig,
 };
-use crate::backend::mcp::{spawn_mcp_protocol, try_mcp_server_from_task_config, McpServerConfig};
+use crate::backend::mcp_server::{
+    spawn_mcp_protocol, try_mcp_server_from_task_config, McpServerConfig,
+};
 use crate::backend::miclowstdio::{
     spawn_miclow_stdio_protocol, try_miclow_stdio_from_task_config, MiclowStdIOConfig,
 };

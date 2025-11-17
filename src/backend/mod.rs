@@ -3,7 +3,7 @@ pub mod backend_trait;
 pub mod dispatcher;
 pub mod handle;
 pub mod interactive;
-pub mod mcp;
+pub mod mcp_server;
 pub mod miclowstdio;
 pub mod spawn_result;
 
