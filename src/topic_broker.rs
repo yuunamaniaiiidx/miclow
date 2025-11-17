@@ -1,5 +1,5 @@
-use crate::channels::ExecutorEventSender;
-use crate::messages::ExecutorEvent;
+use crate::channels::ExecutorOutputEventSender;
+use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -8,9 +8,9 @@ use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct TopicBroker {
-    subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorEventSender>>>>>>,
-    task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorEventSender>>>>,
-    latest_messages: Arc<RwLock<HashMap<String, ExecutorEvent>>>,
+    subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorOutputEventSender>>>>>>,
+    task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorOutputEventSender>>>>,
+    latest_messages: Arc<RwLock<HashMap<String, ExecutorOutputEvent>>>,
 }
 
 impl TopicBroker {
@@ -26,7 +26,7 @@ impl TopicBroker {
         &self,
         topic: String,
         task_id: TaskId,
-        subscriber: ExecutorEventSender,
+        subscriber: ExecutorOutputEventSender,
     ) {
         let subscriber_arc = Arc::new(subscriber);
         let mut subscribers = self.subscribers.write().await;
@@ -129,7 +129,7 @@ impl TopicBroker {
     pub async fn remove_all_subscriptions_by_task(&self, task_id: TaskId) -> Vec<String> {
         let mut removed_topics = Vec::new();
         let mut task_subs = self.task_subscriptions.write().await;
-        let task_entries: Vec<(String, Weak<ExecutorEventSender>)> = task_subs
+        let task_entries: Vec<(String, Weak<ExecutorOutputEventSender>)> = task_subs
             .iter()
             .filter(|((_, stored_task_id), _)| *stored_task_id == task_id)
             .map(|((topic, _), weak_sender)| (topic.clone(), weak_sender.clone()))
@@ -162,7 +162,7 @@ impl TopicBroker {
         removed_topics
     }
 
-    pub async fn get_subscribers(&self, topic: &str) -> Option<Vec<Arc<ExecutorEventSender>>> {
+    pub async fn get_subscribers(&self, topic: &str) -> Option<Vec<Arc<ExecutorOutputEventSender>>> {
         let subscribers = self.subscribers.read().await;
         subscribers
             .get(topic)
@@ -177,7 +177,7 @@ impl TopicBroker {
             .collect()
     }
 
-    pub async fn broadcast_message(&self, event: ExecutorEvent) -> Result<usize, String> {
+    pub async fn broadcast_message(&self, event: ExecutorOutputEvent) -> Result<usize, String> {
         let topic = match event.topic() {
             Some(topic) => topic,
             None => {
@@ -186,7 +186,7 @@ impl TopicBroker {
         };
         let topic_owned = topic.clone();
 
-        if matches!(event, ExecutorEvent::Message { .. }) {
+        if matches!(event, ExecutorOutputEvent::Message { .. }) {
             let mut latest_messages = self.latest_messages.write().await;
             latest_messages.insert(topic_owned.clone(), event.clone());
         }
@@ -240,7 +240,7 @@ impl TopicBroker {
         }
     }
 
-    pub async fn get_latest_message(&self, topic: &str) -> Option<ExecutorEvent> {
+    pub async fn get_latest_message(&self, topic: &str) -> Option<ExecutorOutputEvent> {
         let latest_messages = self.latest_messages.read().await;
         latest_messages.get(topic).cloned()
     }

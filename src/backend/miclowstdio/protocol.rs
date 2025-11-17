@@ -1,11 +1,11 @@
 use super::buffer::{InputBufferManager, StreamOutcome};
 use crate::backend::TaskBackendHandle;
-use crate::channels::{ExecutorEventChannel, ExecutorEventSender};
-use crate::channels::{InputChannel, InputReceiver, ShutdownChannel, SystemResponseChannel};
+use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
+use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
-use crate::messages::ExecutorEvent;
+use crate::messages::ExecutorOutputEvent;
 use crate::messages::{
-    FunctionMessage, FunctionResponseMessage, InputDataMessage, SystemResponseMessage,
+    FunctionMessage, FunctionResponseMessage, ExecutorInputEvent, SystemResponseMessage,
     TopicMessage,
 };
 use crate::task_id::TaskId;
@@ -105,13 +105,13 @@ impl StdinProtocol for FunctionMessage {
     }
 }
 
-impl StdinProtocol for InputDataMessage {
+impl StdinProtocol for ExecutorInputEvent {
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self {
-            InputDataMessage::Topic(msg) => msg.to_input_lines_raw(),
-            InputDataMessage::SystemResponse(msg) => msg.to_input_lines_raw(),
-            InputDataMessage::Function(msg) => msg.to_input_lines_raw(),
-            InputDataMessage::FunctionResponse(msg) => msg.to_input_lines_raw(),
+            ExecutorInputEvent::Topic(msg) => msg.to_input_lines_raw(),
+            ExecutorInputEvent::SystemResponse(msg) => msg.to_input_lines_raw(),
+            ExecutorInputEvent::Function(msg) => msg.to_input_lines_raw(),
+            ExecutorInputEvent::FunctionResponse(msg) => msg.to_input_lines_raw(),
         }
     }
 }
@@ -206,7 +206,7 @@ pub fn try_miclow_stdin_from_task_config(
     })
 }
 
-pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Option<ExecutorEvent> {
+pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Option<ExecutorOutputEvent> {
     let topic_lower = topic.to_lowercase();
     let data_trimmed = data.trim();
 
@@ -244,18 +244,18 @@ pub fn parse_system_control_command_from_outcome(topic: &str, data: &str) -> Opt
             data_trimmed.to_string()
         };
 
-        return Some(ExecutorEvent::new_system_control(actual_topic, actual_data));
+        return Some(ExecutorOutputEvent::new_system_control(actual_topic, actual_data));
     }
 
     None
 }
 
-pub fn parse_return_message_from_outcome(topic: &str, data: &str) -> Option<ExecutorEvent> {
+pub fn parse_return_message_from_outcome(topic: &str, data: &str) -> Option<ExecutorOutputEvent> {
     let topic_lower = topic.to_lowercase();
     let data_trimmed = data.trim();
 
     if topic_lower == "system.return" {
-        return Some(ExecutorEvent::new_return_message(data_trimmed.to_string()));
+        return Some(ExecutorOutputEvent::new_return_message(data_trimmed.to_string()));
     }
 
     None
@@ -274,13 +274,13 @@ pub async fn spawn_miclow_protocol(
     let view_stdout = config.view_stdout;
     let view_stderr = config.view_stderr;
 
-    let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
-    let input_channel: InputChannel = InputChannel::new();
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
+    let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let mut shutdown_channel = ShutdownChannel::new();
     let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
 
-    let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
-    let mut input_receiver: InputReceiver = input_channel.receiver;
+    let event_tx_clone: ExecutorOutputEventSender = event_channel.sender.clone();
+    let mut input_receiver: ExecutorInputEventReceiver = input_channel.receiver;
 
     task::spawn(async move {
         let mut command_builder = TokioCommand::new(&command);
@@ -309,7 +309,7 @@ pub async fn spawn_miclow_protocol(
         {
             Ok(child) => child,
             Err(e) => {
-                let _ = event_tx_clone.send(ExecutorEvent::new_error(format!(
+                let _ = event_tx_clone.send(ExecutorOutputEvent::new_error(format!(
                     "Failed to start process '{}': {}",
                     command, e
                 )));
@@ -330,7 +330,7 @@ pub async fn spawn_miclow_protocol(
             cancel_token.clone(),
             task_id.clone(),
             if view_stdout {
-                Some(ExecutorEvent::new_task_stdout as fn(String) -> ExecutorEvent)
+                Some(ExecutorOutputEvent::new_task_stdout as fn(String) -> ExecutorOutputEvent)
             } else {
                 None
             },
@@ -343,14 +343,14 @@ pub async fn spawn_miclow_protocol(
             cancel_token.clone(),
             task_id.clone(),
             if view_stderr {
-                Some(ExecutorEvent::new_task_stderr as fn(String) -> ExecutorEvent)
+                Some(ExecutorOutputEvent::new_task_stderr as fn(String) -> ExecutorOutputEvent)
             } else {
                 None
             },
         );
 
         let cancel_input: CancellationToken = cancel_token.clone();
-        let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
+        let event_tx_input: ExecutorOutputEventSender = event_tx_clone.clone();
         let input_worker = task::spawn(async move {
             loop {
                 tokio::select! {
@@ -382,7 +382,7 @@ pub async fn spawn_miclow_protocol(
             }
         });
 
-        let event_tx_status: ExecutorEventSender = event_tx_clone.clone();
+        let event_tx_status: ExecutorOutputEventSender = event_tx_clone.clone();
         let status_cancel: CancellationToken = cancel_token.clone();
         let task_id_status: TaskId = task_id.clone();
         let status_worker = task::spawn(async move {
@@ -530,10 +530,10 @@ pub async fn spawn_miclow_protocol(
 fn spawn_stream_reader<R>(
     mut reader: R,
     topic_name: String,
-    event_tx: ExecutorEventSender,
+    event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     task_id: TaskId,
-    emit_func: Option<fn(String) -> ExecutorEvent>,
+    emit_func: Option<fn(String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,

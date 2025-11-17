@@ -1,8 +1,8 @@
-use crate::channels::ExecutorEventSender;
+use crate::channels::ExecutorOutputEventSender;
 use crate::channels::SystemResponseSender;
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
-use crate::messages::ExecutorEvent;
+use crate::messages::ExecutorOutputEvent;
 use crate::messages::{SystemResponseEvent, SystemResponseStatus};
 use crate::system_control::queue::SystemControlQueue;
 use crate::task_id::TaskId;
@@ -43,8 +43,8 @@ impl SystemControlAction {
         system_control_manager: &SystemControlQueue,
         task_id: &TaskId,
         response_channel: &SystemResponseSender,
-        task_event_sender: &ExecutorEventSender,
-        return_message_sender: &ExecutorEventSender,
+        task_event_sender: &ExecutorOutputEventSender,
+        return_message_sender: &ExecutorOutputEventSender,
     ) -> Result<(), String> {
         match self {
             SystemControlAction::SubscribeTopic { topic } => {
@@ -164,7 +164,7 @@ impl SystemControlAction {
                 );
 
                 match topic_manager.get_latest_message(topic).await {
-                    Some(ExecutorEvent::Message { data, .. }) => {
+                    Some(ExecutorOutputEvent::Message { data, .. }) => {
                         let status = SystemResponseStatus::Success;
                         let response_topic = "system.get-latest-message".to_string();
                         let success_event = SystemResponseEvent::new_system_response(
@@ -285,8 +285,8 @@ impl SystemControlAction {
     }
 }
 
-pub fn system_control_action_from_event(event: &ExecutorEvent) -> Option<SystemControlAction> {
-    let ExecutorEvent::SystemControl { key, data } = event else {
+pub fn system_control_action_from_event(event: &ExecutorOutputEvent) -> Option<SystemControlAction> {
+    let ExecutorOutputEvent::SystemControl { key, data } = event else {
         return None;
     };
 

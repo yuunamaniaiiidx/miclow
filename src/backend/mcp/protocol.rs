@@ -1,10 +1,10 @@
 use super::client::McpClient;
 use crate::backend::TaskBackendHandle;
-use crate::channels::{ExecutorEventChannel, ExecutorEventSender};
-use crate::channels::{InputChannel, InputReceiver, ShutdownChannel, SystemResponseChannel};
+use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
+use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
-use crate::messages::ExecutorEvent;
-use crate::messages::{FunctionMessage, InputDataMessage};
+use crate::messages::ExecutorOutputEvent;
+use crate::messages::{FunctionMessage, ExecutorInputEvent};
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use serde_json::Value as JsonValue;
@@ -85,13 +85,13 @@ pub async fn spawn_mcp_protocol(
     let working_directory = config.working_directory.clone();
     let environment_vars = config.environment_vars.clone();
 
-    let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
-    let input_channel: InputChannel = InputChannel::new();
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
+    let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let mut shutdown_channel = ShutdownChannel::new();
     let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
 
-    let event_tx_clone: ExecutorEventSender = event_channel.sender.clone();
-    let mut input_receiver: InputReceiver = input_channel.receiver;
+    let event_tx_clone: ExecutorOutputEventSender = event_channel.sender.clone();
+    let mut input_receiver: ExecutorInputEventReceiver = input_channel.receiver;
 
     task::spawn(async move {
         let mut client = match McpClient::new(
@@ -132,7 +132,7 @@ pub async fn spawn_mcp_protocol(
 
         // 入力処理ワーカー
         let cancel_input: CancellationToken = cancel_token.clone();
-        let event_tx_input: ExecutorEventSender = event_tx_clone.clone();
+        let event_tx_input: ExecutorOutputEventSender = event_tx_clone.clone();
         let input_worker = task::spawn(async move {
             let mut client = client;
             loop {
@@ -143,7 +143,7 @@ pub async fn spawn_mcp_protocol(
                             Some(input_data_msg) => {
                                 // MCPプロトコルでは、入力メッセージをツール呼び出しとして解釈
                                 match input_data_msg {
-                                    InputDataMessage::Function(FunctionMessage { data, .. }) => {
+                                    ExecutorInputEvent::Function(FunctionMessage { data, .. }) => {
                                         // dataをパースしてツール名と引数を取得
                                         // dataはJSON形式で、{"name": "ツール名", "arguments": {...}} または
                                         // 単純にツール名の文字列の場合もある
@@ -182,7 +182,7 @@ pub async fn spawn_mcp_protocol(
 
                                         match client.call_tool(tool_name, arguments).await {
                                             Ok(result) => {
-                                                // 結果をExecutorEventとして送信
+                                                // 結果をExecutorOutputEventとして送信
                                                 let result_json = serde_json::to_string(&result)
                                                     .unwrap_or_else(|_| "{}".to_string());
 
@@ -193,7 +193,7 @@ pub async fn spawn_mcp_protocol(
                                                     .unwrap_or_else(|| result_json.clone());
 
                                                 // system.returnとして送信
-                                                let _ = event_tx_input.send(ExecutorEvent::new_return_message(result_text));
+                                                let _ = event_tx_input.send(ExecutorOutputEvent::new_return_message(result_text));
                                             }
                                             Err(e) => {
                                                 let _ = event_tx_input.send_error(format!("MCP tool call failed: {}", e));

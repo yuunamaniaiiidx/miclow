@@ -1,5 +1,5 @@
 #[derive(Debug, Clone)]
-pub enum ExecutorEvent {
+pub enum ExecutorOutputEvent {
     Message { topic: String, data: String },
     TaskStdout { data: String },
     TaskStderr { data: String },
@@ -10,7 +10,7 @@ pub enum ExecutorEvent {
     Exit { exit_code: i32 },
 }
 
-impl ExecutorEvent {
+impl ExecutorOutputEvent {
     pub fn new_message(topic: String, data: String) -> Self {
         Self::Message { topic, data }
     }

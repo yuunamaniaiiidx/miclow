@@ -1,4 +1,4 @@
-use crate::channels::ExecutorEventSender;
+use crate::channels::ExecutorOutputEventSender;
 use crate::channels::UserLogSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::system_control::SystemControlQueue;
@@ -13,7 +13,7 @@ pub struct StartContext {
     pub system_control_manager: SystemControlQueue,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
-    pub return_message_sender: Option<ExecutorEventSender>,
+    pub return_message_sender: Option<ExecutorOutputEventSender>,
     pub initial_input: Option<String>,
 }
 
@@ -25,7 +25,7 @@ impl StartContext {
         system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
-        return_message_sender: Option<ExecutorEventSender>,
+        return_message_sender: Option<ExecutorOutputEventSender>,
         initial_input: Option<String>,
     ) -> Self {
         Self {
@@ -47,7 +47,7 @@ impl StartContext {
         system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
-        return_message_sender: Option<ExecutorEventSender>,
+        return_message_sender: Option<ExecutorOutputEventSender>,
         initial_input: Option<String>,
     ) -> Result<Self> {
         let task_config = config

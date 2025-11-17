@@ -1,4 +1,4 @@
-use crate::channels::{ExecutorEventSender, SystemResponseSender};
+use crate::channels::{ExecutorOutputEventSender, SystemResponseSender};
 use crate::system_control::action::SystemControlAction;
 use crate::task_id::TaskId;
 use anyhow::Result;
@@ -10,8 +10,8 @@ pub struct SystemControlMessage {
     pub action: SystemControlAction,
     pub task_id: TaskId,
     pub response_channel: SystemResponseSender,
-    pub task_event_sender: ExecutorEventSender,
-    pub return_message_sender: ExecutorEventSender,
+    pub task_event_sender: ExecutorOutputEventSender,
+    pub return_message_sender: ExecutorOutputEventSender,
 }
 
 impl std::fmt::Debug for SystemControlMessage {
@@ -20,7 +20,7 @@ impl std::fmt::Debug for SystemControlMessage {
             .field("action", &"SystemControl")
             .field("task_id", &self.task_id)
             .field("response_channel", &"SystemResponseSender")
-            .field("task_event_sender", &"ExecutorEventSender")
+            .field("task_event_sender", &"ExecutorOutputEventSender")
             .finish()
     }
 }
@@ -30,8 +30,8 @@ impl SystemControlMessage {
         action: SystemControlAction,
         task_id: TaskId,
         response_channel: SystemResponseSender,
-        task_event_sender: ExecutorEventSender,
-        return_message_sender: ExecutorEventSender,
+        task_event_sender: ExecutorOutputEventSender,
+        return_message_sender: ExecutorOutputEventSender,
     ) -> Self {
         Self {
             action,
@@ -68,8 +68,8 @@ impl SystemControlQueue {
         action: SystemControlAction,
         task_id: TaskId,
         response_channel: SystemResponseSender,
-        task_event_sender: ExecutorEventSender,
-        return_message_sender: ExecutorEventSender,
+        task_event_sender: ExecutorOutputEventSender,
+        return_message_sender: ExecutorOutputEventSender,
     ) -> Result<(), String> {
         let message = SystemControlMessage::new(
             action,

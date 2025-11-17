@@ -1,7 +1,7 @@
 use crate::backend::TaskBackendHandle;
-use crate::channels::{ExecutorEventChannel, InputChannel, ShutdownChannel, SystemResponseChannel};
+use crate::channels::{ExecutorOutputEventChannel, ExecutorInputEventChannel, ShutdownChannel, SystemResponseChannel};
 use crate::config::TaskConfig;
-use crate::messages::ExecutorEvent;
+use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader as TokioBufReader};
@@ -45,8 +45,8 @@ pub async fn spawn_interactive_protocol(
 ) -> Result<TaskBackendHandle, Error> {
     let system_input_topic = config.system_input_topic.clone();
 
-    let event_channel: ExecutorEventChannel = ExecutorEventChannel::new();
-    let input_channel: InputChannel = InputChannel::new();
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
+    let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let shutdown_channel = ShutdownChannel::new();
     let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
 
@@ -80,7 +80,7 @@ pub async fn spawn_interactive_protocol(
 
                             log::info!("Sending message topic:'{}' data:'{}'", system_input_topic, trimmed);
 
-                            let event = ExecutorEvent::new_message(
+                            let event = ExecutorOutputEvent::new_message(
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
                             );

@@ -29,7 +29,7 @@ pub struct FunctionResponseMessage {
 }
 
 #[derive(Clone, Debug)]
-pub enum InputDataMessage {
+pub enum ExecutorInputEvent {
     Topic(TopicMessage),
     SystemResponse(SystemResponseMessage),
     Function(FunctionMessage),
