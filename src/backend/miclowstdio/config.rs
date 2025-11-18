@@ -21,35 +21,19 @@ impl BackendConfigMeta for MiclowStdIOConfig {
         "MiclowStdIO"
     }
 
-    fn default_allow_duplicate_task() -> bool {
+    fn default_allow_duplicate() -> bool {
         false
     }
 
-    fn default_allow_duplicate_function() -> bool {
+    fn default_auto_start() -> bool {
         true
     }
 
-    fn default_auto_start_task() -> bool {
-        true
-    }
-
-    fn default_auto_start_function() -> bool {
+    fn default_view_stdout() -> bool {
         false
     }
 
-    fn default_view_stdout_task() -> bool {
-        false
-    }
-
-    fn default_view_stdout_function() -> bool {
-        false
-    }
-
-    fn default_view_stderr_task() -> bool {
-        false
-    }
-
-    fn default_view_stderr_function() -> bool {
+    fn default_view_stderr() -> bool {
         false
     }
 }

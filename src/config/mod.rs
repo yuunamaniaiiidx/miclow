@@ -354,12 +354,11 @@ impl<'de> serde::Deserialize<'de> for RawSystemConfig {
                     let protocol_name = match key.as_str() {
                         "Interactive" => InteractiveConfig::protocol_name().to_string(),
                         "MiclowStdIO" => MiclowStdIOConfig::protocol_name().to_string(),
-                        "MiclowStdIOFunction" => MiclowStdIOConfig::protocol_name().to_string(),
                         "McpServerStdIO" => McpServerStdIOConfig::protocol_name().to_string(),
                         "McpServerTcp" => McpServerTcpConfig::protocol_name().to_string(),
                         _ => {
                             return Err(serde::de::Error::custom(format!(
-                                "Unknown section name '{}'. Supported sections: [[Interactive]], [[MiclowStdIO]], [[MiclowStdIOFunction]], [[McpServerStdIO]], [[McpServerTcp]]",
+                                "Unknown section name '{}'. Supported sections: [[Interactive]], [[MiclowStdIO]], [[McpServerStdIO]], [[McpServerTcp]]",
                                 key
                             )));
                         }
@@ -664,7 +663,7 @@ mod tests {
         fs::write(
             &include_file,
             r#"
-[[MiclowStdIOFunction]]
+[[MiclowStdIO]]
 task_name = "test_function"
 command = "echo"
 args = ["test"]
