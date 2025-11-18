@@ -31,12 +31,6 @@ pub enum ExecutorOutputEvent {
         return_to_task_id: TaskId,
         data: String,
     },
-    FunctionResponse {
-        message_id: MessageId,
-        task_id: TaskId,
-        function_name: String,
-        data: String,
-    },
     Error {
         message_id: MessageId,
         task_id: TaskId,
@@ -112,27 +106,12 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_function_response(
-        message_id: MessageId,
-        task_id: TaskId,
-        function_name: String,
-        data: String,
-    ) -> Self {
-        Self::FunctionResponse {
-            message_id,
-            task_id,
-            function_name,
-            data,
-        }
-    }
-
     pub fn data(&self) -> Option<&String> {
         match self {
             Self::Message { data, .. } => Some(data),
             Self::TaskStdout { data, .. } => Some(data),
             Self::TaskStderr { data, .. } => Some(data),
             Self::ReturnMessage { data, .. } => Some(data),
-            Self::FunctionResponse { data, .. } => Some(data),
             _ => None,
         }
     }

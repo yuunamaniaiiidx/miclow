@@ -102,10 +102,6 @@ impl TaskSpawner {
                 }
             }
 
-            let return_message_channel: ExecutorOutputEventChannel =
-                ExecutorOutputEventChannel::new();
-            let mut return_message_receiver = return_message_channel.receiver;
-
             loop {
                 tokio::select! {
                     biased;
@@ -176,12 +172,6 @@ impl TaskSpawner {
                                             );
                                         }
                                     },
-                                    ExecutorOutputEvent::FunctionResponse { .. } => {
-                                        log::debug!(
-                                            "FunctionResponse event emitted directly by task {} - ignoring",
-                                            task_id
-                                        );
-                                    },
                                     ExecutorOutputEvent::TaskStdout { data, .. } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((view_stdout, _)) = flags {
@@ -245,60 +235,6 @@ impl TaskSpawner {
                             },
                             None => {
                                 log::info!("Topic data receiver closed for task {}", task_id);
-                                break;
-                            }
-                        }
-                    },
-
-                    return_message = return_message_receiver.recv() => {
-                        match return_message {
-                            Some(message) => {
-                                log::info!("Return message received for task {}: {:?}", task_id, &message);
-                                match message {
-                                    ExecutorOutputEvent::FunctionResponse { function_name, data, .. } => {
-                                        if let Err(e) = backend_handle.input_sender.send(
-                                            ExecutorInputEvent::FunctionResponse {
-                                                message_id: MessageId::new(),
-                                                task_id: task_id.clone(),
-                                                function_name,
-                                                data,
-                                            },
-                                        ) {
-                                            log::warn!(
-                                                "Failed to send function response to task backend for task {}: {}",
-                                                task_id,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    ExecutorOutputEvent::ReturnMessage { data, .. } => {
-                                        if let Err(e) = backend_handle
-                                            .input_sender
-                                            .send(ExecutorInputEvent::Topic {
-                                                message_id: MessageId::new(),
-                                                task_id: task_id.clone(),
-                                                topic: "system.return".to_string(),
-                                                data,
-                                            })
-                                        {
-                                            log::warn!(
-                                                "Failed to send return message to task backend for task {}: {}",
-                                                task_id,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    unexpected => {
-                                        log::warn!(
-                                            "Unexpected event variant received on return channel for task {}: {:?}",
-                                            task_id,
-                                            unexpected
-                                        );
-                                    }
-                                }
-                            },
-                            None => {
-                                log::info!("Return message receiver closed for task {}", task_id);
                                 break;
                             }
                         }
