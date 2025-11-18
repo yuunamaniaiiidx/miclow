@@ -4,6 +4,7 @@ use crate::channels::{
     ExecutorInputEventChannel, ExecutorInputEventReceiver, ExecutorOutputEventChannel,
     ExecutorOutputEventSender, ShutdownChannel, SystemResponseChannel,
 };
+use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::task_id::TaskId;
 use anyhow::{bail, Context, Result};
@@ -38,13 +39,17 @@ pub async fn spawn_mcp_stdio_protocol(
     let shutdown_receiver = shutdown_channel.receiver;
     let config = config.clone();
 
+    let task_id_clone = task_id.clone();
     task::spawn(async move {
         match spawn_child_transport(&config) {
             Ok((transport, stderr_stream)) => {
-                let stderr_forwarder = stderr_stream.map(|stderr| {
+                let task_id_for_stderr = task_id_clone.clone();
+                let event_sender_for_stderr = event_sender.clone();
+                let stderr_forwarder = stderr_stream.map(move |stderr| {
                     spawn_stream_forwarder(
                         stderr,
-                        event_sender.clone(),
+                        event_sender_for_stderr.clone(),
+                        task_id_for_stderr.clone(),
                         ExecutorOutputEvent::new_task_stderr,
                         "stderr",
                     )
@@ -53,21 +58,26 @@ pub async fn spawn_mcp_stdio_protocol(
                 if let Err(err) = run_mcp_session(
                     transport,
                     stderr_forwarder,
-                    task_id,
+                    task_id_clone.clone(),
                     input_receiver,
                     shutdown_receiver,
                     event_sender.clone(),
                 )
                 .await
                 {
-                    let _ = event_sender.send_error(format!("MCP StdIO backend error: {err:#}"));
+                    let _ = event_sender.send_error(
+                        MessageId::new(),
+                        task_id_clone.clone(),
+                        format!("MCP StdIO backend error: {err:#}"),
+                    );
                 }
             }
             Err(err) => {
-                let _ = event_sender.send_error(format!(
-                    "Failed to start MCP StdIO process for task {}: {err:#}",
-                    task_id
-                ));
+                let _ = event_sender.send_error(
+                    MessageId::new(),
+                    task_id_clone.clone(),
+                    format!("Failed to start MCP StdIO process for task {}: {err:#}", task_id_clone),
+                );
             }
         }
     });
@@ -94,6 +104,7 @@ pub async fn spawn_mcp_tcp_protocol(
     let input_receiver = input_channel.receiver;
     let shutdown_receiver = shutdown_channel.receiver;
     let config = config.clone();
+    let task_id_clone = task_id.clone();
 
     task::spawn(async move {
         let address = format!("{}:{}", config.host, config.port);
@@ -105,21 +116,26 @@ pub async fn spawn_mcp_tcp_protocol(
                 if let Err(err) = run_mcp_session(
                     transport,
                     None,
-                    task_id,
+                    task_id_clone.clone(),
                     input_receiver,
                     shutdown_receiver,
                     event_sender.clone(),
                 )
                 .await
                 {
-                    let _ = event_sender.send_error(format!("MCP TCP backend error: {err:#}"));
+                    let _ = event_sender.send_error(
+                        MessageId::new(),
+                        task_id_clone.clone(),
+                        format!("MCP TCP backend error: {err:#}"),
+                    );
                 }
             }
             Err(err) => {
-                let _ = event_sender.send_error(format!(
-                    "Failed to connect to MCP server at {}:{}: {}",
-                    config.host, config.port, err
-                ));
+                let _ = event_sender.send_error(
+                    MessageId::new(),
+                    task_id_clone.clone(),
+                    format!("Failed to connect to MCP server at {}:{}: {}", config.host, config.port, err),
+                );
             }
         }
     });
@@ -172,17 +188,21 @@ where
                                 let arguments = match to_argument_map(arguments_raw) {
                                     Ok(arguments) => arguments,
                                     Err(err) => {
-                                        emit_stderr(&event_sender, format!("Invalid MCP function arguments: {err}"));
+                                        emit_stderr(&event_sender, task_id.clone(), format!("Invalid MCP function arguments: {err}"));
                                         continue;
                                     }
                                 };
 
-                                if let Err(err) = dispatch_call_tool(peer.clone(), event_sender.clone(), tool_name, arguments).await {
-                                    let _ = event_sender.send_error(format!("MCP request failed: {err:#}"));
+                                if let Err(err) = dispatch_call_tool(peer.clone(), event_sender.clone(), task_id.clone(), tool_name, arguments).await {
+                                    let _ = event_sender.send_error(
+                                        MessageId::new(),
+                                        task_id.clone(),
+                                        format!("MCP request failed: {err:#}"),
+                                    );
                                 }
                             }
                             Err(err) => {
-                                emit_stderr(&event_sender, format!("Invalid MCP function payload: {err}"));
+                                emit_stderr(&event_sender, task_id.clone(), format!("Invalid MCP function payload: {err}"));
                                 continue;
                             }
                         }
@@ -190,6 +210,7 @@ where
                     Some(other_event) => {
                         emit_stderr(
                             &event_sender,
+                            task_id.clone(),
                             format!("Unsupported ExecutorInputEvent for MCP backend: {:?}", other_event),
                         );
                         continue;
@@ -203,8 +224,11 @@ where
         }
 
         if peer.is_transport_closed() {
-            let _ =
-                event_sender.send_error("MCP server connection closed unexpectedly".to_string());
+            let _ = event_sender.send_error(
+                MessageId::new(),
+                task_id.clone(),
+                "MCP server connection closed unexpectedly".to_string(),
+            );
             break;
         }
     }
@@ -215,13 +239,21 @@ where
 
     match service.waiting().await {
         Ok(QuitReason::Closed | QuitReason::Cancelled) => {
-            let _ = event_sender.send_exit(0);
+            let _ = event_sender.send_exit(MessageId::new(), task_id.clone(), 0);
         }
         Ok(QuitReason::JoinError(err)) => {
-            let _ = event_sender.send_error(format!("MCP service join error: {err}"));
+            let _ = event_sender.send_error(
+                MessageId::new(),
+                task_id.clone(),
+                format!("MCP service join error: {err}"),
+            );
         }
         Err(join_err) => {
-            let _ = event_sender.send_error(format!("Failed to join MCP service task: {join_err}"));
+            let _ = event_sender.send_error(
+                MessageId::new(),
+                task_id.clone(),
+                format!("Failed to join MCP service task: {join_err}"),
+            );
         }
     }
 
@@ -253,6 +285,7 @@ fn spawn_child_transport(
 async fn dispatch_call_tool(
     peer: Peer<RoleClient>,
     event_sender: ExecutorOutputEventSender,
+    task_id: TaskId,
     tool_name: String,
     arguments: Option<JsonObject>,
 ) -> Result<()> {
@@ -262,7 +295,7 @@ async fn dispatch_call_tool(
     };
 
     let result = peer.call_tool(request).await?;
-    forward_call_result(tool_name, result, event_sender)?;
+    forward_call_result(tool_name, result, event_sender, task_id)?;
     Ok(())
 }
 
@@ -296,15 +329,17 @@ fn forward_call_result(
     tool_name: String,
     result: CallToolResult,
     event_sender: ExecutorOutputEventSender,
+    task_id: TaskId,
 ) -> Result<()> {
     let payload = format_tool_result(&result)?;
+    let message_id = MessageId::new();
     if result.is_error.unwrap_or(false) {
         event_sender
-            .send_error(format!("Tool '{tool_name}' error: {payload}"))
+            .send_error(message_id.clone(), task_id.clone(), format!("Tool '{tool_name}' error: {payload}"))
             .ok();
     } else {
         event_sender
-            .send(ExecutorOutputEvent::new_return_message(payload))
+            .send(ExecutorOutputEvent::new_return_message(message_id, task_id, payload))
             .ok();
     }
     Ok(())
@@ -327,7 +362,8 @@ fn format_tool_result(result: &CallToolResult) -> Result<String> {
 fn spawn_stream_forwarder<R>(
     reader: R,
     event_sender: ExecutorOutputEventSender,
-    to_event: fn(String) -> ExecutorOutputEvent,
+    task_id: TaskId,
+    to_event: fn(MessageId, TaskId, String) -> ExecutorOutputEvent,
     stream_name: &'static str,
 ) -> task::JoinHandle<()>
 where
@@ -345,11 +381,14 @@ where
                     if trimmed.is_empty() {
                         continue;
                     }
-                    let _ = event_sender.send(to_event(trimmed));
+                    let _ = event_sender.send(to_event(MessageId::new(), task_id.clone(), trimmed));
                 }
                 Err(err) => {
-                    let _ =
-                        event_sender.send_error(format!("Failed to read MCP {stream_name}: {err}"));
+                    let _ = event_sender.send_error(
+                        MessageId::new(),
+                        task_id.clone(),
+                        format!("Failed to read MCP {stream_name}: {err}"),
+                    );
                     break;
                 }
             }
@@ -357,8 +396,8 @@ where
     })
 }
 
-fn emit_stderr(event_sender: &ExecutorOutputEventSender, message: String) {
-    let _ = event_sender.send(ExecutorOutputEvent::new_task_stderr(message));
+fn emit_stderr(event_sender: &ExecutorOutputEventSender, task_id: TaskId, message: String) {
+    let _ = event_sender.send(ExecutorOutputEvent::new_task_stderr(MessageId::new(), task_id, message));
 }
 
 #[derive(Clone)]
@@ -379,7 +418,7 @@ impl MiclowClientHandler {
         let message = format!("{} {}", prefix, data.to_string());
         let _ = self
             .event_sender
-            .send(ExecutorOutputEvent::new_task_stdout(message));
+            .send(ExecutorOutputEvent::new_task_stdout(MessageId::new(), self.task_id.clone(), message));
     }
 }
 

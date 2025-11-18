@@ -5,6 +5,7 @@ use crate::channels::{
     ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel,
 };
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
+use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::system_control::SystemControlAction;
 use crate::task_id::TaskId;
@@ -92,6 +93,8 @@ impl StdIOProtocol for ExecutorInputEvent {
 
 
 pub fn parse_system_control_command_from_outcome(
+    message_id: MessageId,
+    task_id: TaskId,
     topic: &str,
     data: &str,
 ) -> Option<ExecutorOutputEvent> {
@@ -167,18 +170,25 @@ pub fn parse_system_control_command_from_outcome(
             _ => return None,
         };
 
-        return Some(ExecutorOutputEvent::new_system_control(action));
+        return Some(ExecutorOutputEvent::new_system_control(message_id, task_id, action));
     }
 
     None
 }
 
-pub fn parse_return_message_from_outcome(topic: &str, data: &str) -> Option<ExecutorOutputEvent> {
+pub fn parse_return_message_from_outcome(
+    message_id: MessageId,
+    task_id: TaskId,
+    topic: &str,
+    data: &str,
+) -> Option<ExecutorOutputEvent> {
     let topic_lower = topic.to_lowercase();
     let data_trimmed = data.trim();
 
     if topic_lower == "system.return" {
         return Some(ExecutorOutputEvent::new_return_message(
+            message_id,
+            task_id,
             data_trimmed.to_string(),
         ));
     }
@@ -234,10 +244,11 @@ pub async fn spawn_miclow_stdio_protocol(
         {
             Ok(child) => child,
             Err(e) => {
-                let _ = event_tx_clone.send(ExecutorOutputEvent::new_error(format!(
-                    "Failed to start process '{}': {}",
-                    command, e
-                )));
+                let _ = event_tx_clone.send(ExecutorOutputEvent::new_error(
+                    MessageId::new(),
+                    task_id.clone(),
+                    format!("Failed to start process '{}': {}", command, e),
+                ));
                 return;
             }
         };
@@ -255,7 +266,7 @@ pub async fn spawn_miclow_stdio_protocol(
             cancel_token.clone(),
             task_id.clone(),
             if view_stdout {
-                Some(ExecutorOutputEvent::new_task_stdout as fn(String) -> ExecutorOutputEvent)
+                Some(ExecutorOutputEvent::new_task_stdout as fn(MessageId, TaskId, String) -> ExecutorOutputEvent)
             } else {
                 None
             },
@@ -268,7 +279,7 @@ pub async fn spawn_miclow_stdio_protocol(
             cancel_token.clone(),
             task_id.clone(),
             if view_stderr {
-                Some(ExecutorOutputEvent::new_task_stderr as fn(String) -> ExecutorOutputEvent)
+                Some(ExecutorOutputEvent::new_task_stderr as fn(MessageId, TaskId, String) -> ExecutorOutputEvent)
             } else {
                 None
             },
@@ -276,6 +287,7 @@ pub async fn spawn_miclow_stdio_protocol(
 
         let cancel_input: CancellationToken = cancel_token.clone();
         let event_tx_input: ExecutorOutputEventSender = event_tx_clone.clone();
+        let task_id_input = task_id.clone();
         let input_worker = task::spawn(async move {
             loop {
                 tokio::select! {
@@ -291,12 +303,20 @@ pub async fn spawn_miclow_stdio_protocol(
                                         format!("{}\n", line).into_bytes()
                                     };
                                     if let Err(e) = stdin_writer.write_all(&bytes).await {
-                                        let _ = event_tx_input.send_error(format!("Failed to write to stdin: {}", e));
+                                        let _ = event_tx_input.send_error(
+                                            MessageId::new(),
+                                            task_id_input.clone(),
+                                            format!("Failed to write to stdin: {}", e),
+                                        );
                                         break;
                                     }
                                 }
                                 if let Err(e) = stdin_writer.flush().await {
-                                    let _ = event_tx_input.send_error(format!("Failed to flush stdin: {}", e));
+                                    let _ = event_tx_input.send_error(
+                                        MessageId::new(),
+                                        task_id_input.clone(),
+                                        format!("Failed to flush stdin: {}", e),
+                                    );
                                     break;
                                 }
                             },
@@ -311,14 +331,22 @@ pub async fn spawn_miclow_stdio_protocol(
         let status_cancel: CancellationToken = cancel_token.clone();
         let task_id_status: TaskId = task_id.clone();
         let status_worker = task::spawn(async move {
-            let notify = |res: Result<std::process::ExitStatus, anyhow::Error>| match res {
-                Ok(exit_status) => {
-                    let code: i32 = exit_status.code().unwrap_or(-1);
-                    let _ = event_tx_status.send_exit(code);
-                }
-                Err(e) => {
-                    log::error!("Error waiting for process: {}", e);
-                    let _ = event_tx_status.send_error(format!("Error waiting for process: {}", e));
+            let notify = |res: Result<std::process::ExitStatus, anyhow::Error>| {
+                let message_id = MessageId::new();
+                let task_id_clone = task_id_status.clone();
+                match res {
+                    Ok(exit_status) => {
+                        let code: i32 = exit_status.code().unwrap_or(-1);
+                        let _ = event_tx_status.send_exit(message_id, task_id_clone, code);
+                    }
+                    Err(e) => {
+                        log::error!("Error waiting for process: {}", e);
+                        let _ = event_tx_status.send_error(
+                            message_id,
+                            task_id_clone,
+                            format!("Error waiting for process: {}", e),
+                        );
+                    }
                 }
             };
             tokio::select! {
@@ -458,7 +486,7 @@ fn spawn_stream_reader<R>(
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     task_id: TaskId,
-    emit_func: Option<fn(String) -> ExecutorOutputEvent>,
+    emit_func: Option<fn(MessageId, TaskId, String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
@@ -469,33 +497,37 @@ where
         let task_id_str = task_id.to_string();
 
         let process_stream_outcome =
-            |outcome: Result<StreamOutcome, String>, line_content: &str| match outcome {
-                Ok(StreamOutcome::Emit { topic, data }) => {
-                    if let Some(return_message_event) =
-                        parse_return_message_from_outcome(&topic, &data)
-                    {
-                        let _ = event_tx.send(return_message_event);
-                    } else if let Some(system_control_cmd_event) =
-                        parse_system_control_command_from_outcome(&topic, &data)
-                    {
-                        let _ = event_tx.send(system_control_cmd_event);
-                    } else {
-                        let _ = event_tx.send_message(topic, data);
+            |outcome: Result<StreamOutcome, String>, line_content: &str| {
+                let message_id = MessageId::new();
+                let task_id_clone = task_id.clone();
+                match outcome {
+                    Ok(StreamOutcome::Emit { topic, data }) => {
+                        if let Some(return_message_event) =
+                            parse_return_message_from_outcome(message_id.clone(), task_id_clone.clone(), &topic, &data)
+                        {
+                            let _ = event_tx.send(return_message_event);
+                        } else if let Some(system_control_cmd_event) =
+                            parse_system_control_command_from_outcome(message_id.clone(), task_id_clone.clone(), &topic, &data)
+                        {
+                            let _ = event_tx.send(system_control_cmd_event);
+                        } else {
+                            let _ = event_tx.send_message(message_id.clone(), task_id_clone.clone(), topic, data);
+                        }
                     }
-                }
-                Ok(StreamOutcome::Plain(output)) => {
-                    let _ = event_tx.send_message(topic_name.clone(), output.clone());
-                    if let Some(emit) = emit_func {
-                        let _ = event_tx.send(emit(output));
+                    Ok(StreamOutcome::Plain(output)) => {
+                        let _ = event_tx.send_message(message_id.clone(), task_id_clone.clone(), topic_name.clone(), output.clone());
+                        if let Some(emit) = emit_func {
+                            let _ = event_tx.send(emit(message_id.clone(), task_id_clone.clone(), output));
+                        }
                     }
-                }
-                Ok(StreamOutcome::None) => {}
-                Err(e) => {
-                    let _ = event_tx.send_error(e.clone());
-                    let output = super::buffer::strip_crlf(line_content).to_string();
-                    let _ = event_tx.send_message(topic_name.clone(), output.clone());
-                    if let Some(emit) = emit_func {
-                        let _ = event_tx.send(emit(output));
+                    Ok(StreamOutcome::None) => {}
+                    Err(e) => {
+                        let _ = event_tx.send_error(message_id.clone(), task_id_clone.clone(), e.clone());
+                        let output = super::buffer::strip_crlf(line_content).to_string();
+                        let _ = event_tx.send_message(message_id.clone(), task_id_clone.clone(), topic_name.clone(), output.clone());
+                        if let Some(emit) = emit_func {
+                            let _ = event_tx.send(emit(message_id.clone(), task_id_clone.clone(), output));
+                        }
                     }
                 }
             };
@@ -524,7 +556,11 @@ where
                         },
                         Err(e) => {
                             log::error!("Error reading from {}: {}", topic_name, e);
-                            let _ = event_tx.send_error(format!("Error reading from {}: {}", topic_name, e));
+                            let _ = event_tx.send_error(
+                                MessageId::new(),
+                                task_id.clone(),
+                                format!("Error reading from {}: {}", topic_name, e),
+                            );
                             break;
                         }
                     }

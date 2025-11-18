@@ -123,7 +123,7 @@ impl TaskSpawner {
                                 let event: ExecutorOutputEvent = event;
 
                                 match &event {
-                                    ExecutorOutputEvent::Message { topic, data } => {
+                                    ExecutorOutputEvent::Message { topic, data, .. } => {
                                         log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
                                         match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
@@ -134,7 +134,7 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorOutputEvent::SystemControl { action } => {
+                                    ExecutorOutputEvent::SystemControl { action, .. } => {
                                         log::info!("SystemControl detected from task {}", task_id);
                                         if let Err(e) = system_control_manager.send_system_control_action(
                                             action.clone(),
@@ -148,10 +148,12 @@ impl TaskSpawner {
                                             log::info!("Sent system control action to worker for task {}", task_id);
                                         }
                                     },
-                                    ExecutorOutputEvent::ReturnMessage { data } => {
+                                    ExecutorOutputEvent::ReturnMessage { data, .. } => {
                                         log::info!("ReturnMessage received from task {}: '{}'", task_id, data);
                                         if let Some(ref sender) = other_return_message_sender {
                                             if let Err(e) = sender.send(ExecutorOutputEvent::new_function_response(
+                                                MessageId::new(),
+                                                task_id.clone(),
                                                 task_name.clone(),
                                                 data.clone(),
                                             )) {
@@ -174,7 +176,7 @@ impl TaskSpawner {
                                             task_id
                                         );
                                     },
-                                    ExecutorOutputEvent::TaskStdout { data } => {
+                                    ExecutorOutputEvent::TaskStdout { data, .. } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((view_stdout, _)) = flags {
                                             if view_stdout {
@@ -182,7 +184,7 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorOutputEvent::TaskStderr { data } => {
+                                    ExecutorOutputEvent::TaskStderr { data, .. } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((_, view_stderr)) = flags {
                                             if view_stderr {
@@ -190,10 +192,10 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorOutputEvent::Error { error } => {
+                                    ExecutorOutputEvent::Error { error, .. } => {
                                         log::error!("Error event for task {}: '{}'", task_id, error);
                                     },
-                                    ExecutorOutputEvent::Exit { exit_code } => {
+                                    ExecutorOutputEvent::Exit { exit_code, .. } => {
                                         log::info!("Exit event for task {} with exit code: {}", task_id, exit_code);
 
                                         let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(task_id.clone()).await;
@@ -222,6 +224,7 @@ impl TaskSpawner {
                                         if let Err(e) = backend_handle.input_sender.send(
                                             ExecutorInputEvent::Topic {
                                                 message_id: MessageId::new(),
+                                                task_id: task_id.clone(),
                                                 topic: topic_name.clone(),
                                                 data: data.clone(),
                                             },
@@ -246,10 +249,11 @@ impl TaskSpawner {
                             Some(message) => {
                                 log::info!("Return message received for task {}: {:?}", task_id, &message);
                                 match message {
-                                    ExecutorOutputEvent::FunctionResponse { function_name, data } => {
+                                    ExecutorOutputEvent::FunctionResponse { function_name, data, .. } => {
                                         if let Err(e) = backend_handle.input_sender.send(
                                             ExecutorInputEvent::FunctionResponse {
                                                 message_id: MessageId::new(),
+                                                task_id: task_id.clone(),
                                                 function_name,
                                                 data,
                                             },
@@ -261,11 +265,12 @@ impl TaskSpawner {
                                             );
                                         }
                                     }
-                                    ExecutorOutputEvent::ReturnMessage { data } => {
+                                    ExecutorOutputEvent::ReturnMessage { data, .. } => {
                                         if let Err(e) = backend_handle
                                             .input_sender
                                             .send(ExecutorInputEvent::Topic {
                                                 message_id: MessageId::new(),
+                                                task_id: task_id.clone(),
                                                 topic: "system.return".to_string(),
                                                 data,
                                             })
@@ -300,6 +305,7 @@ impl TaskSpawner {
                                 if let Err(e) = backend_handle.input_sender.send(
                                     ExecutorInputEvent::SystemResponse {
                                         message_id: MessageId::new(),
+                                        task_id: task_id.clone(),
                                         topic,
                                         status,
                                         data,
@@ -313,6 +319,7 @@ impl TaskSpawner {
                                 if let Err(e) = backend_handle.input_sender.send(
                                     ExecutorInputEvent::SystemResponse {
                                         message_id: MessageId::new(),
+                                        task_id: task_id.clone(),
                                         topic,
                                         status,
                                         data: error,

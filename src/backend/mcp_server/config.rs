@@ -18,11 +18,11 @@ impl BackendConfigMeta for McpServerStdIOConfig {
     }
 
     fn default_allow_duplicate() -> bool {
-        true
+        false
     }
 
     fn default_auto_start() -> bool {
-        false
+        true
     }
 
     fn default_view_stdout() -> bool {

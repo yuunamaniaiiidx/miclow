@@ -255,6 +255,7 @@ impl TaskExecutor {
 
                 if let Err(e) = input_sender_for_initial.send(ExecutorInputEvent::Function {
                     message_id: MessageId::new(),
+                    task_id: task_id_for_log.clone(),
                     data: initial_input_for_log.clone(),
                 }) {
                     log::warn!(

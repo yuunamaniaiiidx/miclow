@@ -3,6 +3,7 @@ use crate::backend::TaskBackendHandle;
 use crate::channels::{
     ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, SystemResponseChannel,
 };
+use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
@@ -52,6 +53,8 @@ pub async fn spawn_interactive_protocol(
                             log::info!("Sending message topic:'{}' data:'{}'", system_input_topic, trimmed);
 
                             let event = ExecutorOutputEvent::new_message(
+                                MessageId::new(),
+                                task_id.clone(),
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
                             );
@@ -67,7 +70,11 @@ pub async fn spawn_interactive_protocol(
                         }
                         Err(e) => {
                             log::error!("Error reading from stdin for task {}: {}", task_id, e);
-                            let _ = event_tx_clone.send_error(format!("Error reading from stdin: {}", e));
+                            let _ = event_tx_clone.send_error(
+                                MessageId::new(),
+                                task_id.clone(),
+                                format!("Error reading from stdin: {}", e),
+                            );
                             break;
                         }
                     }

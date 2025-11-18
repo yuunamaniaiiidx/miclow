@@ -6,6 +6,12 @@ working_directory = "./"
 view_stdout = true
 view_stderr = true
 
+[[McpServerStdIO.callable]]
+process_start_mode = "always" # always, on_demand
+tool_name = "filesystem_mcp"
+
+
+
 [[McpServerTcp]]
 task_name = "filesystem_mcp_tcp"
 host = "127.0.0.1"
