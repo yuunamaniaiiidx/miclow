@@ -373,19 +373,23 @@ impl<'de> serde::Deserialize<'de> for RawSystemConfig {
                             
                             // デフォルト値を設定（セクション名から直接判定）
                             if task_config.allow_duplicate.is_none() {
-                                let default_value = get_default_allow_duplicate(key.as_str());
+                                let default_value = get_default_allow_duplicate(key.as_str())
+                                    .map_err(|e| serde::de::Error::custom(e))?;
                                 task_config.allow_duplicate = Some(TomlValue::Boolean(default_value));
                             }
                             if task_config.auto_start.is_none() {
-                                let default_value = get_default_auto_start(key.as_str());
+                                let default_value = get_default_auto_start(key.as_str())
+                                    .map_err(|e| serde::de::Error::custom(e))?;
                                 task_config.auto_start = Some(TomlValue::Boolean(default_value));
                             }
                             if task_config.view_stdout.is_none() {
-                                let default_value = get_default_view_stdout(key.as_str());
+                                let default_value = get_default_view_stdout(key.as_str())
+                                    .map_err(|e| serde::de::Error::custom(e))?;
                                 task_config.view_stdout = Some(TomlValue::Boolean(default_value));
                             }
                             if task_config.view_stderr.is_none() {
-                                let default_value = get_default_view_stderr(key.as_str());
+                                let default_value = get_default_view_stderr(key.as_str())
+                                    .map_err(|e| serde::de::Error::custom(e))?;
                                 task_config.view_stderr = Some(TomlValue::Boolean(default_value));
                             }
                             
