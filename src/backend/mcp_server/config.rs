@@ -18,7 +18,7 @@ impl BackendConfigMeta for McpServerStdIOConfig {
     }
 
     fn force_allow_duplicate() -> bool {
-        false
+        true
     }
 
     fn force_auto_start() -> bool {
