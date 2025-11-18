@@ -20,3 +20,6 @@ auto_start = false
 view_stdout = true
 view_stderr = true
 subscribe_topics = ["function"]
+
+[[tasks.function]]
+topic = "function"

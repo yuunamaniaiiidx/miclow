@@ -337,7 +337,6 @@ struct RawTaskEntry {
 /// functionエントリ
 #[derive(Debug, Clone, serde::Deserialize)]
 struct FunctionEntry {
-    task_name: String,
     topic: String,
 }
 
@@ -364,9 +363,9 @@ impl RawSystemConfig {
             }
         }
 
-        // 未知のセクションをチェック（include_paths以外）
+        // 未知のセクションをチェック（include_paths、tasks、tasks.function以外）
         for (key, _) in &self._unknown {
-            if key != "include_paths" && key != "tasks" {
+            if key != "include_paths" && key != "tasks" && key != "tasks.function" {
                 unknown_sections.push(key.clone());
             }
         }
@@ -374,7 +373,7 @@ impl RawSystemConfig {
         // バリデーション: 未知のセクションがある場合はエラー
         if !unknown_sections.is_empty() {
             return Err(anyhow::anyhow!(
-                "Unknown section(s): {}. Supported sections: [[tasks]]",
+                "Unknown section(s): {}. Supported sections: [[tasks]], [[tasks.function]]",
                 unknown_sections.join(", ")
             ));
         }
@@ -399,14 +398,6 @@ impl RawSystemConfig {
         let functions = if let Some(func_entries) = entry.function {
             let mut func_topics = Vec::new();
             for func_entry in func_entries {
-                // バリデーション: task_nameが一致するかチェック
-                if func_entry.task_name != entry.task_name {
-                    return Err(anyhow::anyhow!(
-                        "Function entry task_name '{}' does not match task task_name '{}'",
-                        func_entry.task_name,
-                        entry.task_name
-                    ));
-                }
                 func_topics.push(TomlValue::String(func_entry.topic));
             }
             if !func_topics.is_empty() {

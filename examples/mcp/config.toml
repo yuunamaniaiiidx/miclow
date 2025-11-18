@@ -6,9 +6,9 @@ args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coding/coto/micl
 working_directory = "./"
 view_stdout = true
 view_stderr = true
-function = [
-    { task_name = "filesystem_mcp", topic = "filesystem_mcp" }
-]
+
+[[tasks.function]]
+topic = "filesystem_mcp"
 
 [[tasks]]
 task_name = "filesystem_mcp_tcp"
@@ -17,9 +17,9 @@ host = "127.0.0.1"
 port = 8890
 view_stdout = true
 view_stderr = true
-function = [
-    { task_name = "filesystem_mcp_tcp", topic = "filesystem_mcp_tcp" }
-]
+
+[[tasks.function]]
+topic = "filesystem_mcp_tcp"
 
 [[tasks]]
 task_name = "main"
