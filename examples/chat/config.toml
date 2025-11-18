@@ -1,5 +1,6 @@
-[[MiclowStdIO]]
+[[tasks]]
 task_name = "main"
+protocol = "MiclowStdIO"
 command = "uv"
 args = ["run", "python3", "main.py"]
 working_directory = "./src"
@@ -7,8 +8,9 @@ environment_vars = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
-[[MiclowStdIO]]
+[[tasks]]
 task_name = "chat"
+protocol = "MiclowStdIO"
 command = "uv"
 args = ["run", "python3", "chat.py"]
 working_directory = "./src"
@@ -17,8 +19,9 @@ view_stdout = true
 view_stderr = true
 subscribe_topics = ["system"]
 
-[[MiclowStdIO]]
+[[tasks]]
 task_name = "receive"
+protocol = "MiclowStdIO"
 command = "uv"
 args = ["run", "python3", "receive.py"]
 working_directory = "./src"

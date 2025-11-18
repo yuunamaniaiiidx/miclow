@@ -159,7 +159,7 @@ pub fn parse_system_control_command_from_outcome(
                     Some(actual_data)
                 };
                 SystemControlAction::CallFunction {
-                    task_name: function_name.to_string(),
+                    function_name: function_name.to_string(),
                     initial_input,
                 }
             }

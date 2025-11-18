@@ -41,7 +41,7 @@ pub enum SystemControlAction {
         topic: String,
     },
     CallFunction {
-        task_name: String,
+        function_name: String,
         initial_input: Option<String>,
     },
     Unknown {
@@ -232,13 +232,34 @@ impl SystemControlAction {
                 }
             }
             SystemControlAction::CallFunction {
-                task_name,
+                function_name,
                 initial_input,
             } => {
+                // function_nameからfunction_to_taskマッピングを使って実際のタスク名を解決
+                log::debug!(
+                    "Looking up function '{}' in function_to_task mapping (total functions: {})",
+                    function_name,
+                    system_config.function_to_task.len()
+                );
+                for (func, task) in &system_config.function_to_task {
+                    log::debug!("  function '{}' -> task '{}'", func, task);
+                }
+                let actual_task_name = system_config
+                    .function_to_task
+                    .get(function_name)
+                    .ok_or_else(|| {
+                        format!(
+                            "Function '{}' is not defined. Please define it using [[BackendName.function]] section in the configuration. Available functions: {}",
+                            function_name,
+                            system_config.function_to_task.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+                        )
+                    })?;
+
                 log::info!(
-                    "Processing CallFunction action for task {}: '{}'",
-                    task_id,
-                    task_name
+                    "Processing CallFunction action for function '{}' -> task '{}' (caller: {})",
+                    function_name,
+                    actual_task_name,
+                    task_id
                 );
 
                 let parent_invocation = ParentInvocationContext {
@@ -247,7 +268,7 @@ impl SystemControlAction {
                 };
 
                 let ready_context = match StartContext::from_task_name(
-                    task_name.clone(),
+                    actual_task_name.clone(),
                     system_config,
                     topic_manager.clone(),
                     system_control_manager.clone(),
@@ -257,37 +278,37 @@ impl SystemControlAction {
                 ) {
                     Ok(ctx) => ctx,
                     Err(e) => {
-                        log::error!("Failed to find task '{}': {}", task_name, e);
+                        log::error!("Failed to find task '{}' for function '{}': {}", actual_task_name, function_name, e);
                         let status = SystemResponseStatus::Error;
-                        let response_topic = format!("system.function.{}", task_name);
+                        let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
                             status.to_string(),
                             e.to_string(),
                         );
                         let _ = response_channel.send(error_event);
-                        return Err(format!("Task '{}' not found", task_name));
+                        return Err(format!("Task '{}' not found for function '{}'", actual_task_name, function_name));
                     }
                 };
 
                 match task_executor.start_task_from_config(ready_context).await {
                     Ok(_) => {
-                        log::info!("Successfully called function '{}'", task_name);
+                        log::info!("Successfully called function '{}' -> task '{}'", function_name, actual_task_name);
 
                         let status = SystemResponseStatus::Success;
-                        let response_topic = format!("system.function.{}", task_name);
+                        let response_topic = format!("system.function.{}", function_name);
                         let success_event = SystemResponseEvent::new_system_response(
                             response_topic,
                             status.to_string(),
-                            task_name.clone(),
+                            actual_task_name.clone(),
                         );
                         let _ = response_channel.send(success_event);
                         Ok(())
                     }
                     Err(e) => {
-                        log::error!("Failed to call function '{}': {}", task_name, e);
+                        log::error!("Failed to call function '{}' -> task '{}': {}", function_name, actual_task_name, e);
                         let status = SystemResponseStatus::Error;
-                        let response_topic = format!("system.function.{}", task_name);
+                        let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
                             status.to_string(),

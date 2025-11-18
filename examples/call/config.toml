@@ -1,5 +1,6 @@
-[[MiclowStdIO]]
+[[tasks]]
 task_name = "main"
+protocol = "MiclowStdIO"
 command = "uv"
 args = ["run", "python3", "main.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
@@ -7,8 +8,9 @@ environment_vars = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
-[[MiclowStdIO]]
+[[tasks]]
 task_name = "function"
+protocol = "MiclowStdIO"
 command = "uv"
 args = ["run", "python3", "function.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"

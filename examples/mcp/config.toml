@@ -1,20 +1,29 @@
-[[McpServerStdIO]]
+[[tasks]]
 task_name = "filesystem_mcp"
+protocol = "McpServerStdIO"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coding/coto/miclow/examples/mcp"]
 working_directory = "./"
 view_stdout = true
 view_stderr = true
+function = [
+    { task_name = "filesystem_mcp", topic = "filesystem_mcp" }
+]
 
-[[McpServerTcp]]
+[[tasks]]
 task_name = "filesystem_mcp_tcp"
+protocol = "McpServerTcp"
 host = "127.0.0.1"
 port = 8890
 view_stdout = true
 view_stderr = true
+function = [
+    { task_name = "filesystem_mcp_tcp", topic = "filesystem_mcp_tcp" }
+]
 
-[[MiclowStdIO]]
+[[tasks]]
 task_name = "main"
+protocol = "MiclowStdIO"
 command = "uv"
 args = ["run", "python3", "main.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"

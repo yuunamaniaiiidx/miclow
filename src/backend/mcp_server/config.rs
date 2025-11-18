@@ -10,6 +10,7 @@ pub struct McpServerStdIOConfig {
     pub args: Vec<String>,
     pub working_directory: Option<String>,
     pub environment_vars: Option<HashMap<String, String>>,
+    pub functions: Vec<String>,
 }
 
 impl BackendConfigMeta for McpServerStdIOConfig {
@@ -79,11 +80,14 @@ pub fn try_mcp_server_stdio_from_expanded_config(config: &ExpandedTaskConfig) ->
         }
     }
 
+    let functions: Vec<String> = config.functions.clone();
+
     Ok(McpServerStdIOConfig {
         command,
         args,
         working_directory,
         environment_vars,
+        functions,
     })
 }
 
@@ -91,6 +95,7 @@ pub fn try_mcp_server_stdio_from_expanded_config(config: &ExpandedTaskConfig) ->
 pub struct McpServerTcpConfig {
     pub host: String,
     pub port: u16,
+    pub functions: Vec<String>,
 }
 
 impl BackendConfigMeta for McpServerTcpConfig {
@@ -141,6 +146,8 @@ pub fn try_mcp_server_tcp_from_expanded_config(config: &ExpandedTaskConfig) -> R
         );
     }
 
-    Ok(McpServerTcpConfig { host, port })
+    let functions: Vec<String> = config.functions.clone();
+
+    Ok(McpServerTcpConfig { host, port, functions })
 }
 
