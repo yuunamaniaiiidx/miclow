@@ -7,8 +7,8 @@ pub mod miclowstdio;
 pub mod spawn_result;
 
 pub use config::{
-    BackendConfigMeta, get_default_allow_duplicate, get_default_auto_start,
-    get_default_view_stderr, get_default_view_stdout,
+    BackendConfigMeta, get_default_view_stderr, get_default_view_stdout,
+    get_force_allow_duplicate, get_force_auto_start,
 };
 pub use dispatcher::{ProtocolBackend, TaskBackend};
 pub use handle::TaskBackendHandle;

@@ -1,8 +1,8 @@
 pub mod expansion;
 
 use crate::backend::{
-    BackendConfigMeta, get_default_allow_duplicate, get_default_auto_start,
-    get_default_view_stderr, get_default_view_stdout, InteractiveConfig,
+    BackendConfigMeta, get_default_view_stderr, get_default_view_stdout,
+    get_force_allow_duplicate, get_force_auto_start, InteractiveConfig,
     McpServerStdIOConfig, McpServerTcpConfig, MiclowStdIOConfig, ProtocolBackend,
 };
 use crate::config::expansion::{ExpandContext, Expandable};
@@ -371,17 +371,43 @@ impl<'de> serde::Deserialize<'de> for RawSystemConfig {
                             let mut task_config = RawTaskConfig::from_toml_table(entry_table, protocol_name.clone())
                                 .map_err(|e| serde::de::Error::custom(format!("Failed to create task config: {}", e)))?;
                             
-                            // デフォルト値を設定（セクション名から直接判定）
+                            // 強制値を取得
+                            let force_allow_duplicate = get_force_allow_duplicate(key.as_str())
+                                .map_err(|e| serde::de::Error::custom(e))?;
+                            let force_auto_start = get_force_auto_start(key.as_str())
+                                .map_err(|e| serde::de::Error::custom(e))?;
+                            
+                            // タスク名を取得（エラーメッセージ用）
+                            let task_name = task_config.name.as_str().unwrap_or("unknown");
+                            
+                            // Interactiveバックエンドの場合、ユーザーが設定していたらエラー
+                            if key == "Interactive" {
+                                if task_config.allow_duplicate.is_some() {
+                                    return Err(serde::de::Error::custom(format!(
+                                        "Task '{}' (protocol: {}) cannot have 'allow_duplicate' set by user. It is forced to {} by the backend implementation.",
+                                        task_name,
+                                        key,
+                                        force_allow_duplicate
+                                    )));
+                                }
+                                if task_config.auto_start.is_some() {
+                                    return Err(serde::de::Error::custom(format!(
+                                        "Task '{}' (protocol: {}) cannot have 'auto_start' set by user. It is forced to {} by the backend implementation.",
+                                        task_name,
+                                        key,
+                                        force_auto_start
+                                    )));
+                                }
+                            }
+                            
+                            // 強制値を設定
                             if task_config.allow_duplicate.is_none() {
-                                let default_value = get_default_allow_duplicate(key.as_str())
-                                    .map_err(|e| serde::de::Error::custom(e))?;
-                                task_config.allow_duplicate = Some(TomlValue::Boolean(default_value));
+                                task_config.allow_duplicate = Some(TomlValue::Boolean(force_allow_duplicate));
                             }
                             if task_config.auto_start.is_none() {
-                                let default_value = get_default_auto_start(key.as_str())
-                                    .map_err(|e| serde::de::Error::custom(e))?;
-                                task_config.auto_start = Some(TomlValue::Boolean(default_value));
+                                task_config.auto_start = Some(TomlValue::Boolean(force_auto_start));
                             }
+                            
                             if task_config.view_stdout.is_none() {
                                 let default_value = get_default_view_stdout(key.as_str())
                                     .map_err(|e| serde::de::Error::custom(e))?;

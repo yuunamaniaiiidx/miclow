@@ -17,12 +17,12 @@ impl BackendConfigMeta for McpServerStdIOConfig {
         "McpServerStdIO"
     }
 
-    fn default_allow_duplicate() -> bool {
+    fn force_allow_duplicate() -> bool {
         false
     }
 
-    fn default_auto_start() -> bool {
-        true
+    fn force_auto_start() -> bool {
+        false
     }
 
     fn default_view_stdout() -> bool {
@@ -98,11 +98,11 @@ impl BackendConfigMeta for McpServerTcpConfig {
         "McpServerTcp"
     }
 
-    fn default_allow_duplicate() -> bool {
+    fn force_allow_duplicate() -> bool {
         true
     }
 
-    fn default_auto_start() -> bool {
+    fn force_auto_start() -> bool {
         false
     }
 
