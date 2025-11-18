@@ -19,6 +19,7 @@ pub enum ExecutorInputEvent {
     Function {
         message_id: MessageId,
         task_id: TaskId,
+        caller_task_id: TaskId,
         data: String,
     },
     FunctionResponse {

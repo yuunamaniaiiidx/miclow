@@ -169,6 +169,11 @@ impl TaskExecutor {
         id_to_name.get(task_id).cloned()
     }
 
+    pub async fn get_input_sender_by_task_id(&self, task_id: &TaskId) -> Option<crate::channels::ExecutorInputEventSender> {
+        let running_tasks = self.running_tasks.read().await;
+        running_tasks.get(task_id).map(|task| task.input_sender.clone())
+    }
+
     pub async fn graceful_shutdown_all(&self, timeout: std::time::Duration) {
         let tasks: Vec<(TaskId, RunningTask)> = {
             let mut running_tasks = self.running_tasks.write().await;
@@ -219,15 +224,13 @@ impl TaskExecutor {
             context.userlog_sender,
         );
 
+        let caller_task_id = context.parent_invocation.as_ref().map(|p| p.caller_task_id.clone());
         let spawn_result = task_spawner
             .spawn_backend(
                 backend.clone(),
                 context.shutdown_token,
                 subscribe_topics,
-                context
-                    .parent_invocation
-                    .as_ref()
-                    .map(|parent| parent.return_channel.clone()),
+                caller_task_id,
             )
             .await;
 
@@ -250,12 +253,14 @@ impl TaskExecutor {
                 .clone()
                 .unwrap_or_else(|| "".to_string());
             let task_id_for_log = task_id_new.clone();
+            let caller_task_id = parent_invocation.caller_task_id.clone();
             tokio::task::spawn(async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
                 if let Err(e) = input_sender_for_initial.send(ExecutorInputEvent::Function {
                     message_id: MessageId::new(),
                     task_id: task_id_for_log.clone(),
+                    caller_task_id: caller_task_id.clone(),
                     data: initial_input_for_log.clone(),
                 }) {
                     log::warn!(

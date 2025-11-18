@@ -28,6 +28,7 @@ use tokio::task;
 pub async fn spawn_mcp_stdio_protocol(
     config: &McpServerStdIOConfig,
     task_id: TaskId,
+    caller_task_id: Option<TaskId>,
 ) -> Result<TaskBackendHandle> {
     let event_channel = ExecutorOutputEventChannel::new();
     let input_channel = ExecutorInputEventChannel::new();
@@ -62,6 +63,7 @@ pub async fn spawn_mcp_stdio_protocol(
                     input_receiver,
                     shutdown_receiver,
                     event_sender.clone(),
+                    caller_task_id,
                 )
                 .await
                 {
@@ -94,6 +96,7 @@ pub async fn spawn_mcp_stdio_protocol(
 pub async fn spawn_mcp_tcp_protocol(
     config: &McpServerTcpConfig,
     task_id: TaskId,
+    caller_task_id: Option<TaskId>,
 ) -> Result<TaskBackendHandle> {
     let event_channel = ExecutorOutputEventChannel::new();
     let input_channel = ExecutorInputEventChannel::new();
@@ -120,6 +123,7 @@ pub async fn spawn_mcp_tcp_protocol(
                     input_receiver,
                     shutdown_receiver,
                     event_sender.clone(),
+                    caller_task_id,
                 )
                 .await
                 {
@@ -156,6 +160,7 @@ async fn run_mcp_session<T>(
     mut input_receiver: ExecutorInputEventReceiver,
     mut shutdown_receiver: tokio::sync::mpsc::UnboundedReceiver<()>,
     event_sender: ExecutorOutputEventSender,
+    caller_task_id: Option<TaskId>,
 ) -> Result<()>
 where
     T: rmcp::transport::IntoTransport<
@@ -182,7 +187,7 @@ where
             }
             input = input_receiver.recv() => {
                 match input {
-                    Some(ExecutorInputEvent::Function { data, .. }) => {
+                    Some(ExecutorInputEvent::Function { caller_task_id: function_caller_task_id, data, .. }) => {
                         match parse_tool_invocation(&data) {
                             Ok((tool_name, arguments_raw)) => {
                                 let arguments = match to_argument_map(arguments_raw) {
@@ -193,12 +198,17 @@ where
                                     }
                                 };
 
-                                if let Err(err) = dispatch_call_tool(peer.clone(), event_sender.clone(), task_id.clone(), tool_name, arguments).await {
-                                    let _ = event_sender.send_error(
-                                        MessageId::new(),
-                                        task_id.clone(),
-                                        format!("MCP request failed: {err:#}"),
-                                    );
+                                let actual_caller_task_id = caller_task_id.clone().or(Some(function_caller_task_id.clone()));
+                                if let Some(caller_id) = actual_caller_task_id {
+                                    if let Err(err) = dispatch_call_tool(peer.clone(), event_sender.clone(), task_id.clone(), caller_id, tool_name, arguments).await {
+                                        let _ = event_sender.send_error(
+                                            MessageId::new(),
+                                            task_id.clone(),
+                                            format!("MCP request failed: {err:#}"),
+                                        );
+                                    }
+                                } else {
+                                    emit_stderr(&event_sender, task_id.clone(), "MCP function call requires caller_task_id".to_string());
                                 }
                             }
                             Err(err) => {
@@ -286,6 +296,7 @@ async fn dispatch_call_tool(
     peer: Peer<RoleClient>,
     event_sender: ExecutorOutputEventSender,
     task_id: TaskId,
+    caller_task_id: TaskId,
     tool_name: String,
     arguments: Option<JsonObject>,
 ) -> Result<()> {
@@ -295,7 +306,7 @@ async fn dispatch_call_tool(
     };
 
     let result = peer.call_tool(request).await?;
-    forward_call_result(tool_name, result, event_sender, task_id)?;
+    forward_call_result(tool_name, result, event_sender, task_id, caller_task_id)?;
     Ok(())
 }
 
@@ -330,6 +341,7 @@ fn forward_call_result(
     result: CallToolResult,
     event_sender: ExecutorOutputEventSender,
     task_id: TaskId,
+    caller_task_id: TaskId,
 ) -> Result<()> {
     let payload = format_tool_result(&result)?;
     let message_id = MessageId::new();
@@ -339,7 +351,7 @@ fn forward_call_result(
             .ok();
     } else {
         event_sender
-            .send(ExecutorOutputEvent::new_return_message(message_id, task_id, payload))
+            .send(ExecutorOutputEvent::new_return_message(message_id, task_id, caller_task_id, payload))
             .ok();
     }
     Ok(())

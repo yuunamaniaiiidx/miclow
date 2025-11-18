@@ -2,14 +2,13 @@ use crate::channels::UserLogSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::system_control::SystemControlQueue;
 use crate::topic_broker::TopicBroker;
+use crate::task_id::TaskId;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-use crate::channels::ExecutorOutputEventSender;
-
 #[derive(Clone)]
 pub struct ParentInvocationContext {
-    pub return_channel: ExecutorOutputEventSender,
+    pub caller_task_id: TaskId,
     pub initial_input: Option<String>,
 }
 

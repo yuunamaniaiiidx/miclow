@@ -91,7 +91,6 @@ impl BackgroundWorker for SystemControlWorker {
                             let system_control_manager_clone = system_control_manager.clone();
                             let response_channel_clone = message.response_channel.clone();
                             let task_event_sender_clone = message.task_event_sender.clone();
-                            let return_message_sender_clone = message.return_message_sender.clone();
                             let response_channel_for_cancel = message.response_channel.clone();
                             let action_clone = message.action.clone();
 
@@ -110,7 +109,6 @@ impl BackgroundWorker for SystemControlWorker {
                                         &task_id_clone,
                                         &response_channel_clone,
                                         &task_event_sender_clone,
-                                        &return_message_sender_clone,
                                     ).await
                                 });
 

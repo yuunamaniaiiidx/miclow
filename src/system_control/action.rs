@@ -62,7 +62,6 @@ impl SystemControlAction {
         task_id: &TaskId,
         response_channel: &SystemResponseSender,
         task_event_sender: &ExecutorOutputEventSender,
-        return_message_sender: &ExecutorOutputEventSender,
     ) -> Result<(), String> {
         match self {
             SystemControlAction::SubscribeTopic { topic } => {
@@ -243,7 +242,7 @@ impl SystemControlAction {
                 );
 
                 let parent_invocation = ParentInvocationContext {
-                    return_channel: return_message_sender.clone(),
+                    caller_task_id: task_id.clone(),
                     initial_input: initial_input.clone(),
                 };
 

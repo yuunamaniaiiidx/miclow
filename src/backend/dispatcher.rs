@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait TaskBackend: Send + Sync {
-    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error>;
+    async fn spawn(&self, task_id: TaskId, caller_task_id: Option<TaskId>) -> Result<TaskBackendHandle, Error>;
 }
 
 #[derive(Debug, Clone)]
@@ -37,18 +37,18 @@ impl ProtocolBackend {
 
 #[async_trait]
 impl TaskBackend for ProtocolBackend {
-    async fn spawn(&self, task_id: TaskId) -> Result<TaskBackendHandle, Error> {
+    async fn spawn(&self, task_id: TaskId, caller_task_id: Option<TaskId>) -> Result<TaskBackendHandle, Error> {
         match self {
             ProtocolBackend::MiclowStdIO(config) => {
-                spawn_miclow_stdio_protocol(config, task_id).await
+                spawn_miclow_stdio_protocol(config, task_id, caller_task_id).await
             }
             ProtocolBackend::Interactive(config) => {
                 spawn_interactive_protocol(config, task_id).await
             }
             ProtocolBackend::McpServerStdIO(config) => {
-                spawn_mcp_stdio_protocol(config, task_id).await
+                spawn_mcp_stdio_protocol(config, task_id, caller_task_id).await
             }
-            ProtocolBackend::McpServerTcp(config) => spawn_mcp_tcp_protocol(config, task_id).await,
+            ProtocolBackend::McpServerTcp(config) => spawn_mcp_tcp_protocol(config, task_id, caller_task_id).await,
         }
     }
 }
