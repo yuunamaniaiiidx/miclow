@@ -186,7 +186,7 @@ impl SystemControlAction {
                 );
 
                 match topic_manager.get_latest_message(topic).await {
-                    Some(ExecutorOutputEvent::Message { data, .. }) => {
+                    Some(ExecutorOutputEvent::Topic { data, .. }) => {
                         let status = SystemResponseStatus::Success;
                         let response_topic = "system.get-latest-message".to_string();
                         let success_event = SystemResponseEvent::new_system_response(

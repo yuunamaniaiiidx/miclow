@@ -118,7 +118,7 @@ impl TaskSpawner {
                                 let event: ExecutorOutputEvent = event;
 
                                 match &event {
-                                    ExecutorOutputEvent::Message { topic, data, .. } => {
+                                    ExecutorOutputEvent::Topic { topic, data, .. } => {
                                         log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
                                         match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
@@ -142,7 +142,7 @@ impl TaskSpawner {
                                             log::info!("Sent system control action to worker for task {}", task_id);
                                         }
                                     },
-                                    ExecutorOutputEvent::ReturnMessage { return_to_task_id, data, .. } => {
+                                    ExecutorOutputEvent::FunctionResponse { return_to_task_id, data, .. } => {
                                         log::info!("ReturnMessage received from task {}: '{}'", task_id, data);
                                         if let Some(input_sender) = task_executor.get_input_sender_by_task_id(&return_to_task_id).await {
                                             if let Err(e) = input_sender.send(
@@ -172,7 +172,7 @@ impl TaskSpawner {
                                             );
                                         }
                                     },
-                                    ExecutorOutputEvent::TaskStdout { data, .. } => {
+                                    ExecutorOutputEvent::Stdout { data, .. } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((view_stdout, _)) = flags {
                                             if view_stdout {
@@ -180,7 +180,7 @@ impl TaskSpawner {
                                             }
                                         }
                                     },
-                                    ExecutorOutputEvent::TaskStderr { data, .. } => {
+                                    ExecutorOutputEvent::Stderr { data, .. } => {
                                         let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
                                         if let Some((_, view_stderr)) = flags {
                                             if view_stderr {

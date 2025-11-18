@@ -4,18 +4,18 @@ use crate::task_id::TaskId;
 
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
-    Message {
+    Topic {
         message_id: MessageId,
         task_id: TaskId,
         topic: String,
         data: String,
     },
-    TaskStdout {
+    Stdout {
         message_id: MessageId,
         task_id: TaskId,
         data: String,
     },
-    TaskStderr {
+    Stderr {
         message_id: MessageId,
         task_id: TaskId,
         data: String,
@@ -25,7 +25,7 @@ pub enum ExecutorOutputEvent {
         task_id: TaskId,
         action: SystemControlAction,
     },
-    ReturnMessage {
+    FunctionResponse {
         message_id: MessageId,
         task_id: TaskId,
         return_to_task_id: TaskId,
@@ -45,7 +45,7 @@ pub enum ExecutorOutputEvent {
 
 impl ExecutorOutputEvent {
     pub fn new_message(message_id: MessageId, task_id: TaskId, topic: String, data: String) -> Self {
-        Self::Message {
+        Self::Topic {
             message_id,
             task_id,
             topic,
@@ -70,7 +70,7 @@ impl ExecutorOutputEvent {
     }
 
     pub fn new_task_stdout(message_id: MessageId, task_id: TaskId, data: String) -> Self {
-        Self::TaskStdout {
+        Self::Stdout {
             message_id,
             task_id,
             data,
@@ -78,7 +78,7 @@ impl ExecutorOutputEvent {
     }
 
     pub fn new_task_stderr(message_id: MessageId, task_id: TaskId, data: String) -> Self {
-        Self::TaskStderr {
+        Self::Stderr {
             message_id,
             task_id,
             data,
@@ -98,7 +98,7 @@ impl ExecutorOutputEvent {
     }
 
     pub fn new_return_message(message_id: MessageId, task_id: TaskId, return_to_task_id: TaskId, data: String) -> Self {
-        Self::ReturnMessage {
+        Self::FunctionResponse {
             message_id,
             task_id,
             return_to_task_id,
@@ -108,17 +108,17 @@ impl ExecutorOutputEvent {
 
     pub fn data(&self) -> Option<&String> {
         match self {
-            Self::Message { data, .. } => Some(data),
-            Self::TaskStdout { data, .. } => Some(data),
-            Self::TaskStderr { data, .. } => Some(data),
-            Self::ReturnMessage { data, .. } => Some(data),
+            Self::Topic { data, .. } => Some(data),
+            Self::Stdout { data, .. } => Some(data),
+            Self::Stderr { data, .. } => Some(data),
+            Self::FunctionResponse { data, .. } => Some(data),
             _ => None,
         }
     }
 
     pub fn topic(&self) -> Option<&String> {
         match self {
-            Self::Message { topic, .. } => Some(topic),
+            Self::Topic { topic, .. } => Some(topic),
             _ => None,
         }
     }
