@@ -1,7 +1,7 @@
 use crate::backend::{ProtocolBackend, SpawnBackendResult, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventChannel, ExecutorOutputEventChannel,
-    ShutdownChannel, SystemResponseChannel, UserLogSender,
+    ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, SystemResponseChannel,
+    UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
@@ -55,7 +55,8 @@ impl TaskSpawner {
         let task_executor: TaskExecutor = self.task_executor;
         let userlog_sender = self.userlog_sender.clone();
 
-        let mut backend_handle = match backend.spawn(task_id.clone(), caller_task_id.clone()).await {
+        let mut backend_handle = match backend.spawn(task_id.clone(), caller_task_id.clone()).await
+        {
             Ok(handle) => handle,
             Err(e) => {
                 log::error!("Failed to spawn task backend for task {}: {}", task_id, e);

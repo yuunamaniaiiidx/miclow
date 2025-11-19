@@ -35,7 +35,9 @@ impl BackendConfigMeta for McpServerStdIOConfig {
     }
 }
 
-pub fn try_mcp_server_stdio_from_expanded_config(config: &ExpandedTaskConfig) -> Result<McpServerStdIOConfig> {
+pub fn try_mcp_server_stdio_from_expanded_config(
+    config: &ExpandedTaskConfig,
+) -> Result<McpServerStdIOConfig> {
     let command: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
             "Command field is required for McpServerStdIO in task '{}'",
@@ -120,7 +122,9 @@ impl BackendConfigMeta for McpServerTcpConfig {
     }
 }
 
-pub fn try_mcp_server_tcp_from_expanded_config(config: &ExpandedTaskConfig) -> Result<McpServerTcpConfig> {
+pub fn try_mcp_server_tcp_from_expanded_config(
+    config: &ExpandedTaskConfig,
+) -> Result<McpServerTcpConfig> {
     let host: String = config
         .expand("host")
         .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -148,6 +152,9 @@ pub fn try_mcp_server_tcp_from_expanded_config(config: &ExpandedTaskConfig) -> R
 
     let functions: Vec<String> = config.functions.clone();
 
-    Ok(McpServerTcpConfig { host, port, functions })
+    Ok(McpServerTcpConfig {
+        host,
+        port,
+        functions,
+    })
 }
-

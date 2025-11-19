@@ -28,7 +28,9 @@ impl ExecutorOutputEventSender {
         key: String,
         data: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_message(message_id, task_id, key, data))
+        self.send(ExecutorOutputEvent::new_message(
+            message_id, task_id, key, data,
+        ))
     }
 
     pub fn send_error(

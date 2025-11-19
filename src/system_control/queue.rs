@@ -67,12 +67,8 @@ impl SystemControlQueue {
         response_channel: SystemResponseSender,
         task_event_sender: ExecutorOutputEventSender,
     ) -> Result<(), String> {
-        let message = SystemControlMessage::new(
-            action,
-            task_id,
-            response_channel,
-            task_event_sender,
-        );
+        let message =
+            SystemControlMessage::new(action, task_id, response_channel, task_event_sender);
         self.add_command(message).await
     }
 

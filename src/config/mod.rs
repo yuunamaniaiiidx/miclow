@@ -1,8 +1,8 @@
 pub mod expansion;
 
 use crate::backend::{
-    BackendConfigMeta, get_default_view_stderr, get_default_view_stdout,
-    get_force_allow_duplicate, get_force_auto_start, InteractiveConfig,
+    create_protocol_backend, get_default_view_stderr, get_default_view_stdout,
+    get_force_allow_duplicate, get_force_auto_start, BackendConfigMeta, InteractiveConfig,
     McpServerStdIOConfig, McpServerTcpConfig, MiclowStdIOConfig, ProtocolBackend,
 };
 use crate::config::expansion::{ExpandContext, Expandable};
@@ -230,44 +230,6 @@ impl ExpandedTaskConfig {
     }
 }
 
-/// プロトコル名からProtocolBackendを作成
-fn create_protocol_backend(
-    protocol: &str,
-    expanded: &ExpandedTaskConfig,
-) -> Result<ProtocolBackend> {
-    use crate::backend::{
-        interactive::try_interactive_from_expanded_config,
-        mcp_server::{
-            try_mcp_server_stdio_from_expanded_config, try_mcp_server_tcp_from_expanded_config,
-        },
-        miclowstdio::try_miclow_stdio_from_expanded_config,
-    };
-
-    match protocol.trim() {
-        "MiclowStdIO" => {
-            let backend_config = try_miclow_stdio_from_expanded_config(expanded)?;
-            Ok(ProtocolBackend::MiclowStdIO(backend_config))
-        }
-        "Interactive" => {
-            let backend_config = try_interactive_from_expanded_config(expanded)?;
-            Ok(ProtocolBackend::Interactive(backend_config))
-        }
-        "McpServerStdIO" => {
-            let backend_config = try_mcp_server_stdio_from_expanded_config(expanded)?;
-            Ok(ProtocolBackend::McpServerStdIO(backend_config))
-        }
-        "McpServerTcp" => {
-            let backend_config = try_mcp_server_tcp_from_expanded_config(expanded)?;
-            Ok(ProtocolBackend::McpServerTcp(backend_config))
-        }
-        _ => Err(anyhow::anyhow!(
-            "Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdIO, Interactive, McpServerStdIO, McpServerTcp",
-            protocol,
-            expanded.name
-        )),
-    }
-}
-
 impl TaskConfig {
     /// プロトコル固有設定から値を取得（展開済み）
     pub fn get_protocol_value(&self, key: &str) -> Option<&TomlValue> {
@@ -413,9 +375,9 @@ impl RawSystemConfig {
         let mut task_config = RawTaskConfig {
             name: TomlValue::String(entry.task_name.clone()),
             protocol: TomlValue::String(protocol_name),
-            subscribe_topics: entry.subscribe_topics.map(|v| {
-                TomlValue::Array(v.into_iter().map(|s| TomlValue::String(s)).collect())
-            }),
+            subscribe_topics: entry
+                .subscribe_topics
+                .map(|v| TomlValue::Array(v.into_iter().map(|s| TomlValue::String(s)).collect())),
             allow_duplicate: entry.allow_duplicate.map(|v| TomlValue::Boolean(v)),
             auto_start: entry.auto_start.map(|v| TomlValue::Boolean(v)),
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
@@ -449,28 +411,24 @@ impl SystemConfig {
         expand_context: &ExpandContext,
     ) -> Result<Self> {
         let raw: RawSystemConfig = toml::from_str(toml_content)?;
-        
+
         // include_pathsを先に取得
         let include_paths_raw = raw.include_paths.clone();
-        
+
         // バリデーションと変換（normalize_defaultsも含まれる）
         let raw_tasks = raw.validate_and_convert()?;
 
         // 変数展開とProtocolBackend作成を実行してTaskConfigに変換
         let mut tasks = HashMap::new();
         let mut function_to_task = HashMap::new();
-        
+
         for task in raw_tasks {
             let expanded = task.expand_and_create_backend(expand_context)?;
             let name = expanded.name.clone();
-            
+
             // 関数名→タスク名のマッピングを構築
             for function_name in &expanded.functions {
-                log::debug!(
-                    "Mapping function '{}' to task '{}'",
-                    function_name,
-                    name
-                );
+                log::debug!("Mapping function '{}' to task '{}'", function_name, name);
                 if let Some(existing_task) = function_to_task.get(function_name) {
                     return Err(anyhow::anyhow!(
                         "Function '{}' is already assigned to task '{}', cannot assign to task '{}'",
@@ -479,7 +437,7 @@ impl SystemConfig {
                 }
                 function_to_task.insert(function_name.clone(), name.clone());
             }
-            
+
             if tasks.insert(name.clone(), expanded).is_some() {
                 return Err(anyhow::anyhow!("Duplicate task name: {}", name));
             }
@@ -527,15 +485,9 @@ impl SystemConfig {
         // パース後に展開処理を実行
         let mut config = Self::from_toml_internal(&config_content, true, &expand_context)?;
 
-        log::debug!(
-            "Before load_includes: {} tasks",
-            config.tasks.len()
-        );
+        log::debug!("Before load_includes: {} tasks", config.tasks.len());
         config.load_includes(&config_file)?;
-        log::debug!(
-            "After load_includes: {} tasks",
-            config.tasks.len()
-        );
+        log::debug!("After load_includes: {} tasks", config.tasks.len());
         config.validate().unwrap_or_else(|e| {
             eprintln!("Config validation failed: {}", e);
             eprintln!("\nError details:");
@@ -549,10 +501,7 @@ impl SystemConfig {
     }
 
     pub fn get_autostart_tasks(&self) -> Vec<&TaskConfig> {
-        self.tasks
-            .values()
-            .filter(|task| task.auto_start)
-            .collect()
+        self.tasks.values().filter(|task| task.auto_start).collect()
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -603,7 +552,6 @@ impl SystemConfig {
         }
         Ok(())
     }
-
 
     fn load_includes(&mut self, base_config_path: &str) -> Result<()> {
         let mut loaded_files = HashSet::new();
@@ -665,15 +613,18 @@ impl SystemConfig {
                             for (name, task) in included_config.tasks {
                                 // 関数名→タスク名のマッピングを更新
                                 for function_name in &task.functions {
-                                    if let Some(existing_task) = self.function_to_task.get(function_name) {
+                                    if let Some(existing_task) =
+                                        self.function_to_task.get(function_name)
+                                    {
                                         log::warn!(
                                             "Function '{}' is already assigned to task '{}', overwriting with task '{}' from include file {}",
                                             function_name, existing_task, name, full_path
                                         );
                                     }
-                                    self.function_to_task.insert(function_name.clone(), name.clone());
+                                    self.function_to_task
+                                        .insert(function_name.clone(), name.clone());
                                 }
-                                
+
                                 if self.tasks.insert(name.clone(), task).is_some() {
                                     log::warn!(
                                         "Duplicate task name '{}' in include file {}, overwriting",
@@ -712,14 +663,14 @@ impl SystemConfig {
 impl RawTaskConfig {
     fn normalize_defaults(&mut self, backend_name: &str) -> Result<()> {
         // 強制値を取得
-        let force_allow_duplicate = get_force_allow_duplicate(backend_name)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        let force_auto_start = get_force_auto_start(backend_name)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        
+        let force_allow_duplicate =
+            get_force_allow_duplicate(backend_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+        let force_auto_start =
+            get_force_auto_start(backend_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+
         // タスク名を取得（エラーメッセージ用）
         let task_name = self.name.as_str().unwrap_or("unknown");
-        
+
         // バリデーション: Interactiveバックエンドの場合、ユーザーが設定していたらエラー
         if backend_name == "Interactive" {
             if self.allow_duplicate.is_some() {
@@ -739,7 +690,7 @@ impl RawTaskConfig {
                 ));
             }
         }
-        
+
         // 強制値を設定
         if self.allow_duplicate.is_none() {
             self.allow_duplicate = Some(TomlValue::Boolean(force_allow_duplicate));
@@ -747,19 +698,19 @@ impl RawTaskConfig {
         if self.auto_start.is_none() {
             self.auto_start = Some(TomlValue::Boolean(force_auto_start));
         }
-        
+
         // デフォルト値を設定
         if self.view_stdout.is_none() {
-            let default_value = get_default_view_stdout(backend_name)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let default_value =
+                get_default_view_stdout(backend_name).map_err(|e| anyhow::anyhow!("{}", e))?;
             self.view_stdout = Some(TomlValue::Boolean(default_value));
         }
         if self.view_stderr.is_none() {
-            let default_value = get_default_view_stderr(backend_name)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let default_value =
+                get_default_view_stderr(backend_name).map_err(|e| anyhow::anyhow!("{}", e))?;
             self.view_stderr = Some(TomlValue::Boolean(default_value));
         }
-        
+
         Ok(())
     }
 }
@@ -807,8 +758,15 @@ args = ["main"]
 
         let config = SystemConfig::from_file(main_file.to_string_lossy().to_string()).unwrap();
 
-        assert_eq!(config.tasks.len(), 2, "Should have 2 tasks (1 from main file + 1 from include file)");
+        assert_eq!(
+            config.tasks.len(),
+            2,
+            "Should have 2 tasks (1 from main file + 1 from include file)"
+        );
         assert_eq!(config.tasks.get("main_task").unwrap().name, "main_task");
-        assert_eq!(config.tasks.get("test_function").unwrap().name, "test_function");
+        assert_eq!(
+            config.tasks.get("test_function").unwrap().name,
+            "test_function"
+        );
     }
 }

@@ -44,7 +44,12 @@ pub enum ExecutorOutputEvent {
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(message_id: MessageId, task_id: TaskId, topic: String, data: String) -> Self {
+    pub fn new_message(
+        message_id: MessageId,
+        task_id: TaskId,
+        topic: String,
+        data: String,
+    ) -> Self {
         Self::Topic {
             message_id,
             task_id,
@@ -97,7 +102,12 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_return_message(message_id: MessageId, task_id: TaskId, return_to_task_id: TaskId, data: String) -> Self {
+    pub fn new_return_message(
+        message_id: MessageId,
+        task_id: TaskId,
+        return_to_task_id: TaskId,
+        data: String,
+    ) -> Self {
         Self::FunctionResponse {
             message_id,
             task_id,

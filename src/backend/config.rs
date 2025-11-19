@@ -1,21 +1,31 @@
-use crate::backend::interactive::config::InteractiveConfig;
-use crate::backend::mcp_server::config::{McpServerStdIOConfig, McpServerTcpConfig};
-use crate::backend::miclowstdio::config::MiclowStdIOConfig;
+use crate::backend::interactive::config::{
+    try_interactive_from_expanded_config, InteractiveConfig,
+};
+use crate::backend::mcp_server::config::{
+    try_mcp_server_stdio_from_expanded_config, try_mcp_server_tcp_from_expanded_config,
+    McpServerStdIOConfig, McpServerTcpConfig,
+};
+use crate::backend::miclowstdio::config::{
+    try_miclow_stdio_from_expanded_config, MiclowStdIOConfig,
+};
+use crate::backend::ProtocolBackend;
+use crate::config::ExpandedTaskConfig;
+use anyhow::{anyhow, Result};
 
 /// バックエンド設定のメタ情報を提供するトレイト
 pub trait BackendConfigMeta {
     /// プロトコル名を取得
     fn protocol_name() -> &'static str;
-    
+
     /// 強制されるallow_duplicate値を取得
     fn force_allow_duplicate() -> bool;
-    
+
     /// 強制されるauto_start値を取得
     fn force_auto_start() -> bool;
-    
+
     /// デフォルトのview_stdout値を取得
     fn default_view_stdout() -> bool;
-    
+
     /// デフォルトのview_stderr値を取得
     fn default_view_stderr() -> bool;
 }
@@ -76,3 +86,32 @@ pub fn get_default_view_stderr(section_name: &str) -> Result<bool, String> {
     }
 }
 
+/// プロトコル名からProtocolBackendを作成
+pub fn create_protocol_backend(
+    protocol: &str,
+    expanded: &ExpandedTaskConfig,
+) -> Result<ProtocolBackend> {
+    match protocol.trim() {
+        "MiclowStdIO" => {
+            let backend_config = try_miclow_stdio_from_expanded_config(expanded)?;
+            Ok(ProtocolBackend::MiclowStdIO(backend_config))
+        }
+        "Interactive" => {
+            let backend_config = try_interactive_from_expanded_config(expanded)?;
+            Ok(ProtocolBackend::Interactive(backend_config))
+        }
+        "McpServerStdIO" => {
+            let backend_config = try_mcp_server_stdio_from_expanded_config(expanded)?;
+            Ok(ProtocolBackend::McpServerStdIO(backend_config))
+        }
+        "McpServerTcp" => {
+            let backend_config = try_mcp_server_tcp_from_expanded_config(expanded)?;
+            Ok(ProtocolBackend::McpServerTcp(backend_config))
+        }
+        _ => Err(anyhow!(
+            "Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdIO, Interactive, McpServerStdIO, McpServerTcp",
+            protocol,
+            expanded.name
+        )),
+    }
+}

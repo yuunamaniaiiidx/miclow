@@ -169,9 +169,14 @@ impl TaskExecutor {
         id_to_name.get(task_id).cloned()
     }
 
-    pub async fn get_input_sender_by_task_id(&self, task_id: &TaskId) -> Option<crate::channels::ExecutorInputEventSender> {
+    pub async fn get_input_sender_by_task_id(
+        &self,
+        task_id: &TaskId,
+    ) -> Option<crate::channels::ExecutorInputEventSender> {
         let running_tasks = self.running_tasks.read().await;
-        running_tasks.get(task_id).map(|task| task.input_sender.clone())
+        running_tasks
+            .get(task_id)
+            .map(|task| task.input_sender.clone())
     }
 
     pub async fn graceful_shutdown_all(&self, timeout: std::time::Duration) {
@@ -224,7 +229,10 @@ impl TaskExecutor {
             context.userlog_sender,
         );
 
-        let caller_task_id = context.parent_invocation.as_ref().map(|p| p.caller_task_id.clone());
+        let caller_task_id = context
+            .parent_invocation
+            .as_ref()
+            .map(|p| p.caller_task_id.clone());
         let spawn_result = task_spawner
             .spawn_backend(
                 backend.clone(),

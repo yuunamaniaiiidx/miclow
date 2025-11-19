@@ -10,15 +10,15 @@ use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::system_control::SystemControlAction;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
+#[cfg(unix)]
+use nix::sys::signal::{kill, Signal};
+#[cfg(unix)]
+use nix::unistd::Pid;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::task;
 use tokio_util::sync::CancellationToken;
-#[cfg(unix)]
-use nix::sys::signal::{kill, Signal};
-#[cfg(unix)]
-use nix::unistd::Pid;
 
 pub trait StdIOProtocol: Send + Sync {
     fn to_input_lines(&self) -> Vec<String> {
@@ -90,7 +90,6 @@ impl StdIOProtocol for ExecutorInputEvent {
         }
     }
 }
-
 
 pub fn parse_system_control_command_from_outcome(
     message_id: MessageId,
@@ -170,7 +169,9 @@ pub fn parse_system_control_command_from_outcome(
             _ => return None,
         };
 
-        return Some(ExecutorOutputEvent::new_system_control(message_id, task_id, action));
+        return Some(ExecutorOutputEvent::new_system_control(
+            message_id, task_id, action,
+        ));
     }
 
     None
@@ -278,7 +279,10 @@ pub async fn spawn_miclow_stdio_protocol(
             task_id.clone(),
             caller_task_id.clone(),
             if view_stdout {
-                Some(ExecutorOutputEvent::new_task_stdout as fn(MessageId, TaskId, String) -> ExecutorOutputEvent)
+                Some(
+                    ExecutorOutputEvent::new_task_stdout
+                        as fn(MessageId, TaskId, String) -> ExecutorOutputEvent,
+                )
             } else {
                 None
             },
@@ -292,7 +296,10 @@ pub async fn spawn_miclow_stdio_protocol(
             task_id.clone(),
             caller_task_id.clone(),
             if view_stderr {
-                Some(ExecutorOutputEvent::new_task_stderr as fn(MessageId, TaskId, String) -> ExecutorOutputEvent)
+                Some(
+                    ExecutorOutputEvent::new_task_stderr
+                        as fn(MessageId, TaskId, String) -> ExecutorOutputEvent,
+                )
             } else {
                 None
             },
@@ -514,39 +521,76 @@ where
         let task_id_clone = task_id.clone();
         let caller_task_id_clone = caller_task_id.clone();
 
-        let process_stream_outcome = move |outcome: Result<StreamOutcome, String>, line_content: &str| {
-            let message_id = MessageId::new();
-            let task_id_for_outcome = task_id_clone.clone();
-            let event_tx_for_outcome = event_tx_clone.clone();
-            let topic_name_for_outcome = topic_name_clone.clone();
-            let caller_task_id_for_outcome = caller_task_id_clone.clone();
-            match outcome {
-                Ok(StreamOutcome::Emit { topic, data }) => {
-                    if let Some(return_message_event) =
-                        parse_return_message_from_outcome(message_id.clone(), task_id_for_outcome.clone(), &topic, &data, caller_task_id_for_outcome)
-                    {
-                        let _ = event_tx_for_outcome.send(return_message_event);
-                    } else if let Some(system_control_cmd_event) =
-                        parse_system_control_command_from_outcome(message_id.clone(), task_id_for_outcome.clone(), &topic, &data)
-                    {
-                        let _ = event_tx_for_outcome.send(system_control_cmd_event);
-                    } else {
-                        let _ = event_tx_for_outcome.send_message(message_id.clone(), task_id_for_outcome.clone(), topic, data);
+        let process_stream_outcome =
+            move |outcome: Result<StreamOutcome, String>, line_content: &str| {
+                let message_id = MessageId::new();
+                let task_id_for_outcome = task_id_clone.clone();
+                let event_tx_for_outcome = event_tx_clone.clone();
+                let topic_name_for_outcome = topic_name_clone.clone();
+                let caller_task_id_for_outcome = caller_task_id_clone.clone();
+                match outcome {
+                    Ok(StreamOutcome::Emit { topic, data }) => {
+                        if let Some(return_message_event) = parse_return_message_from_outcome(
+                            message_id.clone(),
+                            task_id_for_outcome.clone(),
+                            &topic,
+                            &data,
+                            caller_task_id_for_outcome,
+                        ) {
+                            let _ = event_tx_for_outcome.send(return_message_event);
+                        } else if let Some(system_control_cmd_event) =
+                            parse_system_control_command_from_outcome(
+                                message_id.clone(),
+                                task_id_for_outcome.clone(),
+                                &topic,
+                                &data,
+                            )
+                        {
+                            let _ = event_tx_for_outcome.send(system_control_cmd_event);
+                        } else {
+                            let _ = event_tx_for_outcome.send_message(
+                                message_id.clone(),
+                                task_id_for_outcome.clone(),
+                                topic,
+                                data,
+                            );
+                        }
                     }
-                }
                     Ok(StreamOutcome::Plain(output)) => {
-                        let _ = event_tx_for_outcome.send_message(message_id.clone(), task_id_for_outcome.clone(), topic_name_for_outcome.clone(), output.clone());
+                        let _ = event_tx_for_outcome.send_message(
+                            message_id.clone(),
+                            task_id_for_outcome.clone(),
+                            topic_name_for_outcome.clone(),
+                            output.clone(),
+                        );
                         if let Some(emit) = emit_func {
-                            let _ = event_tx_for_outcome.send(emit(message_id.clone(), task_id_for_outcome.clone(), output));
+                            let _ = event_tx_for_outcome.send(emit(
+                                message_id.clone(),
+                                task_id_for_outcome.clone(),
+                                output,
+                            ));
                         }
                     }
                     Ok(StreamOutcome::None) => {}
                     Err(e) => {
-                        let _ = event_tx_for_outcome.send_error(message_id.clone(), task_id_for_outcome.clone(), e.clone());
+                        let _ = event_tx_for_outcome.send_error(
+                            message_id.clone(),
+                            task_id_for_outcome.clone(),
+                            e.clone(),
+                        );
                         let output = super::buffer::strip_crlf(line_content).to_string();
-                        let _ = event_tx_for_outcome.send_message(message_id.clone(), task_id_for_outcome.clone(), topic_name_for_outcome.clone(), output.clone());
+                        let _ = event_tx_for_outcome.send_message(
+                            message_id.clone(),
+                            task_id_for_outcome.clone(),
+                            topic_name_for_outcome.clone(),
+                            output.clone(),
+                        );
                         if let Some(emit) = emit_func {
-                            let _ = event_tx_for_outcome.send(emit(message_id.clone(), task_id_for_outcome.clone(), output));
+                            let _ = event_tx_for_outcome.send(emit(
+                                message_id.clone(),
+                                task_id_for_outcome.clone(),
+                                output,
+                            ));
                         }
                     }
                 }

@@ -67,4 +67,3 @@ pub fn try_interactive_from_expanded_config(
         functions,
     })
 }
-

@@ -78,7 +78,10 @@ pub async fn spawn_mcp_stdio_protocol(
                 let _ = event_sender.send_error(
                     MessageId::new(),
                     task_id_clone.clone(),
-                    format!("Failed to start MCP StdIO process for task {}: {err:#}", task_id_clone),
+                    format!(
+                        "Failed to start MCP StdIO process for task {}: {err:#}",
+                        task_id_clone
+                    ),
                 );
             }
         }
@@ -138,7 +141,10 @@ pub async fn spawn_mcp_tcp_protocol(
                 let _ = event_sender.send_error(
                     MessageId::new(),
                     task_id_clone.clone(),
-                    format!("Failed to connect to MCP server at {}:{}: {}", config.host, config.port, err),
+                    format!(
+                        "Failed to connect to MCP server at {}:{}: {}",
+                        config.host, config.port, err
+                    ),
                 );
             }
         }
@@ -347,11 +353,20 @@ fn forward_call_result(
     let message_id = MessageId::new();
     if result.is_error.unwrap_or(false) {
         event_sender
-            .send_error(message_id.clone(), task_id.clone(), format!("Tool '{tool_name}' error: {payload}"))
+            .send_error(
+                message_id.clone(),
+                task_id.clone(),
+                format!("Tool '{tool_name}' error: {payload}"),
+            )
             .ok();
     } else {
         event_sender
-            .send(ExecutorOutputEvent::new_return_message(message_id, task_id, caller_task_id, payload))
+            .send(ExecutorOutputEvent::new_return_message(
+                message_id,
+                task_id,
+                caller_task_id,
+                payload,
+            ))
             .ok();
     }
     Ok(())
@@ -409,7 +424,11 @@ where
 }
 
 fn emit_stderr(event_sender: &ExecutorOutputEventSender, task_id: TaskId, message: String) {
-    let _ = event_sender.send(ExecutorOutputEvent::new_task_stderr(MessageId::new(), task_id, message));
+    let _ = event_sender.send(ExecutorOutputEvent::new_task_stderr(
+        MessageId::new(),
+        task_id,
+        message,
+    ));
 }
 
 #[derive(Clone)]
@@ -428,9 +447,11 @@ impl MiclowClientHandler {
 
     fn publish_stdout<T: ToString>(&self, prefix: &str, data: T) {
         let message = format!("{} {}", prefix, data.to_string());
-        let _ = self
-            .event_sender
-            .send(ExecutorOutputEvent::new_task_stdout(MessageId::new(), self.task_id.clone(), message));
+        let _ = self.event_sender.send(ExecutorOutputEvent::new_task_stdout(
+            MessageId::new(),
+            self.task_id.clone(),
+            message,
+        ));
     }
 }
 

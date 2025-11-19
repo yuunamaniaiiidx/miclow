@@ -278,7 +278,12 @@ impl SystemControlAction {
                 ) {
                     Ok(ctx) => ctx,
                     Err(e) => {
-                        log::error!("Failed to find task '{}' for function '{}': {}", actual_task_name, function_name, e);
+                        log::error!(
+                            "Failed to find task '{}' for function '{}': {}",
+                            actual_task_name,
+                            function_name,
+                            e
+                        );
                         let status = SystemResponseStatus::Error;
                         let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
@@ -287,13 +292,20 @@ impl SystemControlAction {
                             e.to_string(),
                         );
                         let _ = response_channel.send(error_event);
-                        return Err(format!("Task '{}' not found for function '{}'", actual_task_name, function_name));
+                        return Err(format!(
+                            "Task '{}' not found for function '{}'",
+                            actual_task_name, function_name
+                        ));
                     }
                 };
 
                 match task_executor.start_task_from_config(ready_context).await {
                     Ok(_) => {
-                        log::info!("Successfully called function '{}' -> task '{}'", function_name, actual_task_name);
+                        log::info!(
+                            "Successfully called function '{}' -> task '{}'",
+                            function_name,
+                            actual_task_name
+                        );
 
                         let status = SystemResponseStatus::Success;
                         let response_topic = format!("system.function.{}", function_name);
@@ -306,7 +318,12 @@ impl SystemControlAction {
                         Ok(())
                     }
                     Err(e) => {
-                        log::error!("Failed to call function '{}' -> task '{}': {}", function_name, actual_task_name, e);
+                        log::error!(
+                            "Failed to call function '{}' -> task '{}': {}",
+                            function_name,
+                            actual_task_name,
+                            e
+                        );
                         let status = SystemResponseStatus::Error;
                         let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
