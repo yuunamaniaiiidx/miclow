@@ -6,14 +6,14 @@ use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::task_id::TaskId;
-use crate::topic_broker::TopicBroker;
+use crate::topic_subscription_registry::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
 use super::manager::PodManager;
 
 pub struct PodSpawner {
     pub task_id: TaskId,
-    pub topic_manager: TopicBroker,
+    pub topic_manager: TopicSubscriptionRegistry,
     pub pod_manager: PodManager,
     pub pod_name: String,
     pub userlog_sender: UserLogSender,
@@ -22,7 +22,7 @@ pub struct PodSpawner {
 impl PodSpawner {
     pub fn new(
         task_id: TaskId,
-        topic_manager: TopicBroker,
+        topic_manager: TopicSubscriptionRegistry,
         pod_manager: PodManager,
         pod_name: String,
         userlog_sender: UserLogSender,
@@ -44,7 +44,7 @@ impl PodSpawner {
     ) -> SpawnBackendResult {
         let pod_id: TaskId = self.task_id.clone();
         let pod_name: String = self.pod_name.clone();
-        let topic_manager: TopicBroker = self.topic_manager;
+        let topic_manager: TopicSubscriptionRegistry = self.topic_manager;
         let pod_manager: PodManager = self.pod_manager;
         let userlog_sender = self.userlog_sender.clone();
 

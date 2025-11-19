@@ -319,7 +319,7 @@ impl PodManager {
     /// PodをIdleに戻す（TopicResponse受信時などに使用）
     /// 
     /// このメソッドは、Podの状態管理を PodManager の責務として提供する。
-    /// Service などの上位レイヤーの責務ではなく、Podの基本的な状態管理として扱う。
+    /// TopicLoadBalancer などの上位レイヤーの責務ではなく、Podの基本的な状態管理として扱う。
     pub async fn set_pod_idle(&self, pod_id: &TaskId) {
         self.pod_state_manager.set_idle(pod_id).await;
     }

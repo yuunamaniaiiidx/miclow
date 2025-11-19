@@ -8,6 +8,6 @@ pub mod message_id;
 pub mod messages;
 pub mod miclow;
 pub mod pod;
-pub mod service;
+pub mod topic_load_balancer;
 pub mod task_id;
-pub mod topic_broker;
+pub mod topic_subscription_registry;

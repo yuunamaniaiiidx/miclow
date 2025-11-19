@@ -6,9 +6,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// メッセージキュー（FIFO）
+/// トピックキュー（FIFO）
 #[derive(Clone)]
-pub struct MessageQueue {
+pub struct TopicQueue {
     queues: Arc<RwLock<std::collections::HashMap<String, VecDeque<QueuedMessage>>>>,
 }
 
@@ -19,7 +19,7 @@ struct QueuedMessage {
     message_id: MessageId,
 }
 
-impl MessageQueue {
+impl TopicQueue {
     pub fn new() -> Self {
         Self {
             queues: Arc::new(RwLock::new(std::collections::HashMap::new())),
@@ -66,30 +66,30 @@ impl MessageQueue {
     }
 }
 
-impl Default for MessageQueue {
+impl Default for TopicQueue {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Service（ロードバランシングとメッセージ配信）
+/// TopicLoadBalancer（トピックメッセージのロードバランシングと配信）
 #[derive(Clone)]
-pub struct Service {
+pub struct TopicLoadBalancer {
     pod_manager: PodManager,
     pod_state_manager: PodStateManager,
-    message_queue: MessageQueue,
+    topic_queue: TopicQueue,
 }
 
-impl Service {
+impl TopicLoadBalancer {
     pub fn new(pod_manager: PodManager, pod_state_manager: PodStateManager) -> Self {
         Self {
             pod_manager,
             pod_state_manager,
-            message_queue: MessageQueue::new(),
+            topic_queue: TopicQueue::new(),
         }
     }
 
-    /// メッセージをRound Robin方式で配信
+    /// トピックメッセージをロードバランシング方式で配信
     /// すべてのインスタンスがBusyの場合はキューに追加
     pub async fn dispatch_message(
         &self,
@@ -149,10 +149,10 @@ impl Service {
 
         // すべてBusyまたは送信失敗時はキューに追加
         let message_id = MessageId::new();
-        self.message_queue
+        self.topic_queue
             .enqueue(topic.clone(), data.clone(), message_id.clone())
             .await;
-        let queue_size = self.message_queue.queue_size(&topic).await;
+        let queue_size = self.topic_queue.queue_size(&topic).await;
         log::debug!(
             "All instances of task '{}' are busy, queued message for topic '{}' (queue size: {})",
             task_name,
@@ -165,9 +165,9 @@ impl Service {
         }
     }
 
-    /// メッセージキューへのアクセス
-    pub fn message_queue(&self) -> &MessageQueue {
-        &self.message_queue
+    /// トピックキューへのアクセス
+    pub fn topic_queue(&self) -> &TopicQueue {
+        &self.topic_queue
     }
 }
 
@@ -187,8 +187,8 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_message_queue() {
-        let queue = MessageQueue::new();
+    async fn test_topic_queue() {
+        let queue = TopicQueue::new();
         let message_id = MessageId::new();
 
         queue

@@ -8,9 +8,9 @@ mod messages;
 mod miclow;
 mod pod;
 mod replicaset;
-mod service;
+mod topic_load_balancer;
 mod task_id;
-mod topic_broker;
+mod topic_subscription_registry;
 
 use crate::config::SystemConfig;
 use anyhow::Result;

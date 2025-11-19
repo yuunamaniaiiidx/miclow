@@ -23,9 +23,9 @@ impl Default for PodInstanceState {
 pub struct PodStateManager {
     /// Pod ID -> 状態のマッピング
     pod_states: Arc<RwLock<HashMap<TaskId, PodInstanceState>>>,
-    /// Pod名 -> Pod IDのリスト（Service用）
+    /// Pod名 -> Pod IDのリスト（TopicLoadBalancer用）
     name_to_ids: Arc<RwLock<HashMap<String, Vec<TaskId>>>>,
-    /// Pod名ごとのRound Robinインデックス（Service用）
+    /// Pod名ごとのRound Robinインデックス（TopicLoadBalancer用）
     round_robin_indices: Arc<RwLock<HashMap<String, usize>>>,
 }
 
@@ -200,7 +200,7 @@ impl PodStateManager {
             .count()
     }
 
-    /// 内部のname_to_idsへのアクセス（Service用）
+    /// 内部のname_to_idsへのアクセス（TopicLoadBalancer用）
     pub(crate) fn name_to_ids(&self) -> Arc<RwLock<HashMap<String, Vec<TaskId>>>> {
         self.name_to_ids.clone()
     }

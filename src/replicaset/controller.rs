@@ -4,7 +4,7 @@ use crate::background_worker_registry::{
 use crate::channels::{TaskExitReceiver, UserLogSender};
 use crate::config::{SystemConfig, TaskConfig};
 use crate::pod::{PodStartContext, PodManager};
-use crate::topic_broker::TopicBroker;
+use crate::topic_subscription_registry::TopicSubscriptionRegistry;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -21,8 +21,8 @@ pub struct ReplicaSetController {
     pod_manager: PodManager,
     /// Pod終了通知の受信側
     pod_exit_receiver: TaskExitReceiver,
-    /// TopicBroker（PodStartContext作成用）
-    topic_manager: TopicBroker,
+    /// TopicSubscriptionRegistry（PodStartContext作成用）
+    topic_manager: TopicSubscriptionRegistry,
     /// シャットダウントークン（PodStartContext作成用）
     shutdown_token: CancellationToken,
     /// ユーザーログ送信側（PodStartContext作成用）
@@ -33,7 +33,7 @@ impl ReplicaSetController {
     pub fn new(
         pod_manager: PodManager,
         pod_exit_receiver: TaskExitReceiver,
-        topic_manager: TopicBroker,
+        topic_manager: TopicSubscriptionRegistry,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) -> Self {

@@ -7,14 +7,14 @@ use crate::logging::{
 };
 use crate::replicaset::ReplicaSetController;
 use crate::pod::{PodStartContext, PodManager};
-use crate::topic_broker::TopicBroker;
+use crate::topic_subscription_registry::TopicSubscriptionRegistry;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub struct MiclowSystem {
     pub config: SystemConfig,
-    topic_manager: TopicBroker,
+    topic_manager: TopicSubscriptionRegistry,
     pod_manager: PodManager,
     shutdown_token: CancellationToken,
     background_tasks: BackgroundWorkerRegistry,
@@ -22,7 +22,7 @@ pub struct MiclowSystem {
 
 impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
-        let topic_manager: TopicBroker = TopicBroker::new();
+        let topic_manager: TopicSubscriptionRegistry = TopicSubscriptionRegistry::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
         let pod_manager: PodManager = PodManager::new(shutdown_token.clone());
         let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
@@ -38,7 +38,7 @@ impl MiclowSystem {
     async fn start_user_tasks(
         config: &SystemConfig,
         pod_manager: &PodManager,
-        topic_manager: TopicBroker,
+        topic_manager: TopicSubscriptionRegistry,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) {
@@ -91,7 +91,7 @@ impl MiclowSystem {
     }
 
     pub async fn start_system(mut self) -> Result<()> {
-        let topic_manager: TopicBroker = self.topic_manager.clone();
+        let topic_manager: TopicSubscriptionRegistry = self.topic_manager.clone();
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());

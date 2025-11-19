@@ -7,13 +7,13 @@ use std::sync::{Arc, Weak};
 use tokio::sync::RwLock;
 
 #[derive(Clone)]
-pub struct TopicBroker {
+pub struct TopicSubscriptionRegistry {
     subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorOutputEventSender>>>>>>,
     task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorOutputEventSender>>>>,
     latest_messages: Arc<RwLock<HashMap<String, ExecutorOutputEvent>>>,
 }
 
-impl TopicBroker {
+impl TopicSubscriptionRegistry {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
@@ -248,3 +248,4 @@ impl TopicBroker {
         latest_messages.get(topic).cloned()
     }
 }
+
