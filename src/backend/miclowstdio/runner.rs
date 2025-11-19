@@ -52,9 +52,19 @@ pub trait StdIOProtocol: Send + Sync {
     fn to_input_lines_raw(&self) -> Vec<String>;
 }
 
-impl StdIOProtocol for ExecutorInputEvent {
+pub struct ExecutorInputEventStdio<'a> {
+    event: &'a ExecutorInputEvent,
+}
+
+impl<'a> ExecutorInputEventStdio<'a> {
+    pub fn new(event: &'a ExecutorInputEvent) -> Self {
+        Self { event }
+    }
+}
+
+impl<'a> StdIOProtocol for ExecutorInputEventStdio<'a> {
     fn to_input_lines_raw(&self) -> Vec<String> {
-        match self {
+        match self.event {
             ExecutorInputEvent::Topic { topic, data, .. } => {
                 let mut lines = vec![topic.clone()];
                 let data_lines: Vec<&str> = data.lines().collect();
@@ -315,7 +325,7 @@ pub async fn spawn_miclow_stdio_protocol(
                     input_data = input_receiver.recv() => {
                         match input_data {
                             Some(input_data_msg) => {
-                                let lines = input_data_msg.to_input_lines();
+                                let lines = ExecutorInputEventStdio::new(&input_data_msg).to_input_lines();
                                 for line in lines {
                                     let bytes: Vec<u8> = if line.ends_with('\n') {
                                         line.into_bytes()
