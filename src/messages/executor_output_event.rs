@@ -1,5 +1,4 @@
 use crate::message_id::MessageId;
-use crate::system_control::SystemControlAction;
 use crate::task_id::TaskId;
 
 #[derive(Debug, Clone)]
@@ -19,11 +18,6 @@ pub enum ExecutorOutputEvent {
         message_id: MessageId,
         task_id: TaskId,
         data: String,
-    },
-    SystemControl {
-        message_id: MessageId,
-        task_id: TaskId,
-        action: SystemControlAction,
     },
     Error {
         message_id: MessageId,
@@ -81,18 +75,6 @@ impl ExecutorOutputEvent {
             message_id,
             task_id,
             data,
-        }
-    }
-
-    pub fn new_system_control(
-        message_id: MessageId,
-        task_id: TaskId,
-        action: SystemControlAction,
-    ) -> Self {
-        Self::SystemControl {
-            message_id,
-            task_id,
-            action,
         }
     }
 

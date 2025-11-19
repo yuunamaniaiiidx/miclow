@@ -23,8 +23,7 @@
      - `topic`（処理対象のオリジナル topic）  
      - `return_topic`（常に `{original_topic}.result` に設定）  
      - `data`（任意ペイロード）  
-   - Backend は `return_topic` をカスタマイズできず、`{original_topic}.result` への送信が必須。  
-   - 既存の `SystemControlAction::CallFunction` やその他の手動制御 API はすべて廃止する。
+   - Backend は `return_topic` をカスタマイズできず、`{original_topic}.result` への送信が必須。
 
 3. **ライフサイクル設定（タスク単位）**  
    - 各 `[[tasks]]` セクション内に `[[tasks.lifecycle]]`（英語キー）ブロックを追加し、`desired_instances` や `mode = "round_robin"` を指定する。  
@@ -67,12 +66,12 @@ args = ["run", "python3", "worker.py"]
 - システム停止時はすべてのタスクをグレースフルに停止させ、再起動を抑止する。
 
 ## 破壊的変更で影響を受けるコンポーネント
-- `SystemControlAction::CallFunction` と `function_to_task` マッピング（完全撤廃）。
-- `SystemControlAction` / `SystemControlWorker` / `SystemControlQueue` 全体を一旦削除し、新仕様に合わせて再設計する。
-- `TaskExecutor::start_task_from_config`（ライフサイクルワーカーのみが使用）。
+- `function_to_task` マッピング（完全撤廃済み）。
+- `SystemControlAction` / `SystemControlWorker` / `SystemControlQueue` / `SystemResponseEvent` 全体を削除済み（2025-11-20）。
+- `TaskExecutor::start_task_from_config`（ライフサイクルワーカーのみが使用予定）。
 - Config パーサ（`miclow/src/config/mod.rs`）と CLI/ドキュメント。
-- Topic 伝搬：`TopicResponse` を `{topic}.result` へ配信するルーティング、および Round Robin 配信ロジック。
-- 既存の手動操作 API（status, subscribe/unsubscribe, call-function など）は一旦削除し、新仕様に合わせて再設計する。
+- Topic 伝搬：`TopicResponse` を `{topic}.result` へ配信するルーティング、および Round Robin 配信ロジック（未実装）。
+- 既存の手動操作 API（status, subscribe/unsubscribe, call-function など）は削除済み。新仕様ではトピックベースの双方向通信のみ。
 
 ## 未確定事項・質問
 現時点で追加の未確定事項はなし。必要に応じて新たな論点が出た際に本セクションを更新する。
@@ -81,9 +80,10 @@ args = ["run", "python3", "worker.py"]
 WIP ドキュメントにつき、要件の追加・変更があれば本ファイルを更新してください。
 
 ## 実装状況メモ（2025-11-20 更新）
-- Config パーサ: `[[tasks.lifecycle]]` を必須化し、`ProtocolBackend` は Interactive / MiclowStdIO に限定。`function_to_task` や `[[tasks.function]]` は完全に撤廃済み。
-- SystemControl 系: CallFunction / 任意コマンドは削除し、subscribe／unsubscribe／status／get-latest のみをライフサイクル管理ワーカー経由で受け付ける構成に整理。
-- TaskRuntime: `StartContext` の親呼び出し概念と `ExecutorInputEvent::Function*` を除去し、常駐タスク＋ `{topic}.result` 返信のみで通信する前提に統一。
+- Config パーサ: `[[tasks.lifecycle]]` をサポート（必須化は未実装）、`ProtocolBackend` は Interactive / MiclowStdIO に限定。`function_to_task` や `[[tasks.function]]` は完全に撤廃済み。
+- SystemControl 系: **完全に削除済み**（2025-11-20）。`SystemControlAction` / `SystemControlWorker` / `SystemControlQueue` / `SystemResponseEvent` / `SystemResponseChannel` をすべて削除。subscribe/unsubscribe/status/get-latest などの手動操作 API は撤廃。
+- TaskRuntime: `StartContext` から `system_control_manager` を除去。`ExecutorInputEvent::SystemResponse` と `ExecutorOutputEvent::SystemControl` を削除。常駐タスク＋トピックベースの双方向通信のみに統一。
 - Python/クライアント: `call_function` / `return_value` API を廃止し、`miclow.wait_for_topic` + `miclow.send_message("{topic}.result", ...)` による双方向通信へ移行。`examples/basic/` に sender/receiver の最小構成を追加済み。
 - MCP backend や `rmcp` 依存は一旦削除。今後必要になった場合は新ライフサイクル仕様に合わせて別途再設計する。
+- **未実装**: `TopicResponse` 型、`{topic}.result` ルーティング、Round Robin 配信ロジック、ライフサイクル管理ワーカー、desired_instances 監視・再起動制御。
 

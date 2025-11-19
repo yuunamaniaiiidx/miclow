@@ -5,7 +5,6 @@ use crate::logging::{
     level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
-use crate::system_control::{SystemControlQueue, SystemControlWorker};
 use crate::task_runtime::{StartContext, TaskExecutor};
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
@@ -15,7 +14,6 @@ use tokio_util::sync::CancellationToken;
 pub struct MiclowSystem {
     pub config: SystemConfig,
     topic_manager: TopicBroker,
-    system_control_manager: SystemControlQueue,
     task_executor: TaskExecutor,
     shutdown_token: CancellationToken,
     background_tasks: BackgroundWorkerRegistry,
@@ -25,14 +23,11 @@ impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
         let topic_manager: TopicBroker = TopicBroker::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
-        let system_control_manager: SystemControlQueue =
-            SystemControlQueue::new(shutdown_token.clone());
         let task_executor: TaskExecutor = TaskExecutor::new(shutdown_token.clone());
         let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
         Self {
             config,
             topic_manager,
-            system_control_manager,
             task_executor,
             shutdown_token,
             background_tasks,
@@ -43,7 +38,6 @@ impl MiclowSystem {
         config: &SystemConfig,
         task_executor: &TaskExecutor,
         topic_manager: TopicBroker,
-        system_control_manager: SystemControlQueue,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) {
@@ -56,7 +50,6 @@ impl MiclowSystem {
             let ready_context = StartContext::new(
                 (*task_config).clone(),
                 topic_manager.clone(),
-                system_control_manager.clone(),
                 shutdown_token.clone(),
                 userlog_sender.clone(),
             );
@@ -92,20 +85,10 @@ impl MiclowSystem {
         let userlog_worker = UserLogAggregatorWorker::new(userlog_rx);
         self.background_tasks.register_worker(userlog_worker).await;
 
-        let sys_worker = SystemControlWorker::new(
-            self.system_control_manager.clone(),
-            topic_manager.clone(),
-            self.task_executor.clone(),
-            self.config.clone(),
-            userlog_sender.clone(),
-        );
-        self.background_tasks.register_worker(sys_worker).await;
-
         Self::start_user_tasks(
             &self.config,
             &self.task_executor,
             topic_manager.clone(),
-            self.system_control_manager.clone(),
             self.shutdown_token.clone(),
             userlog_sender.clone(),
         )

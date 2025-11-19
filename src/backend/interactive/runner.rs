@@ -1,8 +1,6 @@
 use crate::backend::interactive::config::InteractiveConfig;
 use crate::backend::TaskBackendHandle;
-use crate::channels::{
-    ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, SystemResponseChannel,
-};
+use crate::channels::{ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel};
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;
@@ -20,7 +18,6 @@ pub async fn spawn_interactive_protocol(
     let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
     let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let shutdown_channel = ShutdownChannel::new();
-    let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
 
     let event_tx_clone = event_channel.sender.clone();
     let cancel_token: CancellationToken = CancellationToken::new();
@@ -88,7 +85,6 @@ pub async fn spawn_interactive_protocol(
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
         event_sender: event_channel.sender,
-        system_response_sender: system_response_channel.sender,
         input_sender: input_channel.sender,
         shutdown_sender: shutdown_channel.sender,
     })

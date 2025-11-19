@@ -221,7 +221,6 @@ impl TaskExecutor {
         let task_spawner = TaskSpawner::new(
             task_id_new.clone(),
             context.topic_manager,
-            context.system_control_manager,
             self.clone(),
             task_config.name.clone(),
             context.userlog_sender,
