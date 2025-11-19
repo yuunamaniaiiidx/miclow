@@ -123,7 +123,7 @@ impl BackgroundWorker for SystemControlWorker {
                                         let status = SystemResponseStatus::Error;
                                         let cancel_error = SystemResponseEvent::new_system_error(
                                             "system.error".to_string(),
-                                            status.to_string(),
+                                            status,
                                             "cancelled".to_string(),
                                         );
                                         let _ = response_channel_for_cancel.send(cancel_error);
@@ -138,7 +138,7 @@ impl BackgroundWorker for SystemControlWorker {
                                                 let status = SystemResponseStatus::Error;
                                                 let error_event = SystemResponseEvent::new_system_error(
                                                     "system.error".to_string(),
-                                                    status.to_string(),
+                                                    status,
                                                     e.clone(),
                                                 );
                                                 let _ = response_channel_for_cancel.send(error_event);
@@ -151,7 +151,7 @@ impl BackgroundWorker for SystemControlWorker {
                                                     let status = SystemResponseStatus::Error;
                                                     let error_event = SystemResponseEvent::new_system_error(
                                                         "system.error".to_string(),
-                                                        status.to_string(),
+                                                        status,
                                                         format!("Task panicked: {:?}", e),
                                                     );
                                                     let _ = response_channel_for_cancel.send(error_event);

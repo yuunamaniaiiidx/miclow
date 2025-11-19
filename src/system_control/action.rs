@@ -81,7 +81,7 @@ impl SystemControlAction {
                 let response_topic = "system.subscribe-topic".to_string();
                 let success_event = SystemResponseEvent::new_system_response(
                     response_topic,
-                    status.to_string(),
+                    status,
                     topic.clone(),
                 );
                 let _ = response_channel.send(success_event);
@@ -105,7 +105,7 @@ impl SystemControlAction {
                     let response_topic = "system.unsubscribe-topic".to_string();
                     let success_event = SystemResponseEvent::new_system_response(
                         response_topic,
-                        status.to_string(),
+                        status,
                         topic.clone(),
                     );
                     let _ = response_channel.send(success_event);
@@ -116,7 +116,7 @@ impl SystemControlAction {
                     let response_topic = "system.unsubscribe-topic".to_string();
                     let error_event = SystemResponseEvent::new_system_error(
                         response_topic,
-                        status.to_string(),
+                        status,
                         topic.clone(),
                     );
                     let _ = response_channel.send(error_event);
@@ -155,7 +155,7 @@ impl SystemControlAction {
                         let status = SystemResponseStatus::Error;
                         let error_event = SystemResponseEvent::new_system_error(
                             "system.status".to_string(),
-                            status.to_string(),
+                            status,
                             format!("Failed to serialize status response: {}", err),
                         );
                         let _ = response_channel.send(error_event);
@@ -166,7 +166,7 @@ impl SystemControlAction {
                 let status = SystemResponseStatus::Success;
                 let status_event = SystemResponseEvent::new_system_response(
                     "system.status".to_string(),
-                    status.to_string(),
+                    status,
                     json_response,
                 );
 
@@ -191,7 +191,7 @@ impl SystemControlAction {
                         let response_topic = "system.get-latest-message".to_string();
                         let success_event = SystemResponseEvent::new_system_response(
                             response_topic,
-                            status.to_string(),
+                            status,
                             data.clone(),
                         );
                         let _ = response_channel.send(success_event);
@@ -207,7 +207,7 @@ impl SystemControlAction {
                         let response_topic = "system.get-latest-message".to_string();
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             format!("Latest event for '{}' is not a message", topic),
                         );
                         let _ = response_channel.send(error_event);
@@ -223,7 +223,7 @@ impl SystemControlAction {
                         let response_topic = "system.get-latest-message".to_string();
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             format!("No latest message for topic '{}'", topic),
                         );
                         let _ = response_channel.send(error_event);
@@ -288,7 +288,7 @@ impl SystemControlAction {
                         let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             e.to_string(),
                         );
                         let _ = response_channel.send(error_event);
@@ -311,7 +311,7 @@ impl SystemControlAction {
                         let response_topic = format!("system.function.{}", function_name);
                         let success_event = SystemResponseEvent::new_system_response(
                             response_topic,
-                            status.to_string(),
+                            status,
                             actual_task_name.clone(),
                         );
                         let _ = response_channel.send(success_event);
@@ -328,7 +328,7 @@ impl SystemControlAction {
                         let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             e.to_string(),
                         );
                         let _ = response_channel.send(error_event);

@@ -75,7 +75,7 @@ impl<'a> ExecutorInputEventStdio<'a> {
                 let mut lines = vec![topic.clone()];
                 let data_lines: Vec<&str> = data.lines().collect();
                 lines.push((data_lines.len() + 1).to_string());
-                lines.push(status.clone());
+                lines.push(status.to_string());
                 lines.extend(data_lines.iter().map(|s| s.to_string()));
                 lines
             }
