@@ -21,14 +21,6 @@ impl BackendConfigMeta for MiclowStdIOConfig {
         "MiclowStdIO"
     }
 
-    fn force_allow_duplicate() -> bool {
-        false
-    }
-
-    fn force_auto_start() -> bool {
-        true
-    }
-
     fn default_view_stdout() -> bool {
         false
     }

@@ -21,8 +21,6 @@ pub(crate) struct RawTaskConfig {
     pub name: TomlValue,
     pub protocol: TomlValue, // セクション名から設定される
     pub subscribe_topics: Option<TomlValue>,
-    pub allow_duplicate: Option<TomlValue>,
-    pub auto_start: Option<TomlValue>,
     pub view_stdout: Option<TomlValue>,
     pub view_stderr: Option<TomlValue>,
     pub lifecycle: Option<RawLifecycleConfig>,
@@ -36,8 +34,6 @@ pub(crate) struct RawTaskConfig {
 pub struct TaskConfig {
     pub name: String,
     pub subscribe_topics: Option<Vec<String>>,
-    pub allow_duplicate: bool,
-    pub auto_start: bool,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -56,8 +52,6 @@ pub struct TaskConfig {
 pub struct ExpandedTaskConfig {
     pub name: String,
     pub subscribe_topics: Option<Vec<String>>,
-    pub allow_duplicate: bool,
-    pub auto_start: bool,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -123,8 +117,6 @@ struct RawTaskEntry {
     task_name: String,
     protocol: String,
     subscribe_topics: Option<Vec<String>>,
-    allow_duplicate: Option<bool>,
-    auto_start: Option<bool>,
     view_stdout: Option<bool>,
     view_stderr: Option<bool>,
     #[serde(default)]
@@ -209,8 +201,6 @@ impl RawSystemConfig {
             subscribe_topics: entry
                 .subscribe_topics
                 .map(|v| TomlValue::Array(v.into_iter().map(|s| TomlValue::String(s)).collect())),
-            allow_duplicate: entry.allow_duplicate.map(|v| TomlValue::Boolean(v)),
-            auto_start: entry.auto_start.map(|v| TomlValue::Boolean(v)),
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
             view_stderr: entry.view_stderr.map(|v| TomlValue::Boolean(v)),
             lifecycle,
@@ -317,13 +307,13 @@ impl SystemConfig {
     }
 
     pub fn get_autostart_tasks(&self) -> Vec<&TaskConfig> {
-        self.tasks.values().filter(|task| task.auto_start).collect()
+        // すべてのタスクを返す（auto_startの概念を削除）
+        self.tasks.values().collect()
     }
 
     pub fn validate(&self) -> Result<()> {
-        let autostart_count = self.tasks.values().filter(|t| t.auto_start).count();
-        if autostart_count == 0 {
-            return Err(anyhow::anyhow!("No autostart tasks configured"));
+        if self.tasks.is_empty() {
+            return Err(anyhow::anyhow!("No tasks configured"));
         }
 
         // プロトコル非依存のバリデーションのみ実行

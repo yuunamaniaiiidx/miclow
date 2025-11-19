@@ -7,7 +7,7 @@ pub mod spawn_result;
 
 pub use config::{
     create_protocol_backend, get_default_view_stderr, get_default_view_stdout,
-    get_force_allow_duplicate, get_force_auto_start, BackendConfigMeta,
+    BackendConfigMeta,
 };
 pub use dispatcher::{ProtocolBackend, TaskBackend};
 pub use handle::TaskBackendHandle;

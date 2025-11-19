@@ -27,14 +27,6 @@ impl RawTaskConfig {
             None
         };
 
-        // allow_duplicateとauto_startを展開してboolに変換
-        // normalize_defaults()で既にデフォルト値が設定されているので、必ずSome(TomlValue::Boolean)になっている
-        let allow_duplicate = expand_bool_field(self.allow_duplicate, context, "allow_duplicate")?
-            .expect("allow_duplicate should be set by normalize_defaults()");
-
-        let auto_start = expand_bool_field(self.auto_start, context, "auto_start")?
-            .expect("auto_start should be set by normalize_defaults()");
-
         let view_stdout = expand_bool_field(self.view_stdout, context, "view_stdout")?
             .expect("view_stdout should be set by normalize_defaults()");
 
@@ -59,8 +51,6 @@ impl RawTaskConfig {
         Ok(ExpandedTaskConfig {
             name,
             subscribe_topics,
-            allow_duplicate,
-            auto_start,
             view_stdout,
             view_stderr,
             lifecycle,
@@ -84,8 +74,6 @@ impl RawTaskConfig {
         Ok(TaskConfig {
             name: expanded.name,
             subscribe_topics: expanded.subscribe_topics,
-            allow_duplicate: expanded.allow_duplicate,
-            auto_start: expanded.auto_start,
             view_stdout: expanded.view_stdout,
             view_stderr: expanded.view_stderr,
             lifecycle: expanded.lifecycle,

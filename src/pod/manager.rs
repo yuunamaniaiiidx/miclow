@@ -72,25 +72,6 @@ impl PodManager {
         Ok(())
     }
 
-    pub async fn try_register_pod(
-        &self,
-        pod_name: String,
-        pod: RunningPod,
-    ) -> Result<(), String> {
-        let name_to_id = self.name_to_id.read().await;
-        if let Some(ids) = name_to_id.get(&pod_name) {
-            if !ids.is_empty() {
-                log::warn!(
-                    "Pod '{}' is already running - cancelling new pod start",
-                    pod_name
-                );
-                return Err(format!("Pod '{}' is already running", pod_name));
-            }
-        }
-        drop(name_to_id);
-
-        self.register_pod(pod_name, pod).await
-    }
 
     pub async fn unregister_pod_by_pod_id(&self, pod_id: &TaskId) -> Option<RunningPod> {
         let mut running_pods = self.running_pods.write().await;
@@ -269,39 +250,22 @@ impl PodManager {
             view_stderr,
         };
 
-        if pod_config.allow_duplicate {
-            if let Err(e) = self
-                .register_pod(pod_config.name.clone(), running_pod)
-                .await
-            {
-                return Err(anyhow::anyhow!(
-                    "Failed to register pod '{}': {}",
-                    pod_config.name,
-                    e
-                ));
-            }
-            log::debug!(
-                "Registered pod '{}' (ID: {}) - duplicate instances allowed",
+        // 常に複数インスタンスを許可（allow_duplicateの概念を削除）
+        if let Err(e) = self
+            .register_pod(pod_config.name.clone(), running_pod)
+            .await
+        {
+            return Err(anyhow::anyhow!(
+                "Failed to register pod '{}': {}",
                 pod_config.name,
-                pod_id_new
-            );
-        } else {
-            if let Err(e) = self
-                .try_register_pod(pod_config.name.clone(), running_pod)
-                .await
-            {
-                return Err(anyhow::anyhow!(
-                    "Failed to register pod '{}': {}",
-                    pod_config.name,
-                    e
-                ));
-            }
-            log::debug!(
-                "Registered pod '{}' (ID: {}) - duplicate instances not allowed",
-                pod_config.name,
-                pod_id_new
-            );
+                e
+            ));
         }
+        log::debug!(
+            "Registered pod '{}' (ID: {})",
+            pod_config.name,
+            pod_id_new
+        );
 
         log::info!(
             "Successfully started pod '{}' (ID: {})",

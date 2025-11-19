@@ -18,14 +18,6 @@ impl BackendConfigMeta for InteractiveConfig {
         "Interactive"
     }
 
-    fn force_allow_duplicate() -> bool {
-        false
-    }
-
-    fn force_auto_start() -> bool {
-        true
-    }
-
     fn default_view_stdout() -> bool {
         false
     }
@@ -51,10 +43,6 @@ pub fn try_interactive_from_expanded_config(
             system_input_topic
         ));
     }
-
-    // allow_duplicateとauto_startはバックエンド実装によって固定されているため、
-    // ユーザーが設定していた場合はエラーとする
-    // このチェックはnormalize_defaults()で既に行われているが、念のためここでも確認
 
     Ok(InteractiveConfig { system_input_topic })
 }

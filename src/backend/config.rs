@@ -9,41 +9,11 @@ pub trait BackendConfigMeta {
     /// プロトコル名を取得
     fn protocol_name() -> &'static str;
 
-    /// 強制されるallow_duplicate値を取得
-    fn force_allow_duplicate() -> bool;
-
-    /// 強制されるauto_start値を取得
-    fn force_auto_start() -> bool;
-
     /// デフォルトのview_stdout値を取得
     fn default_view_stdout() -> bool;
 
     /// デフォルトのview_stderr値を取得
     fn default_view_stderr() -> bool;
-}
-
-/// セクション名から強制されるallow_duplicate値を取得
-pub fn get_force_allow_duplicate(section_name: &str) -> Result<bool, String> {
-    match section_name {
-        "Interactive" => Ok(InteractiveConfig::force_allow_duplicate()),
-        "MiclowStdIO" => Ok(MiclowStdIOConfig::force_allow_duplicate()),
-        _ => Err(format!(
-            "Unknown section name '{}' for get_force_allow_duplicate. Supported sections: [[Interactive]], [[MiclowStdIO]]",
-            section_name
-        )),
-    }
-}
-
-/// セクション名から強制されるauto_start値を取得
-pub fn get_force_auto_start(section_name: &str) -> Result<bool, String> {
-    match section_name {
-        "Interactive" => Ok(InteractiveConfig::force_auto_start()),
-        "MiclowStdIO" => Ok(MiclowStdIOConfig::force_auto_start()),
-        _ => Err(format!(
-            "Unknown section name '{}' for get_force_auto_start. Supported sections: [[Interactive]], [[MiclowStdIO]]",
-            section_name
-        )),
-    }
 }
 
 /// セクション名からデフォルトのview_stdout値を取得
