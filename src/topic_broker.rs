@@ -189,7 +189,7 @@ impl TopicBroker {
         };
         let topic_owned = topic.clone();
 
-        if matches!(event, ExecutorOutputEvent::Message { .. }) {
+        if matches!(event, ExecutorOutputEvent::Topic { .. }) {
             let mut latest_messages = self.latest_messages.write().await;
             latest_messages.insert(topic_owned.clone(), event.clone());
         }

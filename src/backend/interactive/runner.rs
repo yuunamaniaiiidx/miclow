@@ -1,45 +1,15 @@
+use crate::backend::interactive::config::InteractiveConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{
     ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, SystemResponseChannel,
 };
-use crate::config::TaskConfig;
+use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
-
-#[derive(Clone)]
-pub struct InteractiveConfig {
-    pub system_input_topic: String,
-}
-
-impl InteractiveConfig {
-    pub fn new(system_input_topic: String) -> Self {
-        Self { system_input_topic }
-    }
-}
-
-pub fn try_interactive_from_task_config(
-    config: &TaskConfig,
-) -> Result<InteractiveConfig, anyhow::Error> {
-    // InteractiveProtocol用のシステム入力トピック: stdout_topicが未設定の場合は"system"を使用
-    let system_input_topic: String = config
-        .expand("stdout_topic")
-        .unwrap_or_else(|| "system".to_string());
-
-    // バリデーション
-    if system_input_topic.contains(' ') {
-        return Err(anyhow::anyhow!(
-            "Task '{}' stdout_topic '{}' contains spaces (not allowed)",
-            config.name,
-            system_input_topic
-        ));
-    }
-
-    Ok(InteractiveConfig { system_input_topic })
-}
 
 pub async fn spawn_interactive_protocol(
     config: &InteractiveConfig,
@@ -83,6 +53,8 @@ pub async fn spawn_interactive_protocol(
                             log::info!("Sending message topic:'{}' data:'{}'", system_input_topic, trimmed);
 
                             let event = ExecutorOutputEvent::new_message(
+                                MessageId::new(),
+                                task_id.clone(),
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
                             );
@@ -98,7 +70,11 @@ pub async fn spawn_interactive_protocol(
                         }
                         Err(e) => {
                             log::error!("Error reading from stdin for task {}: {}", task_id, e);
-                            let _ = event_tx_clone.send_error(format!("Error reading from stdin: {}", e));
+                            let _ = event_tx_clone.send_error(
+                                MessageId::new(),
+                                task_id.clone(),
+                                format!("Error reading from stdin: {}", e),
+                            );
                             break;
                         }
                     }

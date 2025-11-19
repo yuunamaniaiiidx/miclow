@@ -2,13 +2,31 @@ use crate::channels::ExecutorOutputEventSender;
 use crate::channels::SystemResponseSender;
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
-use crate::messages::ExecutorOutputEvent;
-use crate::messages::{SystemResponseEvent, SystemResponseStatus};
+use crate::messages::{ExecutorOutputEvent, SystemResponseEvent, SystemResponseStatus};
 use crate::system_control::queue::SystemControlQueue;
 use crate::task_id::TaskId;
 use crate::task_runtime::{ParentInvocationContext, StartContext, TaskExecutor};
 use crate::topic_broker::TopicBroker;
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
+
+#[derive(Serialize)]
+struct StatusResponse {
+    tasks: Vec<StatusTaskInfo>,
+    topics: Vec<StatusTopicInfo>,
+}
+
+#[derive(Serialize)]
+struct StatusTaskInfo {
+    name: String,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct StatusTopicInfo {
+    name: String,
+    subscribers: usize,
+}
 
 #[derive(Debug, Clone)]
 pub enum SystemControlAction {
@@ -23,7 +41,7 @@ pub enum SystemControlAction {
         topic: String,
     },
     CallFunction {
-        task_name: String,
+        function_name: String,
         initial_input: Option<String>,
     },
     Unknown {
@@ -44,7 +62,6 @@ impl SystemControlAction {
         task_id: &TaskId,
         response_channel: &SystemResponseSender,
         task_event_sender: &ExecutorOutputEventSender,
-        return_message_sender: &ExecutorOutputEventSender,
     ) -> Result<(), String> {
         match self {
             SystemControlAction::SubscribeTopic { topic } => {
@@ -64,7 +81,7 @@ impl SystemControlAction {
                 let response_topic = "system.subscribe-topic".to_string();
                 let success_event = SystemResponseEvent::new_system_response(
                     response_topic,
-                    status.to_string(),
+                    status,
                     topic.clone(),
                 );
                 let _ = response_channel.send(success_event);
@@ -88,7 +105,7 @@ impl SystemControlAction {
                     let response_topic = "system.unsubscribe-topic".to_string();
                     let success_event = SystemResponseEvent::new_system_response(
                         response_topic,
-                        status.to_string(),
+                        status,
                         topic.clone(),
                     );
                     let _ = response_channel.send(success_event);
@@ -99,7 +116,7 @@ impl SystemControlAction {
                     let response_topic = "system.unsubscribe-topic".to_string();
                     let error_event = SystemResponseEvent::new_system_error(
                         response_topic,
-                        status.to_string(),
+                        status,
                         topic.clone(),
                     );
                     let _ = response_channel.send(error_event);
@@ -112,39 +129,44 @@ impl SystemControlAction {
                 let tasks_info = task_executor.get_running_tasks_info().await;
                 let topics_info = topic_manager.get_topics_info().await;
 
-                let mut json_response = String::from("{\n");
-                json_response.push_str("  \"tasks\": [\n");
+                let status_payload = StatusResponse {
+                    tasks: tasks_info
+                        .into_iter()
+                        .map(|(task_name, task_id)| StatusTaskInfo {
+                            name: task_name,
+                            id: task_id.to_string(),
+                        })
+                        .collect(),
+                    topics: topics_info
+                        .into_iter()
+                        .map(|(topic_name, subscriber_count)| StatusTopicInfo {
+                            name: topic_name,
+                            subscribers: subscriber_count,
+                        })
+                        .collect(),
+                };
 
-                for (i, (task_name, task_id)) in tasks_info.iter().enumerate() {
-                    if i > 0 {
-                        json_response.push_str(",\n");
+                let json_response = match serde_json::to_string_pretty(&status_payload)
+                    .map_err(|e| e.to_string())
+                {
+                    Ok(json) => json,
+                    Err(err) => {
+                        log::error!("Failed to serialize status response: {}", err);
+                        let status = SystemResponseStatus::Error;
+                        let error_event = SystemResponseEvent::new_system_error(
+                            "system.status".to_string(),
+                            status,
+                            format!("Failed to serialize status response: {}", err),
+                        );
+                        let _ = response_channel.send(error_event);
+                        return Err(err);
                     }
-                    json_response.push_str(&format!(
-                        "    {{\"name\": \"{}\", \"id\": \"{}\"}}",
-                        task_name, task_id
-                    ));
-                }
-
-                json_response.push_str("\n  ],\n");
-                json_response.push_str("  \"topics\": [\n");
-
-                for (i, (topic_name, subscriber_count)) in topics_info.iter().enumerate() {
-                    if i > 0 {
-                        json_response.push_str(",\n");
-                    }
-                    json_response.push_str(&format!(
-                        "    {{\"name\": \"{}\", \"subscribers\": {}}}",
-                        topic_name, subscriber_count
-                    ));
-                }
-
-                json_response.push_str("\n  ]\n");
-                json_response.push_str("}");
+                };
 
                 let status = SystemResponseStatus::Success;
                 let status_event = SystemResponseEvent::new_system_response(
                     "system.status".to_string(),
-                    status.to_string(),
+                    status,
                     json_response,
                 );
 
@@ -164,12 +186,12 @@ impl SystemControlAction {
                 );
 
                 match topic_manager.get_latest_message(topic).await {
-                    Some(ExecutorOutputEvent::Message { data, .. }) => {
+                    Some(ExecutorOutputEvent::Topic { data, .. }) => {
                         let status = SystemResponseStatus::Success;
                         let response_topic = "system.get-latest-message".to_string();
                         let success_event = SystemResponseEvent::new_system_response(
                             response_topic,
-                            status.to_string(),
+                            status,
                             data.clone(),
                         );
                         let _ = response_channel.send(success_event);
@@ -185,7 +207,7 @@ impl SystemControlAction {
                         let response_topic = "system.get-latest-message".to_string();
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             format!("Latest event for '{}' is not a message", topic),
                         );
                         let _ = response_channel.send(error_event);
@@ -201,7 +223,7 @@ impl SystemControlAction {
                         let response_topic = "system.get-latest-message".to_string();
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             format!("No latest message for topic '{}'", topic),
                         );
                         let _ = response_channel.send(error_event);
@@ -210,22 +232,43 @@ impl SystemControlAction {
                 }
             }
             SystemControlAction::CallFunction {
-                task_name,
+                function_name,
                 initial_input,
             } => {
+                // function_nameからfunction_to_taskマッピングを使って実際のタスク名を解決
+                log::debug!(
+                    "Looking up function '{}' in function_to_task mapping (total functions: {})",
+                    function_name,
+                    system_config.function_to_task.len()
+                );
+                for (func, task) in &system_config.function_to_task {
+                    log::debug!("  function '{}' -> task '{}'", func, task);
+                }
+                let actual_task_name = system_config
+                    .function_to_task
+                    .get(function_name)
+                    .ok_or_else(|| {
+                        format!(
+                            "Function '{}' is not defined. Please define it using [[BackendName.function]] section in the configuration. Available functions: {}",
+                            function_name,
+                            system_config.function_to_task.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+                        )
+                    })?;
+
                 log::info!(
-                    "Processing CallFunction action for task {}: '{}'",
-                    task_id,
-                    task_name
+                    "Processing CallFunction action for function '{}' -> task '{}' (caller: {})",
+                    function_name,
+                    actual_task_name,
+                    task_id
                 );
 
                 let parent_invocation = ParentInvocationContext {
-                    return_channel: return_message_sender.clone(),
+                    caller_task_id: task_id.clone(),
                     initial_input: initial_input.clone(),
                 };
 
                 let ready_context = match StartContext::from_task_name(
-                    task_name.clone(),
+                    actual_task_name.clone(),
                     system_config,
                     topic_manager.clone(),
                     system_control_manager.clone(),
@@ -235,40 +278,57 @@ impl SystemControlAction {
                 ) {
                     Ok(ctx) => ctx,
                     Err(e) => {
-                        log::error!("Failed to find task '{}': {}", task_name, e);
+                        log::error!(
+                            "Failed to find task '{}' for function '{}': {}",
+                            actual_task_name,
+                            function_name,
+                            e
+                        );
                         let status = SystemResponseStatus::Error;
-                        let response_topic = format!("system.function.{}", task_name);
+                        let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             e.to_string(),
                         );
                         let _ = response_channel.send(error_event);
-                        return Err(format!("Task '{}' not found", task_name));
+                        return Err(format!(
+                            "Task '{}' not found for function '{}'",
+                            actual_task_name, function_name
+                        ));
                     }
                 };
 
                 match task_executor.start_task_from_config(ready_context).await {
                     Ok(_) => {
-                        log::info!("Successfully called function '{}'", task_name);
+                        log::info!(
+                            "Successfully called function '{}' -> task '{}'",
+                            function_name,
+                            actual_task_name
+                        );
 
                         let status = SystemResponseStatus::Success;
-                        let response_topic = format!("system.function.{}", task_name);
+                        let response_topic = format!("system.function.{}", function_name);
                         let success_event = SystemResponseEvent::new_system_response(
                             response_topic,
-                            status.to_string(),
-                            task_name.clone(),
+                            status,
+                            actual_task_name.clone(),
                         );
                         let _ = response_channel.send(success_event);
                         Ok(())
                     }
                     Err(e) => {
-                        log::error!("Failed to call function '{}': {}", task_name, e);
+                        log::error!(
+                            "Failed to call function '{}' -> task '{}': {}",
+                            function_name,
+                            actual_task_name,
+                            e
+                        );
                         let status = SystemResponseStatus::Error;
-                        let response_topic = format!("system.function.{}", task_name);
+                        let response_topic = format!("system.function.{}", function_name);
                         let error_event = SystemResponseEvent::new_system_error(
                             response_topic,
-                            status.to_string(),
+                            status,
                             e.to_string(),
                         );
                         let _ = response_channel.send(error_event);
@@ -287,55 +347,4 @@ impl SystemControlAction {
             }
         }
     }
-}
-
-pub fn system_control_action_from_event(
-    event: &ExecutorOutputEvent,
-) -> Option<SystemControlAction> {
-    let ExecutorOutputEvent::SystemControl { key, data } = event else {
-        return None;
-    };
-
-    let key_lower = key.to_lowercase();
-    let data_trimmed = data.trim();
-
-    let action = match key_lower.as_str() {
-        "system.subscribe-topic" => SystemControlAction::SubscribeTopic {
-            topic: data_trimmed.to_string(),
-        },
-        "system.unsubscribe-topic" => SystemControlAction::UnsubscribeTopic {
-            topic: data_trimmed.to_string(),
-        },
-        "system.status" => SystemControlAction::Status,
-        "system.get-latest-message" => {
-            if data_trimmed.is_empty() {
-                return None;
-            }
-            SystemControlAction::GetLatestMessage {
-                topic: data_trimmed.to_string(),
-            }
-        }
-        _ if key_lower.starts_with("system.function.") => {
-            let function_name = key_lower.strip_prefix("system.function.").unwrap_or("");
-            if function_name.is_empty() {
-                return None;
-            }
-            let initial_input = if data_trimmed.is_empty() {
-                None
-            } else {
-                Some(data_trimmed.to_string())
-            };
-            SystemControlAction::CallFunction {
-                task_name: function_name.to_string(),
-                initial_input,
-            }
-        }
-        _ if key_lower.starts_with("system.") => SystemControlAction::Unknown {
-            command: key_lower.clone(),
-            data: data_trimmed.to_string(),
-        },
-        _ => return None,
-    };
-
-    Some(action)
 }

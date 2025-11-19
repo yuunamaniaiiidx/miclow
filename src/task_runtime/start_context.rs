@@ -1,15 +1,14 @@
 use crate::channels::UserLogSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::system_control::SystemControlQueue;
+use crate::task_id::TaskId;
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
 use tokio_util::sync::CancellationToken;
 
-use crate::channels::ExecutorOutputEventSender;
-
 #[derive(Clone)]
 pub struct ParentInvocationContext {
-    pub return_channel: ExecutorOutputEventSender,
+    pub caller_task_id: TaskId,
     pub initial_input: Option<String>,
 }
 
@@ -56,7 +55,6 @@ impl StartContext {
         let task_config = config
             .tasks
             .get(&task_name)
-            .or_else(|| config.functions.get(&task_name))
             .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in configuration", task_name))?;
 
         Ok(Self {

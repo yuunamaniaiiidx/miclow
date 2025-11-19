@@ -14,26 +14,25 @@ def main():
     print("MCP Filesystem Server テストを開始します...")
     print("=" * 50)
 
-    # MCPサーバーのタスク名（config.tomlで定義したtask_name）
-    mcp_task_name = "filesystem_mcp"
+    targets = [
+        ("filesystem_mcp", "StdIO backend (child process)"),
+        ("filesystem_mcp_tcp", "TCP backend (remote server)"),
+    ]
 
-    # ディレクトリ一覧を取得
-    print("\nディレクトリ一覧を取得します...")
-    try:
-        # list_directoryツールを呼び出す
-        # dataはJSON形式で，{"name": "ツール名", "arguments": {...}} を指定
-        result = miclow.call_function(mcp_task_name, json.dumps({
-            "name": "list_directory",
-            "arguments": {
-                "path": "/home/coding/coto/miclow/examples/mcp"
-            }
-        }))
-        # call_function()はTopicMessageを返すため、data属性に直接アクセス
-        print(f"結果:\n{result.data}")
-    except Exception as e:
-        print(f"エラー: {e}")
-        import traceback
-        traceback.print_exc()
+    for task_name, label in targets:
+        print(f"\n[{label}] ディレクトリ一覧を取得します ({task_name}) ...")
+        try:
+            result = miclow.call_function(task_name, json.dumps({
+                "name": "list_directory",
+                "arguments": {
+                    "path": "/home/coding/coto/miclow/examples/mcp"
+                }
+            }))
+            print(f"結果:\n{result.data}")
+        except Exception as e:
+            print(f"{label} との通信でエラーが発生しました: {e}")
+            import traceback
+            traceback.print_exc()
 
     print("\n" + "=" * 50)
     print("テスト完了")
@@ -41,4 +40,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

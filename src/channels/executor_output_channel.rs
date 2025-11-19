@@ -1,4 +1,6 @@
+use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
+use crate::task_id::TaskId;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -21,21 +23,32 @@ impl ExecutorOutputEventSender {
 
     pub fn send_message(
         &self,
+        message_id: MessageId,
+        task_id: TaskId,
         key: String,
         data: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_message(key, data))
+        self.send(ExecutorOutputEvent::new_message(
+            message_id, task_id, key, data,
+        ))
     }
 
     pub fn send_error(
         &self,
+        message_id: MessageId,
+        task_id: TaskId,
         error: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_error(error))
+        self.send(ExecutorOutputEvent::new_error(message_id, task_id, error))
     }
 
-    pub fn send_exit(&self, code: i32) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_exit(code))
+    pub fn send_exit(
+        &self,
+        message_id: MessageId,
+        task_id: TaskId,
+        code: i32,
+    ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
+        self.send(ExecutorOutputEvent::new_exit(message_id, task_id, code))
     }
 }
 

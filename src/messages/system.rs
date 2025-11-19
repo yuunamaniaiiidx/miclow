@@ -17,18 +17,22 @@ impl std::fmt::Display for SystemResponseStatus {
 pub enum SystemResponseEvent {
     SystemResponse {
         topic: String,
-        status: String,
+        status: SystemResponseStatus,
         data: String,
     },
     SystemError {
         topic: String,
-        status: String,
+        status: SystemResponseStatus,
         error: String,
     },
 }
 
 impl SystemResponseEvent {
-    pub fn new_system_response(topic: String, status: String, data: String) -> Self {
+    pub fn new_system_response(
+        topic: String,
+        status: SystemResponseStatus,
+        data: String,
+    ) -> Self {
         Self::SystemResponse {
             topic,
             status,
@@ -36,7 +40,11 @@ impl SystemResponseEvent {
         }
     }
 
-    pub fn new_system_error(topic: String, status: String, error: String) -> Self {
+    pub fn new_system_error(
+        topic: String,
+        status: SystemResponseStatus,
+        error: String,
+    ) -> Self {
         Self::SystemError {
             topic,
             status,

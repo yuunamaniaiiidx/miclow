@@ -11,7 +11,6 @@ pub struct SystemControlMessage {
     pub task_id: TaskId,
     pub response_channel: SystemResponseSender,
     pub task_event_sender: ExecutorOutputEventSender,
-    pub return_message_sender: ExecutorOutputEventSender,
 }
 
 impl std::fmt::Debug for SystemControlMessage {
@@ -31,14 +30,12 @@ impl SystemControlMessage {
         task_id: TaskId,
         response_channel: SystemResponseSender,
         task_event_sender: ExecutorOutputEventSender,
-        return_message_sender: ExecutorOutputEventSender,
     ) -> Self {
         Self {
             action,
             task_id,
             response_channel,
             task_event_sender,
-            return_message_sender,
         }
     }
 }
@@ -69,15 +66,9 @@ impl SystemControlQueue {
         task_id: TaskId,
         response_channel: SystemResponseSender,
         task_event_sender: ExecutorOutputEventSender,
-        return_message_sender: ExecutorOutputEventSender,
     ) -> Result<(), String> {
-        let message = SystemControlMessage::new(
-            action,
-            task_id,
-            response_channel,
-            task_event_sender,
-            return_message_sender,
-        );
+        let message =
+            SystemControlMessage::new(action, task_id, response_channel, task_event_sender);
         self.add_command(message).await
     }
 

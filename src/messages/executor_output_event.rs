@@ -1,57 +1,126 @@
+use crate::message_id::MessageId;
+use crate::system_control::SystemControlAction;
+use crate::task_id::TaskId;
+
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
-    Message { topic: String, data: String },
-    TaskStdout { data: String },
-    TaskStderr { data: String },
-    SystemControl { key: String, data: String },
-    ReturnMessage { data: String },
-    FunctionResponse { function_name: String, data: String },
-    Error { error: String },
-    Exit { exit_code: i32 },
+    Topic {
+        message_id: MessageId,
+        task_id: TaskId,
+        topic: String,
+        data: String,
+    },
+    Stdout {
+        message_id: MessageId,
+        task_id: TaskId,
+        data: String,
+    },
+    Stderr {
+        message_id: MessageId,
+        task_id: TaskId,
+        data: String,
+    },
+    SystemControl {
+        message_id: MessageId,
+        task_id: TaskId,
+        action: SystemControlAction,
+    },
+    FunctionResponse {
+        message_id: MessageId,
+        task_id: TaskId,
+        return_to_task_id: TaskId,
+        data: String,
+    },
+    Error {
+        message_id: MessageId,
+        task_id: TaskId,
+        error: String,
+    },
+    Exit {
+        message_id: MessageId,
+        task_id: TaskId,
+        exit_code: i32,
+    },
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(topic: String, data: String) -> Self {
-        Self::Message { topic, data }
+    pub fn new_message(
+        message_id: MessageId,
+        task_id: TaskId,
+        topic: String,
+        data: String,
+    ) -> Self {
+        Self::Topic {
+            message_id,
+            task_id,
+            topic,
+            data,
+        }
     }
 
-    pub fn new_error(error: String) -> Self {
-        Self::Error { error }
+    pub fn new_error(message_id: MessageId, task_id: TaskId, error: String) -> Self {
+        Self::Error {
+            message_id,
+            task_id,
+            error,
+        }
     }
 
-    pub fn new_exit(exit_code: i32) -> Self {
-        Self::Exit { exit_code }
+    pub fn new_exit(message_id: MessageId, task_id: TaskId, exit_code: i32) -> Self {
+        Self::Exit {
+            message_id,
+            task_id,
+            exit_code,
+        }
     }
 
-    pub fn new_task_stdout(data: String) -> Self {
-        Self::TaskStdout { data }
+    pub fn new_task_stdout(message_id: MessageId, task_id: TaskId, data: String) -> Self {
+        Self::Stdout {
+            message_id,
+            task_id,
+            data,
+        }
     }
 
-    pub fn new_task_stderr(data: String) -> Self {
-        Self::TaskStderr { data }
+    pub fn new_task_stderr(message_id: MessageId, task_id: TaskId, data: String) -> Self {
+        Self::Stderr {
+            message_id,
+            task_id,
+            data,
+        }
     }
 
-    pub fn new_system_control(key: String, data: String) -> Self {
-        Self::SystemControl { key, data }
+    pub fn new_system_control(
+        message_id: MessageId,
+        task_id: TaskId,
+        action: SystemControlAction,
+    ) -> Self {
+        Self::SystemControl {
+            message_id,
+            task_id,
+            action,
+        }
     }
 
-    pub fn new_return_message(data: String) -> Self {
-        Self::ReturnMessage { data }
-    }
-
-    pub fn new_function_response(function_name: String, data: String) -> Self {
+    pub fn new_return_message(
+        message_id: MessageId,
+        task_id: TaskId,
+        return_to_task_id: TaskId,
+        data: String,
+    ) -> Self {
         Self::FunctionResponse {
-            function_name,
+            message_id,
+            task_id,
+            return_to_task_id,
             data,
         }
     }
 
     pub fn data(&self) -> Option<&String> {
         match self {
-            Self::Message { data, .. } => Some(data),
-            Self::TaskStdout { data } => Some(data),
-            Self::TaskStderr { data } => Some(data),
-            Self::ReturnMessage { data } => Some(data),
+            Self::Topic { data, .. } => Some(data),
+            Self::Stdout { data, .. } => Some(data),
+            Self::Stderr { data, .. } => Some(data),
             Self::FunctionResponse { data, .. } => Some(data),
             _ => None,
         }
@@ -59,7 +128,7 @@ impl ExecutorOutputEvent {
 
     pub fn topic(&self) -> Option<&String> {
         match self {
-            Self::Message { topic, .. } => Some(topic),
+            Self::Topic { topic, .. } => Some(topic),
             _ => None,
         }
     }
