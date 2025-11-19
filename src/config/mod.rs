@@ -3,7 +3,7 @@ pub mod expansion;
 use crate::backend::{
     create_protocol_backend, get_default_view_stderr, get_default_view_stdout,
     get_force_allow_duplicate, get_force_auto_start, BackendConfigMeta, InteractiveConfig,
-    McpServerStdIOConfig, McpServerTcpConfig, MiclowStdIOConfig, ProtocolBackend,
+    MiclowStdIOConfig, ProtocolBackend,
 };
 use crate::config::expansion::{ExpandContext, Expandable};
 use anyhow::Result;
@@ -47,6 +47,16 @@ impl FromTomlValue for Option<String> {
     }
 }
 
+impl FromTomlValue for u32 {
+    fn from_toml_value(value: &TomlValue) -> Option<Self> {
+        match value {
+            TomlValue::Integer(i) if *i >= 0 => Some(*i as u32),
+            TomlValue::String(s) => s.trim().parse::<u32>().ok(),
+            _ => None,
+        }
+    }
+}
+
 /// 展開前の生のタスク設定情報
 #[derive(Debug, Clone)]
 struct RawTaskConfig {
@@ -57,7 +67,7 @@ struct RawTaskConfig {
     pub auto_start: Option<TomlValue>,
     pub view_stdout: Option<TomlValue>,
     pub view_stderr: Option<TomlValue>,
-    pub functions: Option<Vec<TomlValue>>,
+    pub lifecycle: Option<RawLifecycleConfig>,
 
     /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
     pub protocol_config: HashMap<String, TomlValue>,
@@ -72,13 +82,128 @@ pub struct TaskConfig {
     pub auto_start: bool,
     pub view_stdout: bool,
     pub view_stderr: bool,
-    pub functions: Vec<String>,
+    pub lifecycle: LifecycleConfig,
 
     /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
     pub protocol_config: HashMap<String, TomlValue>,
 
     /// プロトコルバックエンド（セクション名から直接作成）
     pub protocol_backend: ProtocolBackend,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleMode {
+    RoundRobin,
+}
+
+impl LifecycleMode {
+    fn from_str(value: &str) -> Result<Self> {
+        match value.to_lowercase().as_str() {
+            "round_robin" => Ok(Self::RoundRobin),
+            other => Err(anyhow::anyhow!(
+                "Unknown lifecycle.mode '{}'. Supported modes: round_robin",
+                other
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LifecycleConfig {
+    pub desired_instances: u32,
+    pub mode: LifecycleMode,
+}
+
+impl Default for LifecycleConfig {
+    fn default() -> Self {
+        Self {
+            desired_instances: 1,
+            mode: LifecycleMode::RoundRobin,
+        }
+    }
+}
+
+impl LifecycleConfig {
+    fn with_desired_instances(self, value: u32) -> Self {
+        Self {
+            desired_instances: value,
+            ..self
+        }
+    }
+
+    fn with_mode(self, mode: LifecycleMode) -> Self {
+        Self { mode, ..self }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RawLifecycleConfig {
+    desired_instances: Option<TomlValue>,
+    mode: Option<TomlValue>,
+}
+
+impl RawLifecycleConfig {
+    fn from_entry(entry: LifecycleEntry) -> Result<Self> {
+        let mut desired_instances = None;
+        let mut mode = None;
+
+        for (key, value) in entry.fields {
+            match key.as_str() {
+                "desired_instances" => {
+                    if desired_instances.is_some() {
+                        return Err(anyhow::anyhow!(
+                            "Duplicate lifecycle field 'desired_instances'"
+                        ));
+                    }
+                    desired_instances = Some(value);
+                }
+                "mode" => {
+                    if mode.is_some() {
+                        return Err(anyhow::anyhow!("Duplicate lifecycle field 'mode'"));
+                    }
+                    mode = Some(value);
+                }
+                other => {
+                    return Err(anyhow::anyhow!(
+                        "Unknown lifecycle field '{}'. Supported fields: desired_instances, mode",
+                        other
+                    ))
+                }
+            }
+        }
+
+        Ok(Self {
+            desired_instances,
+            mode,
+        })
+    }
+
+    fn expand(self, context: &ExpandContext) -> Result<LifecycleConfig> {
+        let mut lifecycle = LifecycleConfig::default();
+
+        if let Some(raw_desired) = self.desired_instances {
+            let expanded_value = expand_toml_value(&raw_desired, context)?;
+            let desired = u32::from_toml_value(&expanded_value).ok_or_else(|| {
+                anyhow::anyhow!("lifecycle.desired_instances must be an integer (>= 0)")
+            })?;
+            if desired == 0 {
+                return Err(anyhow::anyhow!(
+                    "lifecycle.desired_instances must be greater than 0"
+                ));
+            }
+            lifecycle = lifecycle.with_desired_instances(desired);
+        }
+
+        if let Some(raw_mode) = self.mode {
+            let expanded_value = expand_toml_value(&raw_mode, context)?;
+            let mode_str = String::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("lifecycle.mode must be a string"))?;
+            let mode = LifecycleMode::from_str(&mode_str)?;
+            lifecycle = lifecycle.with_mode(mode);
+        }
+
+        Ok(lifecycle)
+    }
 }
 
 impl RawTaskConfig {
@@ -142,18 +267,10 @@ impl RawTaskConfig {
             .transpose()?
             .expect("view_stderr should be set by normalize_defaults()");
 
-        // functionsの展開
-        let functions = if let Some(raw_functions) = self.functions {
-            let mut expanded_functions = Vec::new();
-            for func_value in raw_functions {
-                let expanded_value = expand_toml_value(&func_value, context)?;
-                if let Some(func_str) = String::from_toml_value(&expanded_value) {
-                    expanded_functions.push(func_str);
-                }
-            }
-            expanded_functions
+        let lifecycle = if let Some(raw_lifecycle) = self.lifecycle {
+            raw_lifecycle.expand(context)?
         } else {
-            Vec::new()
+            LifecycleConfig::default()
         };
 
         // プロトコル固有設定の展開
@@ -172,7 +289,7 @@ impl RawTaskConfig {
             auto_start,
             view_stdout,
             view_stderr,
-            functions,
+            lifecycle,
             protocol_config,
         })
     }
@@ -197,7 +314,7 @@ impl RawTaskConfig {
             auto_start: expanded.auto_start,
             view_stdout: expanded.view_stdout,
             view_stderr: expanded.view_stderr,
-            functions: expanded.functions,
+            lifecycle: expanded.lifecycle,
             protocol_config: expanded.protocol_config,
             protocol_backend,
         })
@@ -213,7 +330,7 @@ pub struct ExpandedTaskConfig {
     pub auto_start: bool,
     pub view_stdout: bool,
     pub view_stderr: bool,
-    pub functions: Vec<String>,
+    pub lifecycle: LifecycleConfig,
     pub protocol_config: HashMap<String, TomlValue>,
 }
 
@@ -278,7 +395,7 @@ fn parse_bool(s: &str) -> bool {
     matches!(s_trimmed, "true" | "1" | "yes" | "on" | "y")
 }
 
-/// TOMLから直接デシリアライズされるタスクエントリ（function配列を含む可能性がある）
+/// TOMLから直接デシリアライズされるタスクエントリ
 #[derive(Debug, Clone, serde::Deserialize)]
 struct RawTaskEntry {
     task_name: String,
@@ -288,18 +405,17 @@ struct RawTaskEntry {
     auto_start: Option<bool>,
     view_stdout: Option<bool>,
     view_stderr: Option<bool>,
-    /// [[tasks.function]]から来るfunction配列
     #[serde(default)]
-    function: Option<Vec<FunctionEntry>>,
+    lifecycle: Vec<LifecycleEntry>,
     /// その他のプロトコル固有設定（flattenで展開される）
     #[serde(flatten)]
     protocol_config: HashMap<String, TomlValue>,
 }
 
-/// functionエントリ
 #[derive(Debug, Clone, serde::Deserialize)]
-struct FunctionEntry {
-    topic: String,
+struct LifecycleEntry {
+    #[serde(flatten)]
+    fields: HashMap<String, TomlValue>,
 }
 
 /// TOMLから直接デシリアライズされるシステム設定
@@ -325,9 +441,9 @@ impl RawSystemConfig {
             }
         }
 
-        // 未知のセクションをチェック（include_paths、tasks、tasks.function以外）
+        // 未知のセクションをチェック（include_paths、tasks、tasks.lifecycle以外）
         for (key, _) in &self._unknown {
-            if key != "include_paths" && key != "tasks" && key != "tasks.function" {
+            if key != "include_paths" && key != "tasks" && key != "tasks.lifecycle" {
                 unknown_sections.push(key.clone());
             }
         }
@@ -335,7 +451,7 @@ impl RawSystemConfig {
         // バリデーション: 未知のセクションがある場合はエラー
         if !unknown_sections.is_empty() {
             return Err(anyhow::anyhow!(
-                "Unknown section(s): {}. Supported sections: [[tasks]], [[tasks.function]]",
+                "Unknown section(s): {}. Supported sections: [[tasks]], [[tasks.lifecycle]]",
                 unknown_sections.join(", ")
             ));
         }
@@ -348,27 +464,26 @@ impl RawSystemConfig {
         let protocol_name = match entry.protocol.as_str() {
             "Interactive" => InteractiveConfig::protocol_name().to_string(),
             "MiclowStdIO" => MiclowStdIOConfig::protocol_name().to_string(),
-            "McpServerStdIO" => McpServerStdIOConfig::protocol_name().to_string(),
-            "McpServerTcp" => McpServerTcpConfig::protocol_name().to_string(),
-            _ => return Err(anyhow::anyhow!(
-                "Unknown protocol '{}' for task '{}'. Supported protocols: Interactive, MiclowStdIO, McpServerStdIO, McpServerTcp",
-                entry.protocol, entry.task_name
-            )),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown protocol '{}' for task '{}'. Supported protocols: Interactive, MiclowStdIO",
+                    entry.protocol,
+                    entry.task_name
+                ))
+            }
         };
 
-        // function配列を処理
-        let functions = if let Some(func_entries) = entry.function {
-            let mut func_topics = Vec::new();
-            for func_entry in func_entries {
-                func_topics.push(TomlValue::String(func_entry.topic));
-            }
-            if !func_topics.is_empty() {
-                Some(func_topics)
-            } else {
-                None
-            }
-        } else {
+        let lifecycle = if entry.lifecycle.is_empty() {
             None
+        } else if entry.lifecycle.len() == 1 {
+            Some(RawLifecycleConfig::from_entry(
+                entry.lifecycle.first().cloned().unwrap(),
+            )?)
+        } else {
+            return Err(anyhow::anyhow!(
+                "Task '{}' has multiple lifecycle blocks. Only one [[tasks.lifecycle]] entry is supported.",
+                entry.task_name
+            ));
         };
 
         // RawTaskConfigを作成
@@ -382,7 +497,7 @@ impl RawSystemConfig {
             auto_start: entry.auto_start.map(|v| TomlValue::Boolean(v)),
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
             view_stderr: entry.view_stderr.map(|v| TomlValue::Boolean(v)),
-            functions,
+            lifecycle,
             protocol_config: entry.protocol_config,
         };
 
@@ -397,7 +512,6 @@ impl RawSystemConfig {
 pub struct SystemConfig {
     pub tasks: HashMap<String, TaskConfig>,
     pub include_paths: Vec<String>,
-    pub function_to_task: HashMap<String, String>, // function_name -> task_name
 }
 
 impl SystemConfig {
@@ -420,23 +534,10 @@ impl SystemConfig {
 
         // 変数展開とProtocolBackend作成を実行してTaskConfigに変換
         let mut tasks = HashMap::new();
-        let mut function_to_task = HashMap::new();
 
         for task in raw_tasks {
             let expanded = task.expand_and_create_backend(expand_context)?;
             let name = expanded.name.clone();
-
-            // 関数名→タスク名のマッピングを構築
-            for function_name in &expanded.functions {
-                log::debug!("Mapping function '{}' to task '{}'", function_name, name);
-                if let Some(existing_task) = function_to_task.get(function_name) {
-                    return Err(anyhow::anyhow!(
-                        "Function '{}' is already assigned to task '{}', cannot assign to task '{}'",
-                        function_name, existing_task, name
-                    ));
-                }
-                function_to_task.insert(function_name.clone(), name.clone());
-            }
 
             if tasks.insert(name.clone(), expanded).is_some() {
                 return Err(anyhow::anyhow!("Duplicate task name: {}", name));
@@ -460,7 +561,6 @@ impl SystemConfig {
         let config = SystemConfig {
             tasks,
             include_paths,
-            function_to_task,
         };
 
         if validate {
@@ -611,20 +711,6 @@ impl SystemConfig {
                                 full_path
                             );
                             for (name, task) in included_config.tasks {
-                                // 関数名→タスク名のマッピングを更新
-                                for function_name in &task.functions {
-                                    if let Some(existing_task) =
-                                        self.function_to_task.get(function_name)
-                                    {
-                                        log::warn!(
-                                            "Function '{}' is already assigned to task '{}', overwriting with task '{}' from include file {}",
-                                            function_name, existing_task, name, full_path
-                                        );
-                                    }
-                                    self.function_to_task
-                                        .insert(function_name.clone(), name.clone());
-                                }
-
                                 if self.tasks.insert(name.clone(), task).is_some() {
                                     log::warn!(
                                         "Duplicate task name '{}' in include file {}, overwriting",

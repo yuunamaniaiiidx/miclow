@@ -5,7 +5,7 @@ use crate::config::SystemConfig;
 use crate::messages::{ExecutorOutputEvent, SystemResponseEvent, SystemResponseStatus};
 use crate::system_control::queue::SystemControlQueue;
 use crate::task_id::TaskId;
-use crate::task_runtime::{ParentInvocationContext, StartContext, TaskExecutor};
+use crate::task_runtime::TaskExecutor;
 use crate::topic_broker::TopicBroker;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
@@ -30,24 +30,11 @@ struct StatusTopicInfo {
 
 #[derive(Debug, Clone)]
 pub enum SystemControlAction {
-    SubscribeTopic {
-        topic: String,
-    },
-    UnsubscribeTopic {
-        topic: String,
-    },
+    SubscribeTopic { topic: String },
+    UnsubscribeTopic { topic: String },
     Status,
-    GetLatestMessage {
-        topic: String,
-    },
-    CallFunction {
-        function_name: String,
-        initial_input: Option<String>,
-    },
-    Unknown {
-        command: String,
-        data: String,
-    },
+    GetLatestMessage { topic: String },
+    Unknown { command: String, data: String },
 }
 
 impl SystemControlAction {
@@ -55,10 +42,10 @@ impl SystemControlAction {
         &self,
         topic_manager: &TopicBroker,
         task_executor: &TaskExecutor,
-        system_config: &SystemConfig,
-        shutdown_token: &CancellationToken,
-        userlog_sender: &UserLogSender,
-        system_control_manager: &SystemControlQueue,
+        _system_config: &SystemConfig,
+        _shutdown_token: &CancellationToken,
+        _userlog_sender: &UserLogSender,
+        _system_control_manager: &SystemControlQueue,
         task_id: &TaskId,
         response_channel: &SystemResponseSender,
         task_event_sender: &ExecutorOutputEventSender,
@@ -79,11 +66,8 @@ impl SystemControlAction {
 
                 let status = SystemResponseStatus::Success;
                 let response_topic = "system.subscribe-topic".to_string();
-                let success_event = SystemResponseEvent::new_system_response(
-                    response_topic,
-                    status,
-                    topic.clone(),
-                );
+                let success_event =
+                    SystemResponseEvent::new_system_response(response_topic, status, topic.clone());
                 let _ = response_channel.send(success_event);
                 Ok(())
             }
@@ -228,111 +212,6 @@ impl SystemControlAction {
                         );
                         let _ = response_channel.send(error_event);
                         Err(format!("No latest message for topic '{}'", topic))
-                    }
-                }
-            }
-            SystemControlAction::CallFunction {
-                function_name,
-                initial_input,
-            } => {
-                // function_nameからfunction_to_taskマッピングを使って実際のタスク名を解決
-                log::debug!(
-                    "Looking up function '{}' in function_to_task mapping (total functions: {})",
-                    function_name,
-                    system_config.function_to_task.len()
-                );
-                for (func, task) in &system_config.function_to_task {
-                    log::debug!("  function '{}' -> task '{}'", func, task);
-                }
-                let actual_task_name = system_config
-                    .function_to_task
-                    .get(function_name)
-                    .ok_or_else(|| {
-                        format!(
-                            "Function '{}' is not defined. Please define it using [[BackendName.function]] section in the configuration. Available functions: {}",
-                            function_name,
-                            system_config.function_to_task.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
-                        )
-                    })?;
-
-                log::info!(
-                    "Processing CallFunction action for function '{}' -> task '{}' (caller: {})",
-                    function_name,
-                    actual_task_name,
-                    task_id
-                );
-
-                let parent_invocation = ParentInvocationContext {
-                    caller_task_id: task_id.clone(),
-                    initial_input: initial_input.clone(),
-                };
-
-                let ready_context = match StartContext::from_task_name(
-                    actual_task_name.clone(),
-                    system_config,
-                    topic_manager.clone(),
-                    system_control_manager.clone(),
-                    shutdown_token.clone(),
-                    userlog_sender.clone(),
-                    Some(parent_invocation),
-                ) {
-                    Ok(ctx) => ctx,
-                    Err(e) => {
-                        log::error!(
-                            "Failed to find task '{}' for function '{}': {}",
-                            actual_task_name,
-                            function_name,
-                            e
-                        );
-                        let status = SystemResponseStatus::Error;
-                        let response_topic = format!("system.function.{}", function_name);
-                        let error_event = SystemResponseEvent::new_system_error(
-                            response_topic,
-                            status,
-                            e.to_string(),
-                        );
-                        let _ = response_channel.send(error_event);
-                        return Err(format!(
-                            "Task '{}' not found for function '{}'",
-                            actual_task_name, function_name
-                        ));
-                    }
-                };
-
-                match task_executor.start_task_from_config(ready_context).await {
-                    Ok(_) => {
-                        log::info!(
-                            "Successfully called function '{}' -> task '{}'",
-                            function_name,
-                            actual_task_name
-                        );
-
-                        let status = SystemResponseStatus::Success;
-                        let response_topic = format!("system.function.{}", function_name);
-                        let success_event = SystemResponseEvent::new_system_response(
-                            response_topic,
-                            status,
-                            actual_task_name.clone(),
-                        );
-                        let _ = response_channel.send(success_event);
-                        Ok(())
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to call function '{}' -> task '{}': {}",
-                            function_name,
-                            actual_task_name,
-                            e
-                        );
-                        let status = SystemResponseStatus::Error;
-                        let response_topic = format!("system.function.{}", function_name);
-                        let error_event = SystemResponseEvent::new_system_error(
-                            response_topic,
-                            status,
-                            e.to_string(),
-                        );
-                        let _ = response_channel.send(error_event);
-                        Err(e.to_string())
                     }
                 }
             }

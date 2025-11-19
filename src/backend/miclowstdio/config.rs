@@ -14,7 +14,6 @@ pub struct MiclowStdIOConfig {
     pub stderr_topic: String,
     pub view_stdout: bool,
     pub view_stderr: bool,
-    pub functions: Vec<String>,
 }
 
 impl BackendConfigMeta for MiclowStdIOConfig {
@@ -116,8 +115,6 @@ pub fn try_miclow_stdio_from_expanded_config(
         }
     }
 
-    let functions: Vec<String> = config.functions.clone();
-
     Ok(MiclowStdIOConfig {
         command,
         args,
@@ -127,6 +124,5 @@ pub fn try_miclow_stdio_from_expanded_config(
         stderr_topic,
         view_stdout,
         view_stderr,
-        functions,
     })
 }

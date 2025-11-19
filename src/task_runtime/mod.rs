@@ -4,4 +4,4 @@ pub mod spawner;
 pub mod start_context;
 
 pub use executor::TaskExecutor;
-pub use start_context::{ParentInvocationContext, StartContext};
+pub use start_context::StartContext;

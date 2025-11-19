@@ -1,0 +1,25 @@
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "basic_sender"
+command = "python3"
+args = ["sender.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+
+  [[tasks.lifecycle]]
+  desired_instances = 1
+
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "basic_receiver"
+command = "python3"
+args = ["receiver.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+subscribe_topics = ["demo.topic"]
+
+  [[tasks.lifecycle]]
+  desired_instances = 1
+

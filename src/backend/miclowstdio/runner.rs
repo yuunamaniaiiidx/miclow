@@ -79,18 +79,6 @@ impl<'a> ExecutorInputEventStdio<'a> {
                 lines.extend(data_lines.iter().map(|s| s.to_string()));
                 lines
             }
-            ExecutorInputEvent::Function { data, .. } => {
-                let data_lines: Vec<&str> = data.lines().collect();
-                let mut lines = vec!["system.function".to_string(), data_lines.len().to_string()];
-                lines.extend(data_lines.iter().map(|s| s.to_string()));
-                lines
-            }
-            ExecutorInputEvent::FunctionResponse { data, .. } => {
-                let data_lines: Vec<&str> = data.lines().collect();
-                let mut lines = vec!["system.return".to_string(), data_lines.len().to_string()];
-                lines.extend(data_lines.iter().map(|s| s.to_string()));
-                lines
-            }
         }
     }
 }
@@ -110,11 +98,8 @@ pub fn parse_system_control_command_from_outcome(
     let topic_lower = topic.to_lowercase();
     let data_trimmed = data.trim();
 
-    // Allow empty data for system.status and system.function.* commands
-    if data_trimmed.is_empty()
-        && topic_lower.as_str() != "system.status"
-        && !topic_lower.starts_with("system.function.")
-    {
+    // Allow empty data for system.status
+    if data_trimmed.is_empty() && topic_lower.as_str() != "system.status" {
         return None;
     }
 
@@ -157,21 +142,6 @@ pub fn parse_system_control_command_from_outcome(
                 }
                 SystemControlAction::GetLatestMessage { topic: actual_data }
             }
-            _ if actual_topic.starts_with("system.function.") => {
-                let function_name = actual_topic.strip_prefix("system.function.").unwrap_or("");
-                if function_name.is_empty() {
-                    return None;
-                }
-                let initial_input = if actual_data.is_empty() {
-                    None
-                } else {
-                    Some(actual_data)
-                };
-                SystemControlAction::CallFunction {
-                    function_name: function_name.to_string(),
-                    initial_input,
-                }
-            }
             _ if actual_topic.starts_with("system.") => SystemControlAction::Unknown {
                 command: actual_topic,
                 data: actual_data,
@@ -187,40 +157,9 @@ pub fn parse_system_control_command_from_outcome(
     None
 }
 
-pub fn parse_return_message_from_outcome(
-    message_id: MessageId,
-    task_id: TaskId,
-    topic: &str,
-    data: &str,
-    caller_task_id: Option<TaskId>,
-) -> Option<ExecutorOutputEvent> {
-    let topic_lower = topic.to_lowercase();
-    let data_trimmed = data.trim();
-
-    if topic_lower == "system.return" {
-        if let Some(return_to_task_id) = caller_task_id {
-            return Some(ExecutorOutputEvent::new_return_message(
-                message_id,
-                task_id,
-                return_to_task_id,
-                data_trimmed.to_string(),
-            ));
-        } else {
-            log::warn!(
-                "ReturnMessage received from task {} but caller_task_id is not set (not in function call context)",
-                task_id
-            );
-            return None;
-        }
-    }
-
-    None
-}
-
 pub async fn spawn_miclow_stdio_protocol(
     config: &MiclowStdIOConfig,
     task_id: TaskId,
-    caller_task_id: Option<TaskId>,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();
     let args = config.args.clone();
@@ -287,7 +226,6 @@ pub async fn spawn_miclow_stdio_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             task_id.clone(),
-            caller_task_id.clone(),
             if view_stdout {
                 Some(
                     ExecutorOutputEvent::new_task_stdout
@@ -304,7 +242,6 @@ pub async fn spawn_miclow_stdio_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             task_id.clone(),
-            caller_task_id.clone(),
             if view_stderr {
                 Some(
                     ExecutorOutputEvent::new_task_stderr
@@ -516,7 +453,6 @@ fn spawn_stream_reader<R>(
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     task_id: TaskId,
-    caller_task_id: Option<TaskId>,
     emit_func: Option<fn(MessageId, TaskId, String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
@@ -529,7 +465,6 @@ where
         let topic_name_clone = topic_name.clone();
         let event_tx_clone = event_tx.clone();
         let task_id_clone = task_id.clone();
-        let caller_task_id_clone = caller_task_id.clone();
 
         let process_stream_outcome =
             move |outcome: Result<StreamOutcome, String>, line_content: &str| {
@@ -537,18 +472,9 @@ where
                 let task_id_for_outcome = task_id_clone.clone();
                 let event_tx_for_outcome = event_tx_clone.clone();
                 let topic_name_for_outcome = topic_name_clone.clone();
-                let caller_task_id_for_outcome = caller_task_id_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
-                        if let Some(return_message_event) = parse_return_message_from_outcome(
-                            message_id.clone(),
-                            task_id_for_outcome.clone(),
-                            &topic,
-                            &data,
-                            caller_task_id_for_outcome,
-                        ) {
-                            let _ = event_tx_for_outcome.send(return_message_event);
-                        } else if let Some(system_control_cmd_event) =
+                        if let Some(system_control_cmd_event) =
                             parse_system_control_command_from_outcome(
                                 message_id.clone(),
                                 task_id_for_outcome.clone(),

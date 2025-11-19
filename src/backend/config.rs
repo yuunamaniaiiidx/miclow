@@ -1,13 +1,5 @@
-use crate::backend::interactive::config::{
-    try_interactive_from_expanded_config, InteractiveConfig,
-};
-use crate::backend::mcp_server::config::{
-    try_mcp_server_stdio_from_expanded_config, try_mcp_server_tcp_from_expanded_config,
-    McpServerStdIOConfig, McpServerTcpConfig,
-};
-use crate::backend::miclowstdio::config::{
-    try_miclow_stdio_from_expanded_config, MiclowStdIOConfig,
-};
+use crate::backend::interactive::{try_interactive_from_expanded_config, InteractiveConfig};
+use crate::backend::miclowstdio::{try_miclow_stdio_from_expanded_config, MiclowStdIOConfig};
 use crate::backend::ProtocolBackend;
 use crate::config::ExpandedTaskConfig;
 use anyhow::{anyhow, Result};
@@ -35,10 +27,8 @@ pub fn get_force_allow_duplicate(section_name: &str) -> Result<bool, String> {
     match section_name {
         "Interactive" => Ok(InteractiveConfig::force_allow_duplicate()),
         "MiclowStdIO" => Ok(MiclowStdIOConfig::force_allow_duplicate()),
-        "McpServerStdIO" => Ok(McpServerStdIOConfig::force_allow_duplicate()),
-        "McpServerTcp" => Ok(McpServerTcpConfig::force_allow_duplicate()),
         _ => Err(format!(
-            "Unknown section name '{}' for get_force_allow_duplicate. Supported sections: [[Interactive]], [[MiclowStdIO]], [[McpServerStdIO]], [[McpServerTcp]]",
+            "Unknown section name '{}' for get_force_allow_duplicate. Supported sections: [[Interactive]], [[MiclowStdIO]]",
             section_name
         )),
     }
@@ -49,10 +39,8 @@ pub fn get_force_auto_start(section_name: &str) -> Result<bool, String> {
     match section_name {
         "Interactive" => Ok(InteractiveConfig::force_auto_start()),
         "MiclowStdIO" => Ok(MiclowStdIOConfig::force_auto_start()),
-        "McpServerStdIO" => Ok(McpServerStdIOConfig::force_auto_start()),
-        "McpServerTcp" => Ok(McpServerTcpConfig::force_auto_start()),
         _ => Err(format!(
-            "Unknown section name '{}' for get_force_auto_start. Supported sections: [[Interactive]], [[MiclowStdIO]], [[McpServerStdIO]], [[McpServerTcp]]",
+            "Unknown section name '{}' for get_force_auto_start. Supported sections: [[Interactive]], [[MiclowStdIO]]",
             section_name
         )),
     }
@@ -63,10 +51,8 @@ pub fn get_default_view_stdout(section_name: &str) -> Result<bool, String> {
     match section_name {
         "Interactive" => Ok(InteractiveConfig::default_view_stdout()),
         "MiclowStdIO" => Ok(MiclowStdIOConfig::default_view_stdout()),
-        "McpServerStdIO" => Ok(McpServerStdIOConfig::default_view_stdout()),
-        "McpServerTcp" => Ok(McpServerTcpConfig::default_view_stdout()),
         _ => Err(format!(
-            "Unknown section name '{}' for get_default_view_stdout. Supported sections: [[Interactive]], [[MiclowStdIO]], [[McpServerStdIO]], [[McpServerTcp]]",
+            "Unknown section name '{}' for get_default_view_stdout. Supported sections: [[Interactive]], [[MiclowStdIO]]",
             section_name
         )),
     }
@@ -77,10 +63,8 @@ pub fn get_default_view_stderr(section_name: &str) -> Result<bool, String> {
     match section_name {
         "Interactive" => Ok(InteractiveConfig::default_view_stderr()),
         "MiclowStdIO" => Ok(MiclowStdIOConfig::default_view_stderr()),
-        "McpServerStdIO" => Ok(McpServerStdIOConfig::default_view_stderr()),
-        "McpServerTcp" => Ok(McpServerTcpConfig::default_view_stderr()),
         _ => Err(format!(
-            "Unknown section name '{}' for get_default_view_stderr. Supported sections: [[Interactive]], [[MiclowStdIO]], [[McpServerStdIO]], [[McpServerTcp]]",
+            "Unknown section name '{}' for get_default_view_stderr. Supported sections: [[Interactive]], [[MiclowStdIO]]",
             section_name
         )),
     }
@@ -100,16 +84,8 @@ pub fn create_protocol_backend(
             let backend_config = try_interactive_from_expanded_config(expanded)?;
             Ok(ProtocolBackend::Interactive(backend_config))
         }
-        "McpServerStdIO" => {
-            let backend_config = try_mcp_server_stdio_from_expanded_config(expanded)?;
-            Ok(ProtocolBackend::McpServerStdIO(backend_config))
-        }
-        "McpServerTcp" => {
-            let backend_config = try_mcp_server_tcp_from_expanded_config(expanded)?;
-            Ok(ProtocolBackend::McpServerTcp(backend_config))
-        }
         _ => Err(anyhow!(
-            "Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdIO, Interactive, McpServerStdIO, McpServerTcp",
+            "Unknown protocol '{}' for task '{}'. Supported protocols: MiclowStdIO, Interactive",
             protocol,
             expanded.name
         )),

@@ -5,15 +5,11 @@ use anyhow::Result;
 #[derive(Clone, Debug)]
 pub struct InteractiveConfig {
     pub system_input_topic: String,
-    pub functions: Vec<String>,
 }
 
 impl InteractiveConfig {
     pub fn new(system_input_topic: String) -> Self {
-        Self {
-            system_input_topic,
-            functions: Vec::new(),
-        }
+        Self { system_input_topic }
     }
 }
 
@@ -60,10 +56,5 @@ pub fn try_interactive_from_expanded_config(
     // ユーザーが設定していた場合はエラーとする
     // このチェックはnormalize_defaults()で既に行われているが、念のためここでも確認
 
-    let functions: Vec<String> = config.functions.clone();
-
-    Ok(InteractiveConfig {
-        system_input_topic,
-        functions,
-    })
+    Ok(InteractiveConfig { system_input_topic })
 }

@@ -59,7 +59,6 @@ impl MiclowSystem {
                 system_control_manager.clone(),
                 shutdown_token.clone(),
                 userlog_sender.clone(),
-                None,
             );
 
             match task_executor.start_task_from_config(ready_context).await {

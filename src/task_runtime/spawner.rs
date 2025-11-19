@@ -46,7 +46,6 @@ impl TaskSpawner {
         backend: ProtocolBackend,
         shutdown_token: CancellationToken,
         subscribe_topics: Option<Vec<String>>,
-        caller_task_id: Option<TaskId>,
     ) -> SpawnBackendResult {
         let task_id: TaskId = self.task_id.clone();
         let task_name: String = self.task_name.clone();
@@ -55,8 +54,7 @@ impl TaskSpawner {
         let task_executor: TaskExecutor = self.task_executor;
         let userlog_sender = self.userlog_sender.clone();
 
-        let mut backend_handle = match backend.spawn(task_id.clone(), caller_task_id.clone()).await
-        {
+        let mut backend_handle = match backend.spawn(task_id.clone()).await {
             Ok(handle) => handle,
             Err(e) => {
                 log::error!("Failed to spawn task backend for task {}: {}", task_id, e);
@@ -141,36 +139,6 @@ impl TaskSpawner {
                                             log::warn!("Failed to send system control action to worker (task {}): {}", task_id, e);
                                         } else {
                                             log::info!("Sent system control action to worker for task {}", task_id);
-                                        }
-                                    },
-                                    ExecutorOutputEvent::FunctionResponse { return_to_task_id, data, .. } => {
-                                        log::info!("ReturnMessage received from task {}: '{}'", task_id, data);
-                                        if let Some(input_sender) = task_executor.get_input_sender_by_task_id(&return_to_task_id).await {
-                                            if let Err(e) = input_sender.send(
-                                                ExecutorInputEvent::FunctionResponse {
-                                                    message_id: MessageId::new(),
-                                                    task_id: return_to_task_id.clone(),
-                                                    function_name: task_name.clone(),
-                                                    data: data.clone(),
-                                                }
-                                            ) {
-                                                log::warn!(
-                                                    "Failed to send function response to task {}: {}",
-                                                    return_to_task_id,
-                                                    e
-                                                );
-                                            } else {
-                                                log::info!(
-                                                    "Sent function response to task {} from task {}",
-                                                    return_to_task_id,
-                                                    task_id
-                                                );
-                                            }
-                                        } else {
-                                            log::warn!(
-                                                "ReturnMessage received but return_to_task_id {} is not found in running tasks",
-                                                return_to_task_id
-                                            );
                                         }
                                     },
                                     ExecutorOutputEvent::Stdout { data, .. } => {
