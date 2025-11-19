@@ -23,10 +23,8 @@ impl Default for PodInstanceState {
 pub struct PodStateManager {
     /// Pod ID -> 状態のマッピング
     pod_states: Arc<RwLock<HashMap<TaskId, PodInstanceState>>>,
-    /// Pod名 -> Pod IDのリスト（TopicLoadBalancer用）
+    /// Pod名 -> Pod IDのリスト
     name_to_ids: Arc<RwLock<HashMap<String, Vec<TaskId>>>>,
-    /// Pod名ごとのRound Robinインデックス（TopicLoadBalancer用）
-    round_robin_indices: Arc<RwLock<HashMap<String, usize>>>,
 }
 
 impl PodStateManager {
@@ -34,7 +32,6 @@ impl PodStateManager {
         Self {
             pod_states: Arc::new(RwLock::new(HashMap::new())),
             name_to_ids: Arc::new(RwLock::new(HashMap::new())),
-            round_robin_indices: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -55,43 +52,12 @@ impl PodStateManager {
     pub async fn unregister_pod(&self, pod_id: &TaskId) {
         let mut states = self.pod_states.write().await;
         let mut name_to_ids = self.name_to_ids.write().await;
-        let mut indices = self.round_robin_indices.write().await;
 
         states.remove(pod_id);
 
         // name_to_idsから削除
-        let mut name_to_remove = None;
-        let mut index_to_adjust: Option<(String, usize, usize)> = None;
-        for (name, ids) in name_to_ids.iter_mut() {
-            if let Some(pos) = ids.iter().position(|id| id == pod_id) {
-                let name_clone = name.clone();
-                let current_idx = indices.get(name).copied();
-                ids.remove(pos);
-                if ids.is_empty() {
-                    name_to_remove = Some(name_clone.clone());
-                }
-                // インデックス調整情報を保存
-                if let Some(idx) = current_idx {
-                    index_to_adjust = Some((name_clone, pos, idx));
-                }
-                break;
-            }
-        }
-        // インデックスを調整
-        if let Some((name, pos, current_idx)) = index_to_adjust {
-            if current_idx > pos && current_idx > 0 {
-                indices.insert(name.clone(), current_idx - 1);
-            } else if current_idx >= name_to_ids.get(&name).map(|ids| ids.len()).unwrap_or(0)
-                && !name_to_ids
-                    .get(&name)
-                    .map(|ids| ids.is_empty())
-                    .unwrap_or(true)
-            {
-                indices.insert(name.clone(), 0);
-            }
-        }
-        if let Some(name) = name_to_remove {
-            indices.remove(&name);
+        for (_name, ids) in name_to_ids.iter_mut() {
+            ids.retain(|id| id != pod_id);
         }
         name_to_ids.retain(|_name, ids| !ids.is_empty());
         log::debug!("Unregistered pod {}", pod_id);
@@ -122,53 +88,6 @@ impl PodStateManager {
         self.set_state(pod_id, PodInstanceState::Busy).await;
     }
 
-    /// Round Robin方式でIdleなPodインスタンスを選択
-    /// すべてがBusyの場合はNoneを返す
-    pub async fn select_idle_instance_round_robin(&self, pod_name: &str) -> Option<TaskId> {
-        let name_to_ids = self.name_to_ids.read().await;
-        let pod_ids = name_to_ids.get(pod_name)?.clone();
-        drop(name_to_ids);
-
-        if pod_ids.is_empty() {
-            return None;
-        }
-
-        let states = self.pod_states.read().await;
-        let mut indices = self.round_robin_indices.write().await;
-
-        let start_idx = *indices.get(pod_name).unwrap_or(&0);
-        let mut checked = 0;
-        let mut current_idx = start_idx;
-
-        // 最大1周までチェック
-        while checked < pod_ids.len() {
-            let pod_id = &pod_ids[current_idx];
-            if let Some(state) = states.get(pod_id) {
-                if *state == PodInstanceState::Idle {
-                    // 次のインデックスを保存
-                    let next_idx = (current_idx + 1) % pod_ids.len();
-                    indices.insert(pod_name.to_string(), next_idx);
-                    log::debug!(
-                        "Selected idle instance {} for pod '{}' (index {})",
-                        pod_id,
-                        pod_name,
-                        current_idx
-                    );
-                    return Some(pod_id.clone());
-                }
-            }
-            current_idx = (current_idx + 1) % pod_ids.len();
-            checked += 1;
-        }
-
-        // すべてBusy
-        log::debug!(
-            "All instances of pod '{}' are busy (checked {} instances)",
-            pod_name,
-            pod_ids.len()
-        );
-        None
-    }
 
     /// Pod名に属するすべてのインスタンスIDを取得
     pub async fn get_pod_instances(&self, pod_name: &str) -> Vec<TaskId> {
@@ -200,10 +119,28 @@ impl PodStateManager {
             .count()
     }
 
-    /// 内部のname_to_idsへのアクセス（TopicLoadBalancer用）
-    pub(crate) fn name_to_ids(&self) -> Arc<RwLock<HashMap<String, Vec<TaskId>>>> {
-        self.name_to_ids.clone()
+    /// Pod名に属するIdleなインスタンスのリストを取得
+    /// Round Robin などのロードバランシングアルゴリズムで使用するための汎用的なメソッド
+    pub async fn get_idle_instances(&self, pod_name: &str) -> Vec<TaskId> {
+        let name_to_ids = self.name_to_ids.read().await;
+        let pod_ids = match name_to_ids.get(pod_name) {
+            Some(ids) => ids.clone(),
+            None => return Vec::new(),
+        };
+        drop(name_to_ids);
+
+        let states = self.pod_states.read().await;
+        pod_ids
+            .into_iter()
+            .filter(|id| {
+                states
+                    .get(id)
+                    .map(|s| *s == PodInstanceState::Idle)
+                    .unwrap_or(false)
+            })
+            .collect()
     }
+
 }
 
 impl Default for PodStateManager {
@@ -256,7 +193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_round_robin_selection() {
+    async fn test_get_idle_instances() {
         let manager = PodStateManager::new();
         let pod_id1 = TaskId::new();
         let pod_id2 = TaskId::new();
@@ -272,40 +209,32 @@ mod tests {
             .register_pod("test_pod".to_string(), pod_id3.clone())
             .await;
 
-        // 最初はすべてIdleなので順番に選択される
-        let selected1 = manager
-            .select_idle_instance_round_robin("test_pod")
-            .await
-            .unwrap();
-        assert_eq!(selected1, pod_id1);
+        // 最初はすべてIdle
+        let idle_instances = manager.get_idle_instances("test_pod").await;
+        assert_eq!(idle_instances.len(), 3);
+        assert!(idle_instances.contains(&pod_id1));
+        assert!(idle_instances.contains(&pod_id2));
+        assert!(idle_instances.contains(&pod_id3));
 
-        // 選択されたPodをBusyに
+        // 1つをBusyに
         manager.set_busy(&pod_id1).await;
-
-        // 次はpod_id2が選択される
-        let selected2 = manager
-            .select_idle_instance_round_robin("test_pod")
-            .await
-            .unwrap();
-        assert_eq!(selected2, pod_id2);
+        let idle_instances = manager.get_idle_instances("test_pod").await;
+        assert_eq!(idle_instances.len(), 2);
+        assert!(!idle_instances.contains(&pod_id1));
+        assert!(idle_instances.contains(&pod_id2));
+        assert!(idle_instances.contains(&pod_id3));
 
         // すべてBusyに
         manager.set_busy(&pod_id2).await;
         manager.set_busy(&pod_id3).await;
-
-        // すべてBusyなのでNone
-        assert!(manager
-            .select_idle_instance_round_robin("test_pod")
-            .await
-            .is_none());
+        let idle_instances = manager.get_idle_instances("test_pod").await;
+        assert_eq!(idle_instances.len(), 0);
 
         // 1つをIdleに戻す
         manager.set_idle(&pod_id1).await;
-        let selected3 = manager
-            .select_idle_instance_round_robin("test_pod")
-            .await
-            .unwrap();
-        assert_eq!(selected3, pod_id1);
+        let idle_instances = manager.get_idle_instances("test_pod").await;
+        assert_eq!(idle_instances.len(), 1);
+        assert!(idle_instances.contains(&pod_id1));
     }
 
     #[tokio::test]

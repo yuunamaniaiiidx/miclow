@@ -1,6 +1,9 @@
 use crate::channels::ExecutorOutputEventSender;
+use crate::config::{LifecycleMode, SystemConfig};
 use crate::messages::ExecutorOutputEvent;
+use crate::pod::PodManager;
 use crate::task_id::TaskId;
+use crate::topic_load_balancer::TopicLoadBalancer;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -11,6 +14,12 @@ pub struct TopicSubscriptionRegistry {
     subscribers: Arc<RwLock<HashMap<String, Arc<Vec<Arc<ExecutorOutputEventSender>>>>>>,
     task_subscriptions: Arc<RwLock<HashMap<(String, TaskId), Weak<ExecutorOutputEventSender>>>>,
     latest_messages: Arc<RwLock<HashMap<String, ExecutorOutputEvent>>>,
+    /// PodManager への参照（タスクIDからタスク名を取得するため）
+    pod_manager: PodManager,
+    /// SystemConfig への参照（配信モードを判定するため）
+    system_config: Arc<SystemConfig>,
+    /// TopicLoadBalancer への参照（Round Robin配信のため）
+    load_balancer: Arc<RwLock<Option<TopicLoadBalancer>>>,
 }
 
 impl TopicSubscriptionRegistry {
@@ -19,7 +28,28 @@ impl TopicSubscriptionRegistry {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
             task_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             latest_messages: Arc::new(RwLock::new(HashMap::new())),
+            pod_manager: Arc::new(RwLock::new(None)),
+            system_config: Arc::new(RwLock::new(None)),
+            load_balancer: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// PodManager を設定
+    pub async fn set_pod_manager(&self, pod_manager: PodManager) {
+        let mut pm = self.pod_manager.write().await;
+        *pm = Some(pod_manager);
+    }
+
+    /// SystemConfig を設定
+    pub async fn set_system_config(&self, config: SystemConfig) {
+        let mut sys_config = self.system_config.write().await;
+        *sys_config = Some(config);
+    }
+
+    /// TopicLoadBalancer を設定
+    pub async fn set_load_balancer(&self, load_balancer: TopicLoadBalancer) {
+        let mut lb = self.load_balancer.write().await;
+        *lb = Some(load_balancer);
     }
 
     pub async fn add_subscriber(
@@ -246,6 +276,192 @@ impl TopicSubscriptionRegistry {
     pub async fn get_latest_message(&self, topic: &str) -> Option<ExecutorOutputEvent> {
         let latest_messages = self.latest_messages.read().await;
         latest_messages.get(topic).cloned()
+    }
+
+    /// トピックの購読者をタスク名ごとにグループ化
+    /// 戻り値: HashMap<タスク名, Vec<(TaskId, ExecutorOutputEventSender)>>
+    pub async fn group_subscribers_by_task_name(
+        &self,
+        topic: &str,
+    ) -> Result<HashMap<String, Vec<(TaskId, Arc<ExecutorOutputEventSender>)>>> {
+        let subscribers = self.get_subscribers(topic).await;
+        let pod_manager_opt = {
+            let pod_manager_guard = self.pod_manager.read().await;
+            pod_manager_guard.clone()
+        };
+        let pod_manager = pod_manager_opt
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("PodManager is not set"))?;
+
+        let mut grouped: HashMap<String, Vec<(TaskId, Arc<ExecutorOutputEventSender>)>> =
+            HashMap::new();
+
+        if let Some(subscriber_list) = subscribers {
+            let task_subs = self.task_subscriptions.read().await;
+
+            for subscriber in subscriber_list {
+                // task_subscriptions から task_id を取得
+                let mut found_task_id = None;
+                for ((sub_topic, task_id), weak_sender) in task_subs.iter() {
+                    if sub_topic == topic {
+                        if let Some(strong_ref) = weak_sender.upgrade() {
+                            if Arc::ptr_eq(&subscriber, &strong_ref) {
+                                found_task_id = Some(task_id.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(task_id) = found_task_id {
+                    // PodManager からタスク名を取得
+                    if let Some(task_name) = pod_manager.get_pod_name_by_id(&task_id).await {
+                        grouped
+                            .entry(task_name)
+                            .or_insert_with(Vec::new)
+                            .push((task_id, subscriber));
+                    }
+                }
+            }
+        }
+
+        Ok(grouped)
+    }
+
+    /// タスク名ごとの購読者を取得
+    pub async fn get_subscribers_by_task_name(
+        &self,
+        topic: &str,
+        task_name: &str,
+    ) -> Result<Vec<(TaskId, Arc<ExecutorOutputEventSender>)>> {
+        let grouped = self.group_subscribers_by_task_name(topic).await?;
+        Ok(grouped.get(task_name).cloned().unwrap_or_default())
+    }
+
+    /// タスクの配信モードを判定
+    /// Round Robin モードの場合は true、それ以外（ブロードキャスト）の場合は false
+    pub async fn is_round_robin_mode(&self, task_name: &str) -> bool {
+        let sys_config = self.system_config.read().await;
+        if let Some(config) = sys_config.as_ref() {
+            if let Some(task_config) = config.tasks.get(task_name) {
+                return task_config.lifecycle.mode == LifecycleMode::RoundRobin;
+            }
+        }
+        false
+    }
+
+    /// メッセージをルーティング（配信モードに応じて Round Robin またはブロードキャスト）
+    pub async fn route_message(
+        &self,
+        topic: String,
+        data: String,
+    ) -> Result<usize, String> {
+        // 購読者をタスク名ごとにグループ化
+        let grouped = self
+            .group_subscribers_by_task_name(&topic)
+            .await
+            .map_err(|e| format!("Failed to group subscribers: {}", e))?;
+
+        if grouped.is_empty() {
+            log::info!("No subscribers found for topic '{}'", topic);
+            return Ok(0);
+        }
+
+        let mut total_sent = 0;
+
+        // 各タスク名について配信
+        for (task_name, subscribers) in grouped {
+            let is_round_robin = self.is_round_robin_mode(&task_name).await;
+
+            if is_round_robin {
+                // Round Robin モード: TopicLoadBalancer を使用
+                let load_balancer_guard = self.load_balancer.read().await;
+                if let Some(load_balancer) = load_balancer_guard.as_ref() {
+                    match load_balancer
+                        .dispatch_message(&task_name, topic.clone(), data.clone())
+                        .await
+                    {
+                        crate::topic_load_balancer::DispatchResult::Dispatched { .. } => {
+                            total_sent += 1;
+                            log::info!(
+                                "Dispatched message to task '{}' via Round Robin",
+                                task_name
+                            );
+                        }
+                        crate::topic_load_balancer::DispatchResult::Queued { queue_size, .. } => {
+                            log::debug!(
+                                "Queued message for task '{}' (queue size: {})",
+                                task_name,
+                                queue_size
+                            );
+                        }
+                    }
+                    drop(load_balancer_guard);
+                } else {
+                    log::warn!(
+                        "Round Robin mode requested for task '{}', but TopicLoadBalancer is not set. Falling back to broadcast.",
+                        task_name
+                    );
+                    // フォールバック: ブロードキャスト
+                    let event = ExecutorOutputEvent::Topic {
+                        message_id: crate::message_id::MessageId::new(),
+                        task_id: TaskId::new(),
+                        topic: topic.clone(),
+                        data: data.clone(),
+                    };
+                    match self.broadcast_message(event).await {
+                        Ok(count) => {
+                            total_sent += count;
+                        }
+                        Err(e) => {
+                            log::error!("Failed to broadcast message to task '{}': {}", task_name, e);
+                        }
+                    }
+                }
+            } else {
+                // ブロードキャストモード: すべてのインスタンスに配信
+                // ExecutorOutputEvent を作成して broadcast_message を使用
+                let event = ExecutorOutputEvent::Topic {
+                    message_id: crate::message_id::MessageId::new(),
+                    task_id: TaskId::new(), // 外部からのメッセージなので task_id は新規作成
+                    topic: topic.clone(),
+                    data: data.clone(),
+                };
+                match self.broadcast_message(event).await {
+                    Ok(count) => {
+                        total_sent += count;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to broadcast message to task '{}': {}", task_name, e);
+                    }
+                }
+            }
+        }
+
+        Ok(total_sent)
+    }
+
+    /// 外部からのメッセージ受信エントリーポイント
+    pub async fn publish_message(
+        &self,
+        topic: String,
+        data: String,
+    ) -> Result<usize, String> {
+        log::info!("Publishing message to topic '{}'", topic);
+
+        // .result トピックの場合は既存の broadcast_message を使用
+        if topic.ends_with(".result") {
+            let event = ExecutorOutputEvent::Topic {
+                message_id: crate::message_id::MessageId::new(),
+                task_id: TaskId::new(), // 外部からのメッセージなので task_id は新規作成
+                topic: topic.clone(),
+                data: data.clone(),
+            };
+            return self.broadcast_message(event).await;
+        }
+
+        // それ以外のトピックは route_message を使用
+        self.route_message(topic, data).await
     }
 }
 

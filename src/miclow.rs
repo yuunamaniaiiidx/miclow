@@ -8,6 +8,7 @@ use crate::logging::{
 use crate::replicaset::ReplicaSetController;
 use crate::pod::{PodStartContext, PodManager};
 use crate::topic_subscription_registry::TopicSubscriptionRegistry;
+use crate::topic_load_balancer::TopicLoadBalancer;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -92,6 +93,15 @@ impl MiclowSystem {
 
     pub async fn start_system(mut self) -> Result<()> {
         let topic_manager: TopicSubscriptionRegistry = self.topic_manager.clone();
+
+        // TopicLoadBalancer を作成
+        let pod_state_manager = self.pod_manager.pod_state_manager().clone();
+        let load_balancer = TopicLoadBalancer::new(self.pod_manager.clone(), pod_state_manager);
+
+        // TopicSubscriptionRegistry に必要な参照を設定
+        topic_manager.set_pod_manager(self.pod_manager.clone()).await;
+        topic_manager.set_load_balancer(load_balancer.clone()).await;
+        topic_manager.set_system_config(self.config.clone()).await;
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());

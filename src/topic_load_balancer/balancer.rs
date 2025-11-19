@@ -78,6 +78,8 @@ pub struct TopicLoadBalancer {
     pod_manager: PodManager,
     pod_state_manager: PodStateManager,
     topic_queue: TopicQueue,
+    /// Pod名ごとのRound Robinインデックス
+    round_robin_indices: Arc<RwLock<std::collections::HashMap<String, usize>>>,
 }
 
 impl TopicLoadBalancer {
@@ -86,7 +88,55 @@ impl TopicLoadBalancer {
             pod_manager,
             pod_state_manager,
             topic_queue: TopicQueue::new(),
+            round_robin_indices: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Round Robin方式でIdleなPodインスタンスを選択
+    /// すべてがBusyの場合はNoneを返す
+    async fn select_idle_instance_round_robin(&self, pod_name: &str) -> Option<TaskId> {
+        // すべてのインスタンスを取得（Round Robinの順序を維持するため）
+        let all_instances = self.pod_state_manager.get_pod_instances(pod_name).await;
+
+        if all_instances.is_empty() {
+            return None;
+        }
+
+        let mut indices = self.round_robin_indices.write().await;
+        let start_idx = *indices.get(pod_name).unwrap_or(&0);
+        let mut checked = 0;
+        let mut current_idx = start_idx;
+
+        // 最大1周までチェック
+        while checked < all_instances.len() {
+            let pod_id = &all_instances[current_idx];
+            
+            // Idleかどうかを確認
+            if let Some(state) = self.pod_state_manager.get_state(pod_id).await {
+                if state == crate::pod::state::PodInstanceState::Idle {
+                    // 次のインデックスを保存
+                    let next_idx = (current_idx + 1) % all_instances.len();
+                    indices.insert(pod_name.to_string(), next_idx);
+                    log::debug!(
+                        "Selected idle instance {} for pod '{}' (index {})",
+                        pod_id,
+                        pod_name,
+                        current_idx
+                    );
+                    return Some(pod_id.clone());
+                }
+            }
+            current_idx = (current_idx + 1) % all_instances.len();
+            checked += 1;
+        }
+
+        // すべてBusy
+        log::debug!(
+            "All instances of pod '{}' are busy (checked {} instances)",
+            pod_name,
+            all_instances.len()
+        );
+        None
     }
 
     /// トピックメッセージをロードバランシング方式で配信
@@ -97,12 +147,8 @@ impl TopicLoadBalancer {
         topic: String,
         data: String,
     ) -> DispatchResult {
-        // Idleなインスタンスを選択
-        if let Some(pod_id) = self
-            .pod_state_manager
-            .select_idle_instance_round_robin(task_name)
-            .await
-        {
+        // Idleなインスタンスを選択（Round Robin方式）
+        if let Some(pod_id) = self.select_idle_instance_round_robin(task_name).await {
             // PodをBusyに設定
             self.pod_state_manager.set_busy(&pod_id).await;
 
