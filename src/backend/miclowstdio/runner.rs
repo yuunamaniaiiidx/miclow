@@ -20,8 +20,16 @@ use tokio::process::Command as TokioCommand;
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 
-pub trait StdIOProtocol: Send + Sync {
-    fn to_input_lines(&self) -> Vec<String> {
+pub struct ExecutorInputEventStdio<'a> {
+    event: &'a ExecutorInputEvent,
+}
+
+impl<'a> ExecutorInputEventStdio<'a> {
+    pub fn new(event: &'a ExecutorInputEvent) -> Self {
+        Self { event }
+    }
+
+    pub fn to_input_lines(&self) -> Vec<String> {
         let lines = self.to_input_lines_raw();
 
         if lines.len() < 2 {
@@ -49,20 +57,6 @@ pub trait StdIOProtocol: Send + Sync {
         lines
     }
 
-    fn to_input_lines_raw(&self) -> Vec<String>;
-}
-
-pub struct ExecutorInputEventStdio<'a> {
-    event: &'a ExecutorInputEvent,
-}
-
-impl<'a> ExecutorInputEventStdio<'a> {
-    pub fn new(event: &'a ExecutorInputEvent) -> Self {
-        Self { event }
-    }
-}
-
-impl<'a> StdIOProtocol for ExecutorInputEventStdio<'a> {
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
             ExecutorInputEvent::Topic { topic, data, .. } => {
@@ -98,6 +92,12 @@ impl<'a> StdIOProtocol for ExecutorInputEventStdio<'a> {
                 lines
             }
         }
+    }
+}
+
+impl<'a> From<&'a ExecutorInputEvent> for ExecutorInputEventStdio<'a> {
+    fn from(value: &'a ExecutorInputEvent) -> Self {
+        Self::new(value)
     }
 }
 
@@ -325,7 +325,7 @@ pub async fn spawn_miclow_stdio_protocol(
                     input_data = input_receiver.recv() => {
                         match input_data {
                             Some(input_data_msg) => {
-                                let lines = ExecutorInputEventStdio::new(&input_data_msg).to_input_lines();
+                                let lines = ExecutorInputEventStdio::from(&input_data_msg).to_input_lines();
                                 for line in lines {
                                     let bytes: Vec<u8> = if line.ends_with('\n') {
                                         line.into_bytes()
