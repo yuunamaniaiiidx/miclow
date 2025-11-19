@@ -1,13 +1,10 @@
 use super::buffer::{InputBufferManager, StreamOutcome};
 use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
-use crate::channels::{
-    ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel, SystemResponseChannel,
-};
+use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
-use crate::system_control::SystemControlAction;
 use crate::task_id::TaskId;
 use anyhow::{Error, Result};
 #[cfg(unix)]
@@ -58,28 +55,15 @@ impl<'a> ExecutorInputEventStdio<'a> {
     }
 
     fn to_input_lines_raw(&self) -> Vec<String> {
-        match self.event {
-            ExecutorInputEvent::Topic { topic, data, .. } => {
-                let mut lines = vec![topic.clone()];
-                let data_lines: Vec<&str> = data.lines().collect();
-                lines.push(data_lines.len().to_string());
-                lines.extend(data_lines.iter().map(|s| s.to_string()));
-                lines
-            }
-            ExecutorInputEvent::SystemResponse {
-                topic,
-                status,
-                data,
-                ..
-            } => {
-                let mut lines = vec![topic.clone()];
-                let data_lines: Vec<&str> = data.lines().collect();
-                lines.push((data_lines.len() + 1).to_string());
-                lines.push(status.to_string());
-                lines.extend(data_lines.iter().map(|s| s.to_string()));
-                lines
-            }
+        if let ExecutorInputEvent::Topic { topic, data, .. } = self.event {
+            let mut lines = vec![topic.clone()];
+            let data_lines: Vec<&str> = data.lines().collect();
+            lines.push(data_lines.len().to_string());
+            lines.extend(data_lines.iter().map(|s| s.to_string()));
+            return lines;
         }
+
+        unreachable!("ExecutorInputEvent::Topic is the only supported variant");
     }
 }
 
@@ -87,74 +71,6 @@ impl<'a> From<&'a ExecutorInputEvent> for ExecutorInputEventStdio<'a> {
     fn from(value: &'a ExecutorInputEvent) -> Self {
         Self::new(value)
     }
-}
-
-pub fn parse_system_control_command_from_outcome(
-    message_id: MessageId,
-    task_id: TaskId,
-    topic: &str,
-    data: &str,
-) -> Option<ExecutorOutputEvent> {
-    let topic_lower = topic.to_lowercase();
-    let data_trimmed = data.trim();
-
-    // Allow empty data for system.status
-    if data_trimmed.is_empty() && topic_lower.as_str() != "system.status" {
-        return None;
-    }
-
-    let is_system_control = topic_lower.starts_with("system.")
-        || (topic_lower.is_empty() && data_trimmed.starts_with("system."));
-
-    if is_system_control {
-        let actual_topic = if topic_lower.is_empty() {
-            let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
-            if parts.len() == 2 {
-                parts[0].to_string()
-            } else {
-                data_trimmed.to_string()
-            }
-        } else {
-            topic_lower.clone()
-        };
-
-        let actual_data = if topic_lower.is_empty() && actual_topic != data_trimmed {
-            let parts: Vec<&str> = data_trimmed.splitn(2, ' ').collect();
-            if parts.len() == 2 {
-                parts[1].to_string()
-            } else {
-                String::new()
-            }
-        } else {
-            data_trimmed.to_string()
-        };
-
-        // Convert string-based command to SystemControlAction
-        let action = match actual_topic.as_str() {
-            "system.subscribe-topic" => SystemControlAction::SubscribeTopic { topic: actual_data },
-            "system.unsubscribe-topic" => {
-                SystemControlAction::UnsubscribeTopic { topic: actual_data }
-            }
-            "system.status" => SystemControlAction::Status,
-            "system.get-latest-message" => {
-                if actual_data.is_empty() {
-                    return None;
-                }
-                SystemControlAction::GetLatestMessage { topic: actual_data }
-            }
-            _ if actual_topic.starts_with("system.") => SystemControlAction::Unknown {
-                command: actual_topic,
-                data: actual_data,
-            },
-            _ => return None,
-        };
-
-        return Some(ExecutorOutputEvent::new_system_control(
-            message_id, task_id, action,
-        ));
-    }
-
-    None
 }
 
 pub async fn spawn_miclow_stdio_protocol(
@@ -173,7 +89,6 @@ pub async fn spawn_miclow_stdio_protocol(
     let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
     let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let mut shutdown_channel = ShutdownChannel::new();
-    let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
 
     let event_tx_clone: ExecutorOutputEventSender = event_channel.sender.clone();
     let mut input_receiver: ExecutorInputEventReceiver = input_channel.receiver;
@@ -441,7 +356,6 @@ pub async fn spawn_miclow_stdio_protocol(
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
         event_sender: event_channel.sender,
-        system_response_sender: system_response_channel.sender,
         input_sender: input_channel.sender,
         shutdown_sender: shutdown_channel.sender,
     })
@@ -474,23 +388,12 @@ where
                 let topic_name_for_outcome = topic_name_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
-                        if let Some(system_control_cmd_event) =
-                            parse_system_control_command_from_outcome(
-                                message_id.clone(),
-                                task_id_for_outcome.clone(),
-                                &topic,
-                                &data,
-                            )
-                        {
-                            let _ = event_tx_for_outcome.send(system_control_cmd_event);
-                        } else {
-                            let _ = event_tx_for_outcome.send_message(
-                                message_id.clone(),
-                                task_id_for_outcome.clone(),
-                                topic,
-                                data,
-                            );
-                        }
+                        let _ = event_tx_for_outcome.send_message(
+                            message_id.clone(),
+                            task_id_for_outcome.clone(),
+                            topic,
+                            data,
+                        );
                     }
                     Ok(StreamOutcome::Plain(output)) => {
                         let _ = event_tx_for_outcome.send_message(

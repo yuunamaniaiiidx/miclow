@@ -1,12 +1,10 @@
 use crate::backend::{ProtocolBackend, SpawnBackendResult, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, SystemResponseChannel,
-    UserLogSender,
+    ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
-use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, SystemResponseEvent};
-use crate::system_control::SystemControlQueue;
+use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::task_id::TaskId;
 use crate::topic_broker::TopicBroker;
 use tokio_util::sync::CancellationToken;
@@ -16,7 +14,6 @@ use super::executor::TaskExecutor;
 pub struct TaskSpawner {
     pub task_id: TaskId,
     pub topic_manager: TopicBroker,
-    pub system_control_manager: SystemControlQueue,
     pub task_executor: TaskExecutor,
     pub task_name: String,
     pub userlog_sender: UserLogSender,
@@ -26,7 +23,6 @@ impl TaskSpawner {
     pub fn new(
         task_id: TaskId,
         topic_manager: TopicBroker,
-        system_control_manager: SystemControlQueue,
         task_executor: TaskExecutor,
         task_name: String,
         userlog_sender: UserLogSender,
@@ -34,7 +30,6 @@ impl TaskSpawner {
         Self {
             task_id,
             topic_manager,
-            system_control_manager,
             task_executor,
             task_name,
             userlog_sender,
@@ -50,7 +45,6 @@ impl TaskSpawner {
         let task_id: TaskId = self.task_id.clone();
         let task_name: String = self.task_name.clone();
         let topic_manager: TopicBroker = self.topic_manager;
-        let system_control_manager: SystemControlQueue = self.system_control_manager;
         let task_executor: TaskExecutor = self.task_executor;
         let userlog_sender = self.userlog_sender.clone();
 
@@ -67,10 +61,6 @@ impl TaskSpawner {
                 };
             }
         };
-
-        let system_response_channel: SystemResponseChannel = SystemResponseChannel::new();
-        let mut system_response_receiver = system_response_channel.receiver;
-        backend_handle.system_response_sender = system_response_channel.sender;
 
         let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
@@ -126,19 +116,6 @@ impl TaskSpawner {
                                             Err(e) => {
                                                 log::error!("Failed to broadcast message from task {} on topic '{}': {}", task_id, topic, e);
                                             }
-                                        }
-                                    },
-                                    ExecutorOutputEvent::SystemControl { action, .. } => {
-                                        log::info!("SystemControl detected from task {}", task_id);
-                                        if let Err(e) = system_control_manager.send_system_control_action(
-                                            action.clone(),
-                                            task_id.clone(),
-                                            backend_handle.system_response_sender.clone(),
-                                            topic_data_channel.sender.clone(),
-                                        ).await {
-                                            log::warn!("Failed to send system control action to worker (task {}): {}", task_id, e);
-                                        } else {
-                                            log::info!("Sent system control action to worker for task {}", task_id);
                                         }
                                     },
                                     ExecutorOutputEvent::Stdout { data, .. } => {
@@ -208,43 +185,6 @@ impl TaskSpawner {
                             }
                         }
                     },
-
-                    system_response = system_response_receiver.recv() => {
-                        match system_response {
-                            Some(SystemResponseEvent::SystemResponse { topic, status, data }) => {
-                                log::info!("SystemResponse event for task {}: topic='{}', status='{}', data='{}'", task_id, topic, status, data);
-                                if let Err(e) = backend_handle.input_sender.send(
-                                    ExecutorInputEvent::SystemResponse {
-                                        message_id: MessageId::new(),
-                                        task_id: task_id.clone(),
-                                        topic,
-                                        status,
-                                        data,
-                                    },
-                                ) {
-                                    log::warn!("Failed to send system response message to task backend for task {}: {}", task_id, e);
-                                }
-                            },
-                            Some(SystemResponseEvent::SystemError { topic, status, error }) => {
-                                log::error!("SystemError event for task {}: topic='{}', status='{}', error='{}'", task_id, topic, status, error);
-                                if let Err(e) = backend_handle.input_sender.send(
-                                    ExecutorInputEvent::SystemResponse {
-                                        message_id: MessageId::new(),
-                                        task_id: task_id.clone(),
-                                        topic,
-                                        status,
-                                        data: error,
-                                    },
-                                ) {
-                                    log::warn!("Failed to send system error message to task backend for task {}: {}", task_id, e);
-                                }
-                            },
-                            None => {
-                                log::info!("SystemResponse receiver closed for task {}", task_id);
-                                break;
-                            }
-                        }
-                    }
                 }
             }
 

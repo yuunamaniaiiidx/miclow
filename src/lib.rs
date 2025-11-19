@@ -6,7 +6,6 @@ pub mod logging;
 pub mod message_id;
 pub mod messages;
 pub mod miclow;
-pub mod system_control;
 pub mod task_id;
 pub mod task_runtime;
 pub mod topic_broker;

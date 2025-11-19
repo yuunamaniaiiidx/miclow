@@ -1,4 +1,3 @@
-use super::system::SystemResponseStatus;
 use crate::message_id::MessageId;
 use crate::task_id::TaskId;
 
@@ -8,13 +7,6 @@ pub enum ExecutorInputEvent {
         message_id: MessageId,
         task_id: TaskId,
         topic: String,
-        data: String,
-    },
-    SystemResponse {
-        message_id: MessageId,
-        task_id: TaskId,
-        topic: String,
-        status: SystemResponseStatus,
         data: String,
     },
 }
