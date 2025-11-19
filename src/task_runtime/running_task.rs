@@ -9,4 +9,5 @@ pub struct RunningTask {
     pub task_handle: tokio::task::JoinHandle<()>,
     pub view_stdout: bool,
     pub view_stderr: bool,
+    // 状態管理はTaskStateManagerで行うため、ここには含めない
 }

@@ -70,7 +70,7 @@ args = ["run", "python3", "worker.py"]
 - `SystemControlAction` / `SystemControlWorker` / `SystemControlQueue` / `SystemResponseEvent` 全体を削除済み（2025-11-20）。
 - `TaskExecutor::start_task_from_config`（ライフサイクルワーカーのみが使用予定）。
 - Config パーサ（`miclow/src/config/mod.rs`）と CLI/ドキュメント。
-- Topic 伝搬：`TopicResponse` を `{topic}.result` へ配信するルーティング、および Round Robin 配信ロジック（未実装）。
+- Topic 伝搬：`TopicResponse` を `{topic}.result` へ配信するルーティング（2025-11-19 実装済み）と Round Robin 配信ロジック（未実装）。
 - 既存の手動操作 API（status, subscribe/unsubscribe, call-function など）は削除済み。新仕様ではトピックベースの双方向通信のみ。
 
 ## 未確定事項・質問
@@ -83,7 +83,14 @@ WIP ドキュメントにつき、要件の追加・変更があれば本ファ�
 - Config パーサ: `[[tasks.lifecycle]]` をサポート（必須化は未実装）、`ProtocolBackend` は Interactive / MiclowStdIO に限定。`function_to_task` や `[[tasks.function]]` は完全に撤廃済み。
 - SystemControl 系: **完全に削除済み**（2025-11-20）。`SystemControlAction` / `SystemControlWorker` / `SystemControlQueue` / `SystemResponseEvent` / `SystemResponseChannel` をすべて削除。subscribe/unsubscribe/status/get-latest などの手動操作 API は撤廃。
 - TaskRuntime: `StartContext` から `system_control_manager` を除去。`ExecutorInputEvent::SystemResponse` と `ExecutorOutputEvent::SystemControl` を削除。常駐タスク＋トピックベースの双方向通信のみに統一。
+- TaskRuntime: `TopicResponse` 型と `.result` ルーティングの基盤を `task_runtime/topic_response.rs` / `task_runtime/spawner.rs` に実装（2025-11-19）。
+- TaskRuntime: タスク状態管理（idle/busy）を `task_runtime/task_state.rs` に実装。Round Robin 配信ロジックとトピックキューイングを `task_runtime/round_robin_dispatcher.rs` に実装（2025-11-20）。
+- TaskRuntime: `TopicResponse` 受信時にタスクを idle に戻すロジックを `task_runtime/spawner.rs` に実装（2025-11-20）。
+- Backend: `ExecutorOutputEvent` に `TopicResponse` バリアントを追加（名前付きフィールド形式で他のバリアントと一貫性を保持）。`.result` トピックの変換処理を backend 側（文字列パース時点）で実装（2025-11-20）。
+- Backend: `miclowstdio` 専用の `event_helpers.rs` を `backend/miclowstdio/event_helpers.rs` に実装。`.result` で終わるトピックを `TopicResponse` に自動変換する `create_topic_event()` 関数を提供（2025-11-20）。
+- Backend: `interactive` はトピック受信をしないため、返答もない。通常の `ExecutorOutputEvent::Topic` のみを生成（2025-11-20）。
 - Python/クライアント: `call_function` / `return_value` API を廃止し、`miclow.wait_for_topic` + `miclow.send_message("{topic}.result", ...)` による双方向通信へ移行。`examples/basic/` に sender/receiver の最小構成を追加済み。
+- Python/クライアント: `.result` トピックへのレスポンス送信を簡単にするヘルパー関数 `send_response()` と `return_topic_for()` を追加（2025-11-20）。
 - MCP backend や `rmcp` 依存は一旦削除。今後必要になった場合は新ライフサイクル仕様に合わせて別途再設計する。
-- **未実装**: `TopicResponse` 型、`{topic}.result` ルーティング、Round Robin 配信ロジック、ライフサイクル管理ワーカー、desired_instances 監視・再起動制御。
+- **未実装**: ライフサイクル管理ワーカー、desired_instances 監視・再起動制御、Round Robin ディスパッチャーと TopicBroker の統合。
 

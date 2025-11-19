@@ -12,6 +12,7 @@ use crate::task_id::TaskId;
 use super::running_task::RunningTask;
 use super::spawner::TaskSpawner;
 use super::start_context::StartContext;
+use super::task_state::TaskStateManager;
 
 #[derive(Clone)]
 pub struct TaskExecutor {
@@ -19,6 +20,7 @@ pub struct TaskExecutor {
     name_to_id: Arc<RwLock<HashMap<String, Vec<TaskId>>>>,
     id_to_name: Arc<RwLock<HashMap<TaskId, String>>>,
     monitored_task_names: Arc<RwLock<HashSet<String>>>,
+    task_state_manager: TaskStateManager,
     shutdown_token: CancellationToken,
 }
 
@@ -29,6 +31,7 @@ impl TaskExecutor {
             name_to_id: Arc::new(RwLock::new(HashMap::new())),
             id_to_name: Arc::new(RwLock::new(HashMap::new())),
             monitored_task_names: Arc::new(RwLock::new(HashSet::new())),
+            task_state_manager: TaskStateManager::new(),
             shutdown_token,
         }
     }
@@ -44,7 +47,12 @@ impl TaskExecutor {
             .entry(task_name.clone())
             .or_insert_with(Vec::new)
             .push(task_id.clone());
-        id_to_name.insert(task_id, task_name.clone());
+        id_to_name.insert(task_id.clone(), task_name.clone());
+
+        // 状態管理に登録
+        self.task_state_manager
+            .register_task(task_name.clone(), task_id)
+            .await;
 
         if !task_name.starts_with("system.") {
             let mut monitored = self.monitored_task_names.write().await;
@@ -86,6 +94,9 @@ impl TaskExecutor {
             }
             name_to_id.retain(|_name, ids| !ids.is_empty());
             id_to_name.remove(task_id);
+
+            // 状態管理からも削除
+            self.task_state_manager.unregister_task(task_id).await;
 
             if let Some(name) = task_name {
                 let mut monitored = self.monitored_task_names.write().await;
@@ -282,5 +293,27 @@ impl TaskExecutor {
             task_id_new
         );
         Ok(())
+    }
+
+    /// タスク状態管理へのアクセス
+    pub fn task_state_manager(&self) -> &TaskStateManager {
+        &self.task_state_manager
+    }
+
+    /// Round Robin方式でIdleなタスクインスタンスを選択
+    pub async fn select_idle_instance_round_robin(&self, task_name: &str) -> Option<TaskId> {
+        self.task_state_manager
+            .select_idle_instance_round_robin(task_name)
+            .await
+    }
+
+    /// タスクをIdleに戻す（TopicResponse受信時などに使用）
+    pub async fn set_task_idle(&self, task_id: &TaskId) {
+        self.task_state_manager.set_idle(task_id).await;
+    }
+
+    /// タスクをBusyに設定（メッセージ送信時などに使用）
+    pub async fn set_task_busy(&self, task_id: &TaskId) {
+        self.task_state_manager.set_busy(task_id).await;
     }
 }

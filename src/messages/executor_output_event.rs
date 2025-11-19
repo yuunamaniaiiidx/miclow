@@ -1,12 +1,38 @@
 use crate::message_id::MessageId;
 use crate::task_id::TaskId;
 
+/// すべてのレスポンス topic が従うサフィックス。
+pub const RESULT_TOPIC_SUFFIX: &str = ".result";
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TopicResponseStatus {
+    Success,
+    Error,
+    Unknown,
+}
+
+impl Default for TopicResponseStatus {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
         task_id: TaskId,
         topic: String,
+        data: String,
+    },
+    TopicResponse {
+        message_id: MessageId,
+        task_id: TaskId,
+        to_task_id: Option<TaskId>,
+        status: TopicResponseStatus,
+        topic: String,
+        return_topic: String,
         data: String,
     },
     Stdout {
@@ -81,6 +107,7 @@ impl ExecutorOutputEvent {
     pub fn data(&self) -> Option<&String> {
         match self {
             Self::Topic { data, .. } => Some(data),
+            Self::TopicResponse { data, .. } => Some(data),
             Self::Stdout { data, .. } => Some(data),
             Self::Stderr { data, .. } => Some(data),
             _ => None,
@@ -90,6 +117,7 @@ impl ExecutorOutputEvent {
     pub fn topic(&self) -> Option<&String> {
         match self {
             Self::Topic { topic, .. } => Some(topic),
+            Self::TopicResponse { return_topic, .. } => Some(return_topic),
             _ => None,
         }
     }

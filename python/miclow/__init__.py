@@ -24,7 +24,8 @@ __all__ = [
     "MiclowClient", "get_client", "send_message",
     "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
     "get_status", "get_latest_message",
-    "wait_for_topic", "receive_message", "MessageType"
+    "wait_for_topic", "receive_message", "MessageType",
+    "send_response", "return_topic_for"
 ]
 
 class SystemResponseType(Enum):
@@ -518,4 +519,42 @@ def get_latest_message(topic: str) -> SystemResponse:
         SystemResponse with the latest message data (if available) or error
     """
     return get_client().get_latest_message(topic)
+
+
+def return_topic_for(topic: str) -> str:
+    """
+    Generate the return topic name for a given topic.
+    The return topic follows the pattern: {original_topic}.result
+
+    Args:
+        topic: The original topic name
+
+    Returns:
+        The return topic name (e.g., "demo.topic" -> "demo.topic.result")
+    """
+    return f"{topic}.result"
+
+
+def send_response(original_topic: str, data: str) -> None:
+    """
+    Send a response message to the return topic for the given original topic.
+    This is a convenience function that automatically constructs the return topic
+    using the pattern: {original_topic}.result
+
+    Args:
+        original_topic: The original topic name that this response is for
+        data: The response data to send
+
+    Example:
+        # Receive a message on "demo.request"
+        message = wait_for_topic("demo.request")
+        
+        # Process the message...
+        result = process(message.data)
+        
+        # Send response to "demo.request.result"
+        send_response("demo.request", result)
+    """
+    return_topic = return_topic_for(original_topic)
+    send_message(return_topic, data)
 

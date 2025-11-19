@@ -1,4 +1,5 @@
 use super::buffer::{InputBufferManager, StreamOutcome};
+use super::event_helpers::create_topic_event;
 use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
@@ -388,20 +389,22 @@ where
                 let topic_name_for_outcome = topic_name_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
-                        let _ = event_tx_for_outcome.send_message(
+                        let event = create_topic_event(
                             message_id.clone(),
                             task_id_for_outcome.clone(),
                             topic,
                             data,
                         );
+                        let _ = event_tx_for_outcome.send(event);
                     }
                     Ok(StreamOutcome::Plain(output)) => {
-                        let _ = event_tx_for_outcome.send_message(
+                        let event = create_topic_event(
                             message_id.clone(),
                             task_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
                             output.clone(),
                         );
+                        let _ = event_tx_for_outcome.send(event);
                         if let Some(emit) = emit_func {
                             let _ = event_tx_for_outcome.send(emit(
                                 message_id.clone(),
@@ -418,12 +421,13 @@ where
                             e.clone(),
                         );
                         let output = super::buffer::strip_crlf(line_content).to_string();
-                        let _ = event_tx_for_outcome.send_message(
+                        let event = create_topic_event(
                             message_id.clone(),
                             task_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
                             output.clone(),
                         );
+                        let _ = event_tx_for_outcome.send(event);
                         if let Some(emit) = emit_func {
                             let _ = event_tx_for_outcome.send(emit(
                                 message_id.clone(),

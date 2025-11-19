@@ -107,14 +107,75 @@ impl TaskSpawner {
                                 let event: ExecutorOutputEvent = event;
 
                                 match &event {
+                                    ExecutorOutputEvent::TopicResponse {
+                                        message_id,
+                                        task_id: response_task_id,
+                                        topic,
+                                        return_topic,
+                                        data,
+                                        ..
+                                    } => {
+                                        // TopicResponseとして扱う（backend側で既に変換済み）
+                                        log::info!(
+                                            "TopicResponse received from task {} for topic '{}' (return topic '{}')",
+                                            task_id,
+                                            topic,
+                                            return_topic
+                                        );
+
+                                        // 配信時はExecutorOutputEvent::Topicに変換（TaskSpawnerで実装）
+                                        let event_to_route = ExecutorOutputEvent::Topic {
+                                            message_id: message_id.clone(),
+                                            task_id: response_task_id.clone(),
+                                            topic: return_topic.clone(),
+                                            data: data.clone(),
+                                        };
+                                        match topic_manager.broadcast_message(event_to_route).await {
+                                            Ok(success_count) => {
+                                                log::info!(
+                                                    "Broadcasted TopicResponse from task {} to {} subscribers (return topic '{}')",
+                                                    task_id,
+                                                    success_count,
+                                                    return_topic
+                                                );
+                                                // 配信成功後にidleに戻す
+                                                task_executor.set_task_idle(&task_id).await;
+                                            }
+                                            Err(e) => {
+                                                log::error!(
+                                                    "Failed to broadcast TopicResponse from task {} (return topic '{}'): {}",
+                                                    task_id,
+                                                    return_topic,
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
                                     ExecutorOutputEvent::Topic { topic, data, .. } => {
-                                        log::info!("Message event for task {} on topic '{}': '{}'", task_id, topic, data);
+                                        // 通常のトピックメッセージ（.resultで終わらない）
+                                        log::info!(
+                                            "Message event for task {} on topic '{}': '{}'",
+                                            task_id,
+                                            topic,
+                                            data
+                                        );
+
                                         match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
-                                                log::info!("Broadcasted message from task {} to {} subscribers on topic '{}'", task_id, success_count, topic);
-                                            },
+                                                log::info!(
+                                                    "Broadcasted message from task {} to {} subscribers on topic '{}'",
+                                                    task_id,
+                                                    success_count,
+                                                    topic
+                                                );
+                                            }
                                             Err(e) => {
-                                                log::error!("Failed to broadcast message from task {} on topic '{}': {}", task_id, topic, e);
+                                                log::error!(
+                                                    "Failed to broadcast message from task {} on topic '{}': {}",
+                                                    task_id,
+                                                    topic,
+                                                    e
+                                                );
                                             }
                                         }
                                     },

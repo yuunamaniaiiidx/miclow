@@ -49,8 +49,9 @@ pub async fn spawn_interactive_protocol(
 
                             log::info!("Sending message topic:'{}' data:'{}'", system_input_topic, trimmed);
 
+                            let message_id = MessageId::new();
                             let event = ExecutorOutputEvent::new_message(
-                                MessageId::new(),
+                                message_id,
                                 task_id.clone(),
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
