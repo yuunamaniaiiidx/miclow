@@ -19,25 +19,23 @@ pub struct TopicSubscriptionRegistry {
     /// SystemConfig への参照（配信モードを判定するため）
     system_config: Arc<SystemConfig>,
     /// TopicLoadBalancer への参照（Round Robin配信のため）
-    load_balancer: Arc<RwLock<Option<TopicLoadBalancer>>>,
+    load_balancer: TopicLoadBalancer,
 }
 
 impl TopicSubscriptionRegistry {
-    pub fn new(pod_manager: PodManager, system_config: SystemConfig) -> Self {
+    pub fn new(
+        pod_manager: PodManager,
+        system_config: SystemConfig,
+        load_balancer: TopicLoadBalancer,
+    ) -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
             task_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             latest_messages: Arc::new(RwLock::new(HashMap::new())),
             pod_manager,
             system_config: Arc::new(system_config),
-            load_balancer: Arc::new(RwLock::new(None)),
+            load_balancer,
         }
-    }
-
-    /// TopicLoadBalancer を設定
-    pub async fn set_load_balancer(&self, load_balancer: TopicLoadBalancer) {
-        let mut lb = self.load_balancer.write().await;
-        *lb = Some(load_balancer);
     }
 
     pub async fn add_subscriber(
@@ -353,47 +351,24 @@ impl TopicSubscriptionRegistry {
 
             if is_round_robin {
                 // Round Robin モード: TopicLoadBalancer を使用
-                let load_balancer_guard = self.load_balancer.read().await;
-                if let Some(load_balancer) = load_balancer_guard.as_ref() {
-                    match load_balancer
-                        .dispatch_message(&task_name, topic.clone(), data.clone())
-                        .await
-                    {
-                        crate::topic_load_balancer::DispatchResult::Dispatched { .. } => {
-                            total_sent += 1;
-                            log::info!(
-                                "Dispatched message to task '{}' via Round Robin",
-                                task_name
-                            );
-                        }
-                        crate::topic_load_balancer::DispatchResult::Queued { queue_size, .. } => {
-                            log::debug!(
-                                "Queued message for task '{}' (queue size: {})",
-                                task_name,
-                                queue_size
-                            );
-                        }
+                match self
+                    .load_balancer
+                    .dispatch_message(&task_name, topic.clone(), data.clone())
+                    .await
+                {
+                    crate::topic_load_balancer::DispatchResult::Dispatched { .. } => {
+                        total_sent += 1;
+                        log::info!(
+                            "Dispatched message to task '{}' via Round Robin",
+                            task_name
+                        );
                     }
-                    drop(load_balancer_guard);
-                } else {
-                    log::warn!(
-                        "Round Robin mode requested for task '{}', but TopicLoadBalancer is not set. Falling back to broadcast.",
-                        task_name
-                    );
-                    // フォールバック: ブロードキャスト
-                    let event = ExecutorOutputEvent::Topic {
-                        message_id: crate::message_id::MessageId::new(),
-                        task_id: TaskId::new(),
-                        topic: topic.clone(),
-                        data: data.clone(),
-                    };
-                    match self.broadcast_message(event).await {
-                        Ok(count) => {
-                            total_sent += count;
-                        }
-                        Err(e) => {
-                            log::error!("Failed to broadcast message to task '{}': {}", task_name, e);
-                        }
+                    crate::topic_load_balancer::DispatchResult::Queued { queue_size, .. } => {
+                        log::debug!(
+                            "Queued message for task '{}' (queue size: {})",
+                            task_name,
+                            queue_size
+                        );
                     }
                 }
             } else {

@@ -25,9 +25,12 @@ impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
         let shutdown_token: CancellationToken = CancellationToken::new();
         let pod_manager: PodManager = PodManager::new(shutdown_token.clone());
+        let pod_state_manager = pod_manager.pod_state_manager().clone();
+        let load_balancer = TopicLoadBalancer::new(pod_manager.clone(), pod_state_manager);
         let topic_manager: TopicSubscriptionRegistry = TopicSubscriptionRegistry::new(
             pod_manager.clone(),
             config.clone(),
+            load_balancer,
         );
         let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
         Self {
@@ -96,13 +99,6 @@ impl MiclowSystem {
 
     pub async fn start_system(mut self) -> Result<()> {
         let topic_manager: TopicSubscriptionRegistry = self.topic_manager.clone();
-
-        // TopicLoadBalancer を作成
-        let pod_state_manager = self.pod_manager.pod_state_manager().clone();
-        let load_balancer = TopicLoadBalancer::new(self.pod_manager.clone(), pod_state_manager);
-
-        // TopicSubscriptionRegistry に TopicLoadBalancer を設定
-        topic_manager.set_load_balancer(load_balancer.clone()).await;
 
         let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel::<LogEvent>();
         let _ = set_channel_logger(log_tx, level_from_env());
