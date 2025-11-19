@@ -23,27 +23,15 @@ pub struct TopicSubscriptionRegistry {
 }
 
 impl TopicSubscriptionRegistry {
-    pub fn new() -> Self {
+    pub fn new(pod_manager: PodManager, system_config: SystemConfig) -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
             task_subscriptions: Arc::new(RwLock::new(HashMap::new())),
             latest_messages: Arc::new(RwLock::new(HashMap::new())),
-            pod_manager: Arc::new(RwLock::new(None)),
-            system_config: Arc::new(RwLock::new(None)),
+            pod_manager,
+            system_config: Arc::new(system_config),
             load_balancer: Arc::new(RwLock::new(None)),
         }
-    }
-
-    /// PodManager を設定
-    pub async fn set_pod_manager(&self, pod_manager: PodManager) {
-        let mut pm = self.pod_manager.write().await;
-        *pm = Some(pod_manager);
-    }
-
-    /// SystemConfig を設定
-    pub async fn set_system_config(&self, config: SystemConfig) {
-        let mut sys_config = self.system_config.write().await;
-        *sys_config = Some(config);
     }
 
     /// TopicLoadBalancer を設定
@@ -285,13 +273,6 @@ impl TopicSubscriptionRegistry {
         topic: &str,
     ) -> Result<HashMap<String, Vec<(TaskId, Arc<ExecutorOutputEventSender>)>>> {
         let subscribers = self.get_subscribers(topic).await;
-        let pod_manager_opt = {
-            let pod_manager_guard = self.pod_manager.read().await;
-            pod_manager_guard.clone()
-        };
-        let pod_manager = pod_manager_opt
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("PodManager is not set"))?;
 
         let mut grouped: HashMap<String, Vec<(TaskId, Arc<ExecutorOutputEventSender>)>> =
             HashMap::new();
@@ -315,7 +296,7 @@ impl TopicSubscriptionRegistry {
 
                 if let Some(task_id) = found_task_id {
                     // PodManager からタスク名を取得
-                    if let Some(task_name) = pod_manager.get_pod_name_by_id(&task_id).await {
+                    if let Some(task_name) = self.pod_manager.get_pod_name_by_id(&task_id).await {
                         grouped
                             .entry(task_name)
                             .or_insert_with(Vec::new)
@@ -341,11 +322,8 @@ impl TopicSubscriptionRegistry {
     /// タスクの配信モードを判定
     /// Round Robin モードの場合は true、それ以外（ブロードキャスト）の場合は false
     pub async fn is_round_robin_mode(&self, task_name: &str) -> bool {
-        let sys_config = self.system_config.read().await;
-        if let Some(config) = sys_config.as_ref() {
-            if let Some(task_config) = config.tasks.get(task_name) {
-                return task_config.lifecycle.mode == LifecycleMode::RoundRobin;
-            }
+        if let Some(task_config) = self.system_config.tasks.get(task_name) {
+            return task_config.lifecycle.mode == LifecycleMode::RoundRobin;
         }
         false
     }
