@@ -5,7 +5,8 @@ use crate::logging::{
     level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
-use crate::task_runtime::{LifecycleManager, StartContext, TaskExecutor};
+use crate::replicaset::ReplicaSetController;
+use crate::pod::{PodStartContext, PodManager};
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -14,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 pub struct MiclowSystem {
     pub config: SystemConfig,
     topic_manager: TopicBroker,
-    task_executor: TaskExecutor,
+    pod_manager: PodManager,
     shutdown_token: CancellationToken,
     background_tasks: BackgroundWorkerRegistry,
 }
@@ -23,12 +24,12 @@ impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
         let topic_manager: TopicBroker = TopicBroker::new();
         let shutdown_token: CancellationToken = CancellationToken::new();
-        let task_executor: TaskExecutor = TaskExecutor::new(shutdown_token.clone());
+        let pod_manager: PodManager = PodManager::new(shutdown_token.clone());
         let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
         Self {
             config,
             topic_manager,
-            task_executor,
+            pod_manager,
             shutdown_token,
             background_tasks,
         }
@@ -36,7 +37,7 @@ impl MiclowSystem {
 
     async fn start_user_tasks(
         config: &SystemConfig,
-        task_executor: &TaskExecutor,
+        pod_manager: &PodManager,
         topic_manager: TopicBroker,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
@@ -46,8 +47,8 @@ impl MiclowSystem {
         for task_config in tasks.iter() {
             let task_name: String = task_config.name.clone();
 
-            // TaskConfigを既に持っているので、StartContextを直接作成
-            let ready_context = StartContext::new(
+            // TaskConfigを既に持っているので、PodStartContextを直接作成
+            let ready_context = PodStartContext::new(
                 (*task_config).clone(),
                 topic_manager.clone(),
                 shutdown_token.clone(),
@@ -59,7 +60,7 @@ impl MiclowSystem {
             let instances_to_start = desired_instances.max(1); // 最低1つは起動
 
             for i in 0..instances_to_start {
-                match task_executor.start_task_from_config(ready_context.clone()).await {
+                match pod_manager.start_pod_from_config(ready_context.clone()).await {
                     Ok(_) => {
                         log::info!(
                             "Started user task '{}' instance {}/{}",
@@ -102,30 +103,30 @@ impl MiclowSystem {
         let userlog_worker = UserLogAggregatorWorker::new(userlog_rx);
         self.background_tasks.register_worker(userlog_worker).await;
 
-        // タスク終了通知チャネルを作成
+        // Pod終了通知チャネルを作成
         let task_exit_channel = TaskExitChannel::new();
-        self.task_executor
-            .set_task_exit_sender(task_exit_channel.sender.clone())
+        self.pod_manager
+            .set_pod_exit_sender(task_exit_channel.sender.clone())
             .await;
 
-        // ライフサイクル管理ワーカーを初期化
-        let lifecycle_manager = LifecycleManager::new(
-            self.task_executor.clone(),
+        // ReplicaSet コントローラーを初期化
+        let replicaset_controller = ReplicaSetController::new(
+            self.pod_manager.clone(),
             task_exit_channel.receiver,
             topic_manager.clone(),
             self.shutdown_token.clone(),
             userlog_sender.clone(),
         );
-        lifecycle_manager
+        replicaset_controller
             .register_from_config(&self.config)
             .await;
 
-        // ライフサイクル管理ワーカーを BackgroundWorker として登録
-        self.background_tasks.register_worker(lifecycle_manager).await;
+        // ReplicaSet コントローラーを BackgroundWorker として登録
+        self.background_tasks.register_worker(replicaset_controller).await;
 
         Self::start_user_tasks(
             &self.config,
-            &self.task_executor,
+            &self.pod_manager,
             topic_manager.clone(),
             self.shutdown_token.clone(),
             userlog_sender.clone(),
@@ -163,12 +164,12 @@ impl MiclowSystem {
         log::info!("Cancelling shutdown token");
         shutdown_token.cancel();
 
-        log::info!("Waiting for running tasks to finish...");
-        self.task_executor
+        log::info!("Waiting for running pods to finish...");
+        self.pod_manager
             .graceful_shutdown_all(std::time::Duration::from_secs(5))
             .await;
 
-        log::info!("All user tasks stopped");
+        log::info!("All user pods stopped");
 
         log::logger().flush();
 

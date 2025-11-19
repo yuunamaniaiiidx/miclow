@@ -25,6 +25,9 @@
    - 処理中（busy）のインスタンスはスキップし、idle なインスタンスに割り当て
    - すべてのインスタンスが busy の場合は、メッセージをキューに蓄積
    - タスクが TopicResponse を返して idle に戻ったら、キューに蓄積されたメッセージを処理
+   - **重要**: Round Robin は同一タスク名の複数インスタンス間でのみ適用される
+   - 異なるタスク名間ではブロードキャスト（各タスク名に1つずつ配信）が維持される
+   - 例: トピック "demo.topic" を購読しているタスクA（3インスタンス）、タスクB（2インスタンス）がある場合、タスクAの3インスタンス間でRound Robin、タスクBの2インスタンス間でRound Robin、そしてタスクAとタスクBの両方にメッセージが配信される
 
 3. **ライフサイクル管理**
    - タスクごとの希望インスタンス数（`desired_instances`）を監視
@@ -40,7 +43,8 @@
 5. **トピックベースの通信**
    - 手動操作 API（subscribe/unsubscribe/status など）は撤廃
    - すべての通信はトピックベースの双方向チャネルで実現
-   - タスクは設定で指定されたトピックを購読し、メッセージを受信
+   - タスクは設定の `subscribe_topics` で指定されたトピックを購読し、メッセージを受信
+   - Round Robin 配信は、タスクが購読している `subscribe_topics` に基づいて動作する
 
 ### 設定例
 
@@ -50,13 +54,14 @@ protocol = "MiclowStdIO"
 task_name = "worker"
 command = "uv"
 args = ["run", "python3", "worker.py"]
+subscribe_topics = ["work.queue", "work.priority"]
 
   [[tasks.lifecycle]]
   desired_instances = 3
   mode = "round_robin"
 ```
 
-この設定により、`worker` タスクは3つのインスタンスが常駐し、Round Robin 方式でメッセージが配信される。
+この設定により、`worker` タスクは3つのインスタンスが常駐し、`subscribe_topics` で指定されたトピック（"work.queue" と "work.priority"）のメッセージが、3つのインスタンス間で Round Robin 方式で配信される。
 
 ---
 
@@ -155,17 +160,20 @@ args = ["run", "python3", "worker.py"]
 #### 3. トピック→タスク名のマッピング機能
 
 **現状の問題**:
-- トピック名からタスク名を特定する仕組みがない
-- Round Robin 配信時にどのタスクに配信すべきか判断できない
+- `TopicBroker` には `task_subscriptions: HashMap<(String, TaskId), ...>` があり、トピック名とタスクIDのペアで管理されている
+- タスクIDからタスク名を取得するには `TaskExecutor` への参照が必要
+- Round Robin 配信時に、トピックを購読しているタスク名をグループ化する必要がある
 
 **必要な実装**:
 
-1. **マッピングの構築と管理**
-   - トピック名からタスク名へのマッピングを構築し、適切に管理する
-   - サブスクリプション登録時やシステム起動時にマッピングを更新する
+1. **TopicBroker と TaskExecutor の統合**
+   - `TopicBroker::broadcast_message` で、トピックを購読しているタスクIDからタスク名を取得
+   - タスク名ごとにグループ化し、各タスク名について Round Robin モードかどうかを判定
 
-2. **マッピングの利用**
-   - Round Robin 配信時に、トピック名からタスク名を取得して使用する
+2. **配信ロジックの実装**
+   - Round Robin モードのタスク名: そのタスク名のインスタンス間で Round Robin で1つに配信
+   - 通常モードのタスク名: そのタスク名の全インスタンスに配信
+   - 異なるタスク名間: 各タスク名に1つずつ配信（ブロードキャスト）
 
 ---
 
@@ -242,14 +250,18 @@ args = ["run", "python3", "worker.py"]
 ```
 1. トピックメッセージが TopicBroker に到着
 2. TopicBroker::broadcast_message が呼び出される
-3. トピック名からタスク名を特定
-4. タスクの lifecycle 設定を確認
-5. mode = "round_robin" の場合:
-   a. RoundRobinDispatcher::dispatch_message を呼び出す
-   b. idle なインスタンスを選択
-   c. メッセージを送信し、タスクを busy に設定
-   d. すべて busy の場合はキューに追加
-6. 通常モードまたは .result トピックの場合:
+3. トピックを購読しているすべてのタスクIDを取得
+4. タスクIDからタスク名を取得し、タスク名ごとにグループ化
+5. 各タスク名について:
+   a. タスクの lifecycle 設定を確認
+   b. mode = "round_robin" の場合:
+      - RoundRobinDispatcher::dispatch_message を呼び出す
+      - idle なインスタンスを選択
+      - メッセージを送信し、タスクを busy に設定
+      - すべて busy の場合はキューに追加
+   c. 通常モードの場合:
+      - そのタスク名の全インスタンスに配信
+6. .result トピックの場合:
    a. 既存の broadcast_message を使用（全サブスクライバーに配信）
 ```
 
@@ -260,7 +272,8 @@ args = ["run", "python3", "worker.py"]
 2. spawner.rs で TopicResponse を受信
 3. タスクを idle に戻す
 4. RoundRobinDispatcher::process_queue(task_name) を呼び出す
-5. キューにメッセージがある場合:
+5. タスク名から subscribe_topics を取得
+6. 各トピックについて、キューにメッセージがある場合:
    a. idle なインスタンスを選択
    b. メッセージを送信し、タスクを busy に設定
    c. キューが空になるか、すべて busy になるまで繰り返し
@@ -268,7 +281,9 @@ args = ["run", "python3", "worker.py"]
 
 ### トピック→タスク名のマッピング
 
-トピック名からタスク名を特定する方法は複数考えられる。実装時には、システムの要件に応じて適切な方法を選択する。
+- `TopicBroker` の `task_subscriptions: HashMap<(String, TaskId), ...>` から、トピック名とタスクIDのペアを取得
+- `TaskExecutor` の `id_to_name: HashMap<TaskId, String>` から、タスクIDからタスク名を取得
+- これにより、トピックを購読しているタスク名を特定し、タスク名ごとにグループ化できる
 
 ---
 

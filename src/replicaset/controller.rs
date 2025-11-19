@@ -3,7 +3,7 @@ use crate::background_worker_registry::{
 };
 use crate::channels::{TaskExitReceiver, UserLogSender};
 use crate::config::{SystemConfig, TaskConfig};
-use crate::task_runtime::{StartContext, TaskExecutor};
+use crate::pod::{PodStartContext, PodManager};
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -12,35 +12,35 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-/// ライフサイクル管理ワーカー
+/// ReplicaSet コントローラー
 /// 各タスクの desired_instances を監視し、不足時にインスタンスを起動・補充する
-pub struct LifecycleManager {
-    /// タスク名 -> TaskConfig のマッピング（ライフサイクル管理対象のタスクのみ）
+pub struct ReplicaSetController {
+    /// タスク名 -> TaskConfig のマッピング（ReplicaSet管理対象のタスクのみ）
     managed_tasks: Arc<RwLock<HashMap<String, TaskConfig>>>,
-    /// TaskExecutor への参照
-    task_executor: TaskExecutor,
-    /// タスク終了通知の受信側
-    task_exit_receiver: TaskExitReceiver,
-    /// TopicBroker（StartContext作成用）
+    /// PodManager への参照
+    pod_manager: PodManager,
+    /// Pod終了通知の受信側
+    pod_exit_receiver: TaskExitReceiver,
+    /// TopicBroker（PodStartContext作成用）
     topic_manager: TopicBroker,
-    /// シャットダウントークン（StartContext作成用）
+    /// シャットダウントークン（PodStartContext作成用）
     shutdown_token: CancellationToken,
-    /// ユーザーログ送信側（StartContext作成用）
+    /// ユーザーログ送信側（PodStartContext作成用）
     userlog_sender: UserLogSender,
 }
 
-impl LifecycleManager {
+impl ReplicaSetController {
     pub fn new(
-        task_executor: TaskExecutor,
-        task_exit_receiver: TaskExitReceiver,
+        pod_manager: PodManager,
+        pod_exit_receiver: TaskExitReceiver,
         topic_manager: TopicBroker,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) -> Self {
         Self {
             managed_tasks: Arc::new(RwLock::new(HashMap::new())),
-            task_executor,
-            task_exit_receiver,
+            pod_manager,
+            pod_exit_receiver,
             topic_manager,
             shutdown_token,
             userlog_sender,
@@ -53,7 +53,7 @@ impl LifecycleManager {
         let mut tasks = self.managed_tasks.write().await;
         tasks.insert(task_name.clone(), task_config);
         log::info!(
-            "Registered task '{}' for lifecycle management",
+            "Registered task '{}' for replicaset management",
             task_name
         );
     }
@@ -68,7 +68,7 @@ impl LifecycleManager {
             if task_config.lifecycle.desired_instances > 0 {
                 tasks.insert(task_name.clone(), task_config.clone());
                 log::info!(
-                    "Registered task '{}' for lifecycle management (desired_instances: {})",
+                    "Registered task '{}' for replicaset management (desired_instances: {})",
                     task_name,
                     task_config.lifecycle.desired_instances
                 );
@@ -81,7 +81,7 @@ impl LifecycleManager {
         let mut tasks = self.managed_tasks.write().await;
         if tasks.remove(task_name).is_some() {
             log::info!(
-                "Unregistered task '{}' from lifecycle management",
+                "Unregistered task '{}' from replicaset management",
                 task_name
             );
         }
@@ -89,18 +89,18 @@ impl LifecycleManager {
 
     /// 現在のインスタンス数を取得
     async fn get_current_instance_count(&self, task_name: &str) -> usize {
-        let task_state_manager = self.task_executor.task_state_manager();
-        task_state_manager
-            .get_task_instances(task_name)
+        let pod_state_manager = self.pod_manager.pod_state_manager();
+        pod_state_manager
+            .get_pod_instances(task_name)
             .await
             .len()
     }
 
-    /// タスクインスタンスを起動
+    /// Podインスタンスを起動
     async fn spawn_instance(
         &self,
         task_config: &TaskConfig,
-        context: &StartContext,
+        context: &PodStartContext,
     ) -> Result<()> {
         log::info!(
             "Spawning instance for task '{}' (desired_instances: {})",
@@ -108,8 +108,8 @@ impl LifecycleManager {
             task_config.lifecycle.desired_instances
         );
 
-        self.task_executor
-            .start_task_from_config(context.clone())
+        self.pod_manager
+            .start_pod_from_config(context.clone())
             .await
             .map_err(|e| {
                 anyhow::anyhow!(
@@ -160,7 +160,7 @@ impl LifecycleManager {
                         break;
                     }
 
-                    let context = StartContext::new(
+                    let context = PodStartContext::new(
                         task_config.clone(),
                         self.topic_manager.clone(),
                         self.shutdown_token.clone(),
@@ -194,8 +194,8 @@ impl LifecycleManager {
         }
     }
 
-    /// タスク終了イベントを処理（再起動が必要な場合）
-    async fn handle_task_exit(&self, task_name: &str, shutdown_token: &tokio_util::sync::CancellationToken) {
+    /// Pod終了イベントを処理（再起動が必要な場合）
+    async fn handle_pod_exit(&self, task_name: &str, shutdown_token: &tokio_util::sync::CancellationToken) {
         // シャットダウン中は再起動しない
         if shutdown_token.is_cancelled() {
             log::debug!(
@@ -222,7 +222,7 @@ impl LifecycleManager {
                     desired_count
                 );
 
-                let context = StartContext::new(
+                let context = PodStartContext::new(
                     config.clone(),
                     self.topic_manager.clone(),
                     self.shutdown_token.clone(),
@@ -245,7 +245,7 @@ impl LifecycleManager {
             }
         } else {
             log::debug!(
-                "Task '{}' is not managed by lifecycle manager (ignoring exit)",
+                "Task '{}' is not managed by replicaset controller (ignoring exit)",
                 task_name
             );
         }
@@ -261,34 +261,34 @@ impl LifecycleManager {
                     // 定期的にインスタンス数をチェック
                     self.reconcile_all(&shutdown_token).await;
                 }
-                task_name = self.task_exit_receiver.recv() => {
+                task_name = self.pod_exit_receiver.recv() => {
                     match task_name {
                         Some(name) => {
-                            // タスク終了イベントを受信したら即座に再起動を試みる
-                            log::debug!("Received task exit notification for '{}'", name);
-                            self.handle_task_exit(&name, &shutdown_token).await;
+                            // Pod終了イベントを受信したら即座に再起動を試みる
+                            log::debug!("Received pod exit notification for '{}'", name);
+                            self.handle_pod_exit(&name, &shutdown_token).await;
                         }
                         None => {
-                            log::warn!("Task exit receiver closed");
+                            log::warn!("Pod exit receiver closed");
                             break;
                         }
                     }
                 }
                 _ = shutdown_token.cancelled() => {
-                    log::info!("Lifecycle manager received shutdown signal");
+                    log::info!("ReplicaSet controller received shutdown signal");
                     break;
                 }
             }
         }
 
-        log::info!("Lifecycle manager stopped");
+        log::info!("ReplicaSet controller stopped");
     }
 }
 
 #[async_trait]
-impl BackgroundWorker for LifecycleManager {
+impl BackgroundWorker for ReplicaSetController {
     fn name(&self) -> &str {
-        "lifecycle_manager"
+        "replicaset_controller"
     }
 
     fn readiness(&self) -> WorkerReadiness {
@@ -299,3 +299,4 @@ impl BackgroundWorker for LifecycleManager {
         self.run_monitoring(ctx.shutdown).await;
     }
 }
+

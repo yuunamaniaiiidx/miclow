@@ -4,14 +4,14 @@ use crate::topic_broker::TopicBroker;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
-pub struct StartContext {
+pub struct PodStartContext {
     pub task_config: TaskConfig,
     pub topic_manager: TopicBroker,
     pub shutdown_token: CancellationToken,
     pub userlog_sender: UserLogSender,
 }
 
-impl StartContext {
+impl PodStartContext {
     /// TaskConfigを既に持っている場合の作成
     pub fn new(
         task_config: TaskConfig,
@@ -27,3 +27,4 @@ impl StartContext {
         }
     }
 }
+

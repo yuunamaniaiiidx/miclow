@@ -9,29 +9,29 @@ use crate::task_id::TaskId;
 use crate::topic_broker::TopicBroker;
 use tokio_util::sync::CancellationToken;
 
-use super::executor::TaskExecutor;
+use super::manager::PodManager;
 
-pub struct TaskSpawner {
+pub struct PodSpawner {
     pub task_id: TaskId,
     pub topic_manager: TopicBroker,
-    pub task_executor: TaskExecutor,
-    pub task_name: String,
+    pub pod_manager: PodManager,
+    pub pod_name: String,
     pub userlog_sender: UserLogSender,
 }
 
-impl TaskSpawner {
+impl PodSpawner {
     pub fn new(
         task_id: TaskId,
         topic_manager: TopicBroker,
-        task_executor: TaskExecutor,
-        task_name: String,
+        pod_manager: PodManager,
+        pod_name: String,
         userlog_sender: UserLogSender,
     ) -> Self {
         Self {
             task_id,
             topic_manager,
-            task_executor,
-            task_name,
+            pod_manager,
+            pod_name,
             userlog_sender,
         }
     }
@@ -42,16 +42,16 @@ impl TaskSpawner {
         shutdown_token: CancellationToken,
         subscribe_topics: Option<Vec<String>>,
     ) -> SpawnBackendResult {
-        let task_id: TaskId = self.task_id.clone();
-        let task_name: String = self.task_name.clone();
+        let pod_id: TaskId = self.task_id.clone();
+        let pod_name: String = self.pod_name.clone();
         let topic_manager: TopicBroker = self.topic_manager;
-        let task_executor: TaskExecutor = self.task_executor;
+        let pod_manager: PodManager = self.pod_manager;
         let userlog_sender = self.userlog_sender.clone();
 
-        let mut backend_handle = match backend.spawn(task_id.clone()).await {
+        let mut backend_handle = match backend.spawn(pod_id.clone()).await {
             Ok(handle) => handle,
             Err(e) => {
-                log::error!("Failed to spawn task backend for task {}: {}", task_id, e);
+                log::error!("Failed to spawn pod backend for pod {}: {}", pod_id, e);
                 let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
                 let shutdown_channel = ShutdownChannel::new();
                 return SpawnBackendResult {
@@ -71,22 +71,22 @@ impl TaskSpawner {
 
             if let Some(topics) = subscribe_topics {
                 log::info!(
-                    "Processing initial topic subscriptions for task {}: {:?}",
-                    task_id,
+                    "Processing initial topic subscriptions for pod {}: {:?}",
+                    pod_id,
                     topics
                 );
                 for topic in topics {
                     topic_manager
                         .add_subscriber(
                             topic.clone(),
-                            task_id.clone(),
+                            pod_id.clone(),
                             topic_data_channel.sender.clone(),
                         )
                         .await;
                     log::info!(
-                        "Added initial topic subscription for '{}' from task {}",
+                        "Added initial topic subscription for '{}' from pod {}",
                         topic,
-                        task_id
+                        pod_id
                     );
                 }
             }
@@ -96,7 +96,7 @@ impl TaskSpawner {
                     biased;
 
                     _ = shutdown_token.cancelled() => {
-                        log::info!("Task {} received shutdown signal", task_id);
+                        log::info!("Pod {} received shutdown signal", pod_id);
                         let _ = backend_handle.shutdown_sender.shutdown();
                         break;
                     },
@@ -109,7 +109,7 @@ impl TaskSpawner {
                                 match &event {
                                     ExecutorOutputEvent::TopicResponse {
                                         message_id,
-                                        task_id: response_task_id,
+                                        task_id: response_pod_id,
                                         topic,
                                         return_topic,
                                         data,
@@ -117,34 +117,34 @@ impl TaskSpawner {
                                     } => {
                                         // TopicResponseとして扱う（backend側で既に変換済み）
                                         log::info!(
-                                            "TopicResponse received from task {} for topic '{}' (return topic '{}')",
-                                            task_id,
+                                            "TopicResponse received from pod {} for topic '{}' (return topic '{}')",
+                                            pod_id,
                                             topic,
                                             return_topic
                                         );
 
-                                        // 配信時はExecutorOutputEvent::Topicに変換（TaskSpawnerで実装）
+                                        // 配信時はExecutorOutputEvent::Topicに変換（PodSpawnerで実装）
                                         let event_to_route = ExecutorOutputEvent::Topic {
                                             message_id: message_id.clone(),
-                                            task_id: response_task_id.clone(),
+                                            task_id: response_pod_id.clone(),
                                             topic: return_topic.clone(),
                                             data: data.clone(),
                                         };
                                         match topic_manager.broadcast_message(event_to_route).await {
                                             Ok(success_count) => {
                                                 log::info!(
-                                                    "Broadcasted TopicResponse from task {} to {} subscribers (return topic '{}')",
-                                                    task_id,
+                                                    "Broadcasted TopicResponse from pod {} to {} subscribers (return topic '{}')",
+                                                    pod_id,
                                                     success_count,
                                                     return_topic
                                                 );
                                                 // 配信成功後にidleに戻す
-                                                task_executor.set_task_idle(&task_id).await;
+                                                pod_manager.set_pod_idle(&pod_id).await;
                                             }
                                             Err(e) => {
                                                 log::error!(
-                                                    "Failed to broadcast TopicResponse from task {} (return topic '{}'): {}",
-                                                    task_id,
+                                                    "Failed to broadcast TopicResponse from pod {} (return topic '{}'): {}",
+                                                    pod_id,
                                                     return_topic,
                                                     e
                                                 );
@@ -154,8 +154,8 @@ impl TaskSpawner {
                                     ExecutorOutputEvent::Topic { topic, data, .. } => {
                                         // 通常のトピックメッセージ（.resultで終わらない）
                                         log::info!(
-                                            "Message event for task {} on topic '{}': '{}'",
-                                            task_id,
+                                            "Message event for pod {} on topic '{}': '{}'",
+                                            pod_id,
                                             topic,
                                             data
                                         );
@@ -163,16 +163,16 @@ impl TaskSpawner {
                                         match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
                                                 log::info!(
-                                                    "Broadcasted message from task {} to {} subscribers on topic '{}'",
-                                                    task_id,
+                                                    "Broadcasted message from pod {} to {} subscribers on topic '{}'",
+                                                    pod_id,
                                                     success_count,
                                                     topic
                                                 );
                                             }
                                             Err(e) => {
                                                 log::error!(
-                                                    "Failed to broadcast message from task {} on topic '{}': {}",
-                                                    task_id,
+                                                    "Failed to broadcast message from pod {} on topic '{}': {}",
+                                                    pod_id,
                                                     topic,
                                                     e
                                                 );
@@ -180,40 +180,40 @@ impl TaskSpawner {
                                         }
                                     },
                                     ExecutorOutputEvent::Stdout { data, .. } => {
-                                        let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
+                                        let flags = pod_manager.get_view_flags_by_pod_id(&pod_id).await;
                                         if let Some((view_stdout, _)) = flags {
                                             if view_stdout {
-                                                let _ = userlog_sender.send(UserLogEvent { task_id: task_id.to_string(), task_name: task_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { task_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
                                             }
                                         }
                                     },
                                     ExecutorOutputEvent::Stderr { data, .. } => {
-                                        let flags = task_executor.get_view_flags_by_task_id(&task_id).await;
+                                        let flags = pod_manager.get_view_flags_by_pod_id(&pod_id).await;
                                         if let Some((_, view_stderr)) = flags {
                                             if view_stderr {
-                                                let _ = userlog_sender.send(UserLogEvent { task_id: task_id.to_string(), task_name: task_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { task_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
                                             }
                                         }
                                     },
                                     ExecutorOutputEvent::Error { error, .. } => {
-                                        log::error!("Error event for task {}: '{}'", task_id, error);
+                                        log::error!("Error event for pod {}: '{}'", pod_id, error);
                                     },
                                     ExecutorOutputEvent::Exit { exit_code, .. } => {
-                                        log::info!("Exit event for task {} with exit code: {}", task_id, exit_code);
+                                        log::info!("Exit event for pod {} with exit code: {}", pod_id, exit_code);
 
-                                        let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(task_id.clone()).await;
-                                        log::info!("Task {} exited, removed {} topic subscriptions", task_id, removed_topics.len());
+                                        let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(pod_id.clone()).await;
+                                        log::info!("Pod {} exited, removed {} topic subscriptions", pod_id, removed_topics.len());
 
-                                        if let Some(_removed_task) = task_executor.unregister_task_by_task_id(&task_id).await {
-                                            log::info!("Removed task with TaskId={} (Human name index updated)", task_id);
+                                        if let Some(_removed_pod) = pod_manager.unregister_pod_by_pod_id(&pod_id).await {
+                                            log::info!("Removed pod with PodId={} (Human name index updated)", pod_id);
                                         } else {
-                                            log::warn!("Task with TaskId={} not found in executor during cleanup", task_id);
+                                            log::warn!("Pod with PodId={} not found in manager during cleanup", pod_id);
                                         }
                                     }
                                 }
                             },
                             None => {
-                                log::info!("Task backend event receiver closed for task {}", task_id);
+                                log::info!("Pod backend event receiver closed for pod {}", pod_id);
                                 break;
                             }
                         }
@@ -227,21 +227,21 @@ impl TaskSpawner {
                                         if let Err(e) = backend_handle.input_sender.send(
                                             ExecutorInputEvent::Topic {
                                                 message_id: MessageId::new(),
-                                                task_id: task_id.clone(),
+                                                task_id: pod_id.clone(),
                                                 topic: topic_name.clone(),
                                                 data: data.clone(),
                                             },
                                         ) {
-                                            log::warn!("Failed to send topic message to task backend for task {}: {}", task_id, e);
+                                            log::warn!("Failed to send topic message to pod backend for pod {}: {}", pod_id, e);
                                         }
                                     } else {
-                                        log::warn!("Topic data received without topic name for task {}, skipping", task_id);
+                                        log::warn!("Topic data received without topic name for pod {}, skipping", pod_id);
                                         continue;
                                     }
                                 }
                             },
                             None => {
-                                log::info!("Topic data receiver closed for task {}", task_id);
+                                log::info!("Topic data receiver closed for pod {}", pod_id);
                                 break;
                             }
                         }
@@ -249,7 +249,7 @@ impl TaskSpawner {
                 }
             }
 
-            log::info!("Task {} completed", task_id);
+            log::info!("Pod {} completed", pod_id);
         });
 
         SpawnBackendResult {
@@ -259,3 +259,4 @@ impl TaskSpawner {
         }
     }
 }
+

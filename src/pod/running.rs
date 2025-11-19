@@ -2,12 +2,13 @@ use crate::channels::{ExecutorInputEventSender, ShutdownSender};
 use crate::task_id::TaskId;
 
 #[derive(Debug)]
-pub struct RunningTask {
+pub struct RunningPod {
     pub task_id: TaskId,
     pub shutdown_sender: ShutdownSender,
     pub input_sender: ExecutorInputEventSender,
     pub task_handle: tokio::task::JoinHandle<()>,
     pub view_stdout: bool,
     pub view_stderr: bool,
-    // 状態管理はTaskStateManagerで行うため、ここには含めない
+    // 状態管理はPodStateManagerで行うため、ここには含めない
 }
+
