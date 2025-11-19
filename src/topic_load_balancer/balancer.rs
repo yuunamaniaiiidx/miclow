@@ -215,6 +215,94 @@ impl TopicLoadBalancer {
     pub fn topic_queue(&self) -> &TopicQueue {
         &self.topic_queue
     }
+
+    /// 特定のトピックのキューを処理
+    /// タスク名とトピック名を受け取り、キューからメッセージを取得して配信する
+    /// キューが空になるか、すべてのインスタンスが busy になるまで繰り返す
+    pub async fn process_queue(&self, task_name: &str, topic: &str) -> usize {
+        let mut processed_count = 0;
+
+        loop {
+            // キューにメッセージがあるか確認
+            if !self.topic_queue.has_messages(topic).await {
+                break;
+            }
+
+            // Idle なインスタンスを選択
+            if let Some(pod_id) = self.select_idle_instance_round_robin(task_name).await {
+                // キューからメッセージを取得
+                if let Some((_topic, data, _message_id)) = self.topic_queue.dequeue(topic).await {
+                    // PodをBusyに設定
+                    self.pod_state_manager.set_busy(&pod_id).await;
+
+                    // メッセージを送信
+                    if let Some(input_sender) = self
+                        .pod_manager
+                        .get_input_sender_by_pod_id(&pod_id)
+                        .await
+                    {
+                        let message_id = MessageId::new();
+                        match input_sender.send(ExecutorInputEvent::Topic {
+                            message_id: message_id.clone(),
+                            task_id: pod_id.clone(),
+                            topic: topic.to_string(),
+                            data: data.clone(),
+                        }) {
+                            Ok(_) => {
+                                processed_count += 1;
+                                log::info!(
+                                    "Processed queued message for task '{}' on topic '{}' (sent to pod {})",
+                                    task_name,
+                                    topic,
+                                    pod_id
+                                );
+                            }
+                            Err(e) => {
+                                log::error!(
+                                    "Failed to send queued message to pod {}: {}, setting to idle",
+                                    pod_id,
+                                    e
+                                );
+                                // 送信失敗時はidleに戻す
+                                self.pod_state_manager.set_idle(&pod_id).await;
+                                // 送信失敗したメッセージはキューに戻さない（ロストする）
+                                break;
+                            }
+                        }
+                    } else {
+                        log::warn!(
+                            "Input sender not found for pod {}, setting to idle",
+                            pod_id
+                        );
+                        self.pod_state_manager.set_idle(&pod_id).await;
+                        break;
+                    }
+                } else {
+                    // キューが空になった（他の処理で消費された可能性）
+                    break;
+                }
+            } else {
+                // すべてのインスタンスが busy
+                log::debug!(
+                    "All instances of task '{}' are busy, stopping queue processing for topic '{}'",
+                    task_name,
+                    topic
+                );
+                break;
+            }
+        }
+
+        if processed_count > 0 {
+            log::info!(
+                "Processed {} queued messages for task '{}' on topic '{}'",
+                processed_count,
+                task_name,
+                topic
+            );
+        }
+
+        processed_count
+    }
 }
 
 #[derive(Debug, Clone)]

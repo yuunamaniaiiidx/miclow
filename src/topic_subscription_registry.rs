@@ -416,5 +416,48 @@ impl TopicSubscriptionRegistry {
         // それ以外のトピックは route_message を使用
         self.route_message(topic, data).await
     }
+
+    /// タスクが idle に戻った時に、そのタスクが購読しているトピックのキューを処理
+    pub async fn process_queue_for_task(&self, task_name: &str) {
+        // SystemConfig からタスクの subscribe_topics を取得
+        let subscribe_topics = if let Some(task_config) = self.system_config.tasks.get(task_name) {
+            task_config.subscribe_topics.clone().unwrap_or_default()
+        } else {
+            log::warn!(
+                "Task '{}' not found in system config, skipping queue processing",
+                task_name
+            );
+            return;
+        };
+
+        if subscribe_topics.is_empty() {
+            log::debug!(
+                "Task '{}' has no subscribe_topics, skipping queue processing",
+                task_name
+            );
+            return;
+        }
+
+        log::debug!(
+            "Processing queue for task '{}' (subscribed topics: {:?})",
+            task_name,
+            subscribe_topics
+        );
+
+        // 各トピックについてキューを処理
+        let mut total_processed = 0;
+        for topic in subscribe_topics {
+            let processed = self.load_balancer.process_queue(task_name, &topic).await;
+            total_processed += processed;
+        }
+
+        if total_processed > 0 {
+            log::info!(
+                "Processed {} queued messages for task '{}'",
+                total_processed,
+                task_name
+            );
+        }
+    }
 }
 
