@@ -1,11 +1,11 @@
 use crate::background_worker_registry::BackgroundWorkerRegistry;
-use crate::channels::UserLogSender;
+use crate::channels::{TaskExitChannel, UserLogSender};
 use crate::config::{SystemConfig, TaskConfig};
 use crate::logging::{
     level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
-use crate::task_runtime::{StartContext, TaskExecutor};
+use crate::task_runtime::{LifecycleManager, StartContext, TaskExecutor};
 use crate::topic_broker::TopicBroker;
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -54,13 +54,30 @@ impl MiclowSystem {
                 userlog_sender.clone(),
             );
 
-            match task_executor.start_task_from_config(ready_context).await {
-                Ok(_) => {
-                    log::info!("Started user task '{}'", task_name);
-                }
-                Err(e) => {
-                    log::error!("Failed to start task '{}': {}", task_name, e);
-                    continue;
+            // desired_instances に基づいて初期インスタンスを起動
+            let desired_instances = task_config.lifecycle.desired_instances;
+            let instances_to_start = desired_instances.max(1); // 最低1つは起動
+
+            for i in 0..instances_to_start {
+                match task_executor.start_task_from_config(ready_context.clone()).await {
+                    Ok(_) => {
+                        log::info!(
+                            "Started user task '{}' instance {}/{}",
+                            task_name,
+                            i + 1,
+                            instances_to_start
+                        );
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to start task '{}' instance {}/{}: {}",
+                            task_name,
+                            i + 1,
+                            instances_to_start,
+                            e
+                        );
+                        // エラーが発生しても次のインスタンスの起動を試みる
+                    }
                 }
             }
         }
@@ -68,7 +85,7 @@ impl MiclowSystem {
         if tasks.is_empty() {
             log::info!("No tasks configured");
         } else {
-            log::info!("Started {} user tasks from configuration", tasks.len());
+            log::info!("Started initial instances for {} tasks from configuration", tasks.len());
         }
     }
 
@@ -84,6 +101,27 @@ impl MiclowSystem {
         let userlog_sender = UserLogSender::new(userlog_tx);
         let userlog_worker = UserLogAggregatorWorker::new(userlog_rx);
         self.background_tasks.register_worker(userlog_worker).await;
+
+        // タスク終了通知チャネルを作成
+        let task_exit_channel = TaskExitChannel::new();
+        self.task_executor
+            .set_task_exit_sender(task_exit_channel.sender.clone())
+            .await;
+
+        // ライフサイクル管理ワーカーを初期化
+        let lifecycle_manager = LifecycleManager::new(
+            self.task_executor.clone(),
+            task_exit_channel.receiver,
+            topic_manager.clone(),
+            self.shutdown_token.clone(),
+            userlog_sender.clone(),
+        );
+        lifecycle_manager
+            .register_from_config(&self.config)
+            .await;
+
+        // ライフサイクル管理ワーカーを BackgroundWorker として登録
+        self.background_tasks.register_worker(lifecycle_manager).await;
 
         Self::start_user_tasks(
             &self.config,

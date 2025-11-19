@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::ProtocolBackend;
+use crate::channels::TaskExitSender;
 use crate::task_id::TaskId;
 
 use super::running_task::RunningTask;
@@ -22,6 +23,8 @@ pub struct TaskExecutor {
     monitored_task_names: Arc<RwLock<HashSet<String>>>,
     task_state_manager: TaskStateManager,
     shutdown_token: CancellationToken,
+    /// タスク終了通知チャネル（タスク名を送信）
+    task_exit_sender: Arc<RwLock<Option<TaskExitSender>>>,
 }
 
 impl TaskExecutor {
@@ -33,7 +36,14 @@ impl TaskExecutor {
             monitored_task_names: Arc::new(RwLock::new(HashSet::new())),
             task_state_manager: TaskStateManager::new(),
             shutdown_token,
+            task_exit_sender: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// タスク終了通知チャネルの送信側を設定
+    pub async fn set_task_exit_sender(&self, sender: TaskExitSender) {
+        let mut exit_sender = self.task_exit_sender.write().await;
+        *exit_sender = Some(sender);
     }
 
     pub async fn register_task(&self, task_name: String, task: RunningTask) -> Result<(), String> {
@@ -98,7 +108,13 @@ impl TaskExecutor {
             // 状態管理からも削除
             self.task_state_manager.unregister_task(task_id).await;
 
-            if let Some(name) = task_name {
+            if let Some(name) = task_name.clone() {
+                // タスク終了通知を送信
+                let exit_sender = self.task_exit_sender.read().await;
+                if let Some(sender) = exit_sender.as_ref() {
+                    let _ = sender.send(name.clone());
+                }
+
                 let mut monitored = self.monitored_task_names.write().await;
                 if monitored.remove(&name) {
                     if monitored.is_empty() {
