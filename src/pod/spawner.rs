@@ -1,6 +1,7 @@
 use crate::backend::ProtocolBackend;
 use crate::channels::{
-    ExecutorInputEventSender, ExecutorOutputEventChannel, ShutdownSender, UserLogSender,
+    ExecutorInputEventSender, ExecutorOutputEventChannel, ShutdownSender, TaskExitSender,
+    UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
@@ -25,6 +26,7 @@ pub struct PodSpawner {
     pub pod_name: String,
     pub userlog_sender: UserLogSender,
     pub state: PodState,
+    pub pod_exit_sender: TaskExitSender,
 }
 
 impl PodSpawner {
@@ -34,6 +36,7 @@ impl PodSpawner {
         topic_manager: TopicSubscriptionRegistry,
         pod_name: String,
         userlog_sender: UserLogSender,
+        pod_exit_sender: TaskExitSender,
     ) -> Self {
         Self {
             pod_id,
@@ -42,6 +45,7 @@ impl PodSpawner {
             pod_name,
             userlog_sender,
             state: PodState::default(),
+            pod_exit_sender,
         }
     }
 
@@ -59,6 +63,7 @@ impl PodSpawner {
         let pod_name: String = self.pod_name.clone();
         let topic_manager: TopicSubscriptionRegistry = self.topic_manager;
         let userlog_sender = self.userlog_sender.clone();
+        let pod_exit_sender = self.pod_exit_sender.clone();
 
         let mut backend_handle = backend
             .spawn(pod_id.clone())
@@ -220,15 +225,14 @@ impl PodSpawner {
                                     },
                                     ExecutorOutputEvent::Exit { exit_code, .. } => {
                                         log::info!("Exit event for pod {} with exit code: {}", pod_id, exit_code);
-
-                                        let removed_topics: Vec<String> = topic_manager.remove_all_subscriptions_by_task(pod_id.clone()).await;
-                                        log::info!("Pod {} exited, removed {} topic subscriptions", pod_id, removed_topics.len());
-
-                                        if let Some(_removed_pod) = pod_manager.unregister_pod_by_pod_id(&pod_id).await {
-                                            log::info!("Removed pod with PodId={} (Human name index updated)", pod_id);
-                                        } else {
-                                            log::warn!("Pod with PodId={} not found in manager during cleanup", pod_id);
+                                        if let Err(e) = pod_exit_sender.send(pod_name.clone()) {
+                                            log::warn!(
+                                                "Failed to notify pod exit for '{}': {}",
+                                                pod_name,
+                                                e
+                                            );
                                         }
+                                        break;
                                     }
                                 }
                             },

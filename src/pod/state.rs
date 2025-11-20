@@ -11,5 +11,3 @@ impl Default for PodState {
         Self::Idle
     }
 }
-
-pub type PodInstanceState = PodState;
