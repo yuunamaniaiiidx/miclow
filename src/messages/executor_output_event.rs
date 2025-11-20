@@ -29,7 +29,7 @@ pub enum ExecutorOutputEvent {
     TopicResponse {
         message_id: MessageId,
         task_id: PodId,
-        to_task_id: Option<PodId>,
+        to_task_id: PodId,
         status: TopicResponseStatus,
         topic: String,
         return_topic: String,

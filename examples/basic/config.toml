@@ -4,8 +4,9 @@ task_name = "basic_sender"
 command = "uv"
 args = ["run", "sender.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
-view_stdout = false
+view_stdout = true
 view_stderr = false
+subscribe_topics = ["demo.topic.result"]
 
   [[tasks.lifecycle]]
   desired_instances = 1
@@ -17,9 +18,9 @@ command = "uv"
 args = ["run", "receiver.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 view_stdout = true
-view_stderr = true
+view_stderr = false
 subscribe_topics = ["demo.topic"]
 
   [[tasks.lifecycle]]
-  desired_instances = 3
+  desired_instances = 10
 

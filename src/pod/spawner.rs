@@ -151,9 +151,9 @@ impl PodSpawner {
                                             }) {
                                                 log::warn!(
                                                     "Failed to send PodTopic event for '{}': {}",
-                                                    pod_id,
-                                                    e
-                                                );
+                                                        pod_id,
+                                                        e
+                                                    );
                                             }
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {

@@ -1,7 +1,9 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use crate::pod::PodId;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PodState {
     Idle,
-    Busy,
+    Busy(PodId), // メッセージを送信した元のPodのIDを保存
 }
 
 impl Default for PodState {

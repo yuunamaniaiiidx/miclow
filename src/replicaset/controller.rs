@@ -225,7 +225,7 @@ impl ReplicaSetWorker {
                                     replicaset_id,
                                     pod_id
                                 );
-                                if handle.state == PodState::Idle {
+                                if matches!(handle.state, PodState::Idle) {
                                     idle_pod_count = idle_pod_count.saturating_sub(1);
                                 }
                                 pod_router.remove(&pod_id);
@@ -254,11 +254,45 @@ impl ReplicaSetWorker {
                                 return_topic
                             );
 
-                            // ExecutorOutputEventに変換してbroadcast
+                            // 状態管理：BusyからIdleに戻し、to_task_idを取得
+                            let to_task_id = if let Some(pod) = pods.get_mut(&pod_id) {
+                                let to_task_id = match &pod.state {
+                                    PodState::Busy(from_task_id) => from_task_id.clone(),
+                                    PodState::Idle => {
+                                        log::warn!(
+                                            "ReplicaSet {} received TopicResponse from pod {} but pod is in Idle state, using pod_id as to_task_id",
+                                            replicaset_id,
+                                            pod_id
+                                        );
+                                        pod_id.clone()
+                                    }
+                                };
+                                if !matches!(pod.state, PodState::Idle) {
+                                    pod.state = PodState::Idle;
+                                    idle_pod_count += 1;
+                                    Self::drain_pending_events(
+                                        &replicaset_id,
+                                        &mut pods,
+                                        &mut pod_router,
+                                        &mut pending_events,
+                                        &mut idle_pod_count,
+                                    );
+                                }
+                                to_task_id
+                            } else {
+                                log::warn!(
+                                    "ReplicaSet {} received TopicResponse from unknown pod {}, using pod_id as to_task_id",
+                                    replicaset_id,
+                                    pod_id
+                                );
+                                pod_id.clone()
+                            };
+
+                            // to_task_idを設定してbroadcast
                             let executor_event = ExecutorOutputEvent::TopicResponse {
                                 message_id,
                                 task_id: pod_id.clone(),
-                                to_task_id: None,
+                                to_task_id,
                                 status,
                                 topic,
                                 return_topic: return_topic.clone(),
@@ -281,21 +315,6 @@ impl ReplicaSetWorker {
                                         pod_id,
                                         return_topic,
                                         e
-                                    );
-                                }
-                            }
-
-                            // PodResponseイベントも送信（状態管理用）
-                            if let Some(pod) = pods.get_mut(&pod_id) {
-                                if pod.state != PodState::Idle {
-                                    pod.state = PodState::Idle;
-                                    idle_pod_count += 1;
-                                    Self::drain_pending_events(
-                                        &replicaset_id,
-                                        &mut pods,
-                                        &mut pod_router,
-                                        &mut pending_events,
-                                        &mut idle_pod_count,
                                     );
                                 }
                             }
@@ -480,7 +499,7 @@ impl ReplicaSetWorker {
             };
 
             if let Some(pod) = pods.get_mut(&target_pod_id) {
-                if pod.state != PodState::Idle {
+                if !matches!(pod.state, PodState::Idle) {
                     continue;
                 }
 
@@ -495,7 +514,13 @@ impl ReplicaSetWorker {
                     return RouteStatus::Dropped;
                 } else {
                     if requires_response {
-                        pod.state = PodState::Busy;
+                        // 元のメッセージのtask_idを保存
+                        let from_task_id = match &event {
+                            ExecutorOutputEvent::Topic { task_id, .. } => task_id.clone(),
+                            ExecutorOutputEvent::TopicResponse { task_id, .. } => task_id.clone(),
+                            _ => target_pod_id.clone(), // フォールバック
+                        };
+                        pod.state = PodState::Busy(from_task_id);
                         *idle_pod_count = idle_pod_count.saturating_sub(1);
                     }
                     log::debug!(

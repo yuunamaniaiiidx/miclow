@@ -18,8 +18,8 @@ pub fn create_topic_event(
 
         ExecutorOutputEvent::TopicResponse {
             message_id,
-            task_id,
-            to_task_id: None,
+            task_id: task_id.clone(),
+            to_task_id: task_id, // backend側ではtask_idをto_task_idとして使用（上位で上書きされる可能性がある）
             status: TopicResponseStatus::Unknown,
             topic: original_topic.to_string(),
             return_topic: topic,

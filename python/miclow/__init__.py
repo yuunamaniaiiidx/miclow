@@ -22,9 +22,10 @@ if not os.environ.get('MICLOW_TASK_ID'):
 __version__ = "0.1.0"
 __all__ = [
     "MiclowClient", "get_client", "send_message",
-    "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
+    "subscribe_topic", "TopicMessage", "SystemResponse",
     "get_status", "get_latest_message",
-    "wait_for_topic", "receive_message", "MessageType",
+    "wait_for_topic", "wait_for_response", "receive_message",
+    "MessageType",
     "send_response", "return_topic_for"
 ]
 
@@ -341,6 +342,32 @@ class MiclowClient:
                 if value is not None:
                     return value
 
+    def wait_for_response(self, topic: str) -> TopicMessage | SystemResponse:
+        """
+        Wait for a response message on the return topic for the given topic.
+        The return topic follows the pattern: {topic}.result
+
+        This is typically used after sending a message to wait for the
+    response. Returns buffered message if available, otherwise waits
+    until received from stdin.
+
+        Args:
+            topic: The original topic name (response will be on {topic}.result)
+
+        Returns:
+            TopicMessage/SystemResponse from the return topic
+
+        Example:
+            # Send a message
+            send_message("demo.request", "Hello")
+
+            # Wait for response on "demo.request.result"
+            response = wait_for_response("demo.request")
+            print(response.data)
+        """
+        return_topic = return_topic_for(topic)
+        return self.wait_for_topic(return_topic)
+
     def subscribe_topic(self, topic: str) -> SystemResponse:
         """
         Subscribe to a topic.
@@ -503,6 +530,32 @@ def wait_for_topic(topic: str) -> TopicMessage | SystemResponse:
     return get_client().wait_for_topic(topic)
 
 
+def wait_for_response(topic: str) -> TopicMessage | SystemResponse:
+    """
+    Wait for a response message on the return topic for the given topic.
+    The return topic follows the pattern: {topic}.result
+
+    This is typically used after sending a message to wait for the response.
+    Returns buffered message if available, otherwise waits until received
+    from stdin.
+
+    Args:
+        topic: The original topic name (response will be on {topic}.result)
+
+    Returns:
+        TopicMessage/SystemResponse from the return topic
+
+    Example:
+        # Send a message
+        send_message("demo.request", "Hello")
+
+        # Wait for response on "demo.request.result"
+        response = wait_for_response("demo.request")
+        print(response.data)
+    """
+    return get_client().wait_for_response(topic)
+
+
 def get_status() -> SystemResponse:
     """Get the system status."""
     return get_client().get_status()
@@ -537,9 +590,9 @@ def return_topic_for(topic: str) -> str:
 
 def send_response(original_topic: str, data: str) -> None:
     """
-    Send a response message to the return topic for the given original topic.
-    This is a convenience function that automatically constructs the return topic
-    using the pattern: {original_topic}.result
+    Send a response message to the return topic for the given topic.
+    This is a convenience function that automatically constructs the return
+    topic using the pattern: {original_topic}.result
 
     Args:
         original_topic: The original topic name that this response is for
@@ -548,10 +601,10 @@ def send_response(original_topic: str, data: str) -> None:
     Example:
         # Receive a message on "demo.request"
         message = wait_for_topic("demo.request")
-        
+
         # Process the message...
         result = process(message.data)
-        
+
         # Send response to "demo.request.result"
         send_response("demo.request", result)
     """
