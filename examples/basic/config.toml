@@ -21,5 +21,5 @@ view_stderr = true
 subscribe_topics = ["demo.topic"]
 
   [[tasks.lifecycle]]
-  desired_instances = 2
+  desired_instances = 3
 

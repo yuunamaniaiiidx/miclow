@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use crate::channels::{
@@ -122,6 +122,7 @@ impl ReplicaSetWorker {
 
         let mut pods: HashMap<PodId, ManagedPod> = HashMap::new();
         let mut pod_router = PodRouter::default();
+        let mut pending_events: VecDeque<ExecutorOutputEvent> = VecDeque::new();
         let target_instances = desired_instances;
 
         loop {
@@ -148,6 +149,12 @@ impl ReplicaSetWorker {
                         log::info!("ReplicaSet {} spawned pod {}", replicaset_id, handle_id);
                         pod_router.add(handle_id.clone());
                         pods.insert(handle_id, handle);
+                        Self::drain_pending_events(
+                            &replicaset_id,
+                            &mut pods,
+                            &mut pod_router,
+                            &mut pending_events,
+                        );
                     }
                     Err(err) => {
                         log::error!(
@@ -182,12 +189,15 @@ impl ReplicaSetWorker {
                 topic_event = topic_receiver.recv() => {
                     match topic_event {
                         Some(event) => {
-                            Self::route_topic_event(
-                                &replicaset_id,
-                                &mut pods,
-                                &mut pod_router,
-                                event,
-                            );
+                            pending_events.push_back(event);
+                            if Self::has_idle_pod(&pods) {
+                                Self::drain_pending_events(
+                                    &replicaset_id,
+                                    &mut pods,
+                                    &mut pod_router,
+                                    &mut pending_events,
+                                );
+                            }
                         }
                         None => {
                             log::warn!(
@@ -219,6 +229,12 @@ impl ReplicaSetWorker {
                         Some(PodEvent::PodResponse { pod_id, .. }) => {
                             if let Some(pod) = pods.get_mut(&pod_id) {
                                 pod.state = PodState::Idle;
+                                Self::drain_pending_events(
+                                    &replicaset_id,
+                                    &mut pods,
+                                    &mut pod_router,
+                                    &mut pending_events,
+                                );
                             } else {
                                 log::warn!(
                                     "ReplicaSet {} received response for unknown pod {}",
@@ -310,27 +326,45 @@ impl ReplicaSetWorker {
         }
     }
 
+    fn drain_pending_events(
+        replicaset_id: &ReplicaSetId,
+        pods: &mut HashMap<PodId, ManagedPod>,
+        router: &mut PodRouter,
+        pending_events: &mut VecDeque<ExecutorOutputEvent>,
+    ) {
+        while let Some(event) = pending_events.pop_front() {
+            match Self::route_topic_event(replicaset_id, pods, router, event) {
+                RouteStatus::Delivered | RouteStatus::Dropped => continue,
+                RouteStatus::Pending(event) => {
+                    pending_events.push_front(event);
+                    break;
+                }
+            }
+        }
+    }
+
     fn route_topic_event(
         replicaset_id: &ReplicaSetId,
         pods: &mut HashMap<PodId, ManagedPod>,
         router: &mut PodRouter,
         event: ExecutorOutputEvent,
-    ) {
-        if pods.is_empty() || router.is_empty() {
-            log::info!(
-                "ReplicaSet {} has no pods available to route topic events",
-                replicaset_id
-            );
-            return;
-        }
-
+    ) -> RouteStatus {
         let Some(message) = Self::convert_to_replica_message(&event) else {
             log::warn!(
-                "ReplicaSet {} received topic event without topic/data, skipping",
+                "ReplicaSet {} received topic event without topic/data, dropping",
                 replicaset_id
             );
-            return;
+            return RouteStatus::Dropped;
         };
+
+        if pods.is_empty() || router.is_empty() {
+            log::debug!(
+                "ReplicaSet {} has no pods available; queuing topic '{}'",
+                replicaset_id,
+                message.topic
+            );
+            return RouteStatus::Pending(event);
+        }
 
         let topic_name = message.topic.clone();
         let max_attempts = pods.len();
@@ -353,6 +387,7 @@ impl ReplicaSetWorker {
                         target_pod_id,
                         e
                     );
+                    return RouteStatus::Dropped;
                 } else {
                     pod.state = PodState::Busy;
                     log::debug!(
@@ -361,8 +396,8 @@ impl ReplicaSetWorker {
                         topic_name,
                         target_pod_id
                     );
+                    return RouteStatus::Delivered;
                 }
-                return;
             } else {
                 router.remove(&target_pod_id);
             }
@@ -373,6 +408,11 @@ impl ReplicaSetWorker {
             replicaset_id,
             topic_name
         );
+        RouteStatus::Pending(event)
+    }
+
+    fn has_idle_pod(pods: &HashMap<PodId, ManagedPod>) -> bool {
+        pods.values().any(|pod| pod.state == PodState::Idle)
     }
 
     fn convert_to_replica_message(event: &ExecutorOutputEvent) -> Option<ReplicaSetTopicMessage> {
@@ -393,6 +433,12 @@ struct ManagedPod {
     handler: PodSpawnHandler,
     topic_sender: ReplicaSetTopicSender,
     state: PodState,
+}
+
+enum RouteStatus {
+    Delivered,
+    Pending(ExecutorOutputEvent),
+    Dropped,
 }
 
 #[derive(Default)]
