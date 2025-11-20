@@ -14,7 +14,7 @@ pub struct LogEvent {
     pub level: Level,
     pub target: String,
     pub msg: String,
-    pub task_id: Option<String>,
+    pub pod_id: Option<String>,
     pub task_name: Option<String>, // 追加
 }
 
@@ -41,7 +41,7 @@ impl Log for ChannelLogger {
             level: record.level(),
             target: record.target().to_string(),
             msg: format!("{}", record.args()),
-            task_id: None,
+            pod_id: None,
             task_name: None, // 追加
         });
     }
@@ -80,7 +80,7 @@ pub enum UserLogKind {
 
 #[derive(Debug, Clone)]
 pub struct UserLogEvent {
-    pub task_id: String,
+    pub pod_id: String,
     pub task_name: String,
     pub kind: UserLogKind,
     pub msg: String,

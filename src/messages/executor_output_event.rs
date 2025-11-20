@@ -22,13 +22,13 @@ impl Default for TopicResponseStatus {
 pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         topic: String,
         data: String,
     },
     TopicResponse {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         to_task_id: PodId,
         status: TopicResponseStatus,
         topic: String,
@@ -37,64 +37,64 @@ pub enum ExecutorOutputEvent {
     },
     Stdout {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         data: String,
     },
     Stderr {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         data: String,
     },
     Error {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         error: String,
     },
     Exit {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         exit_code: i32,
     },
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(message_id: MessageId, task_id: PodId, topic: String, data: String) -> Self {
+    pub fn new_message(message_id: MessageId, pod_id: PodId, topic: String, data: String) -> Self {
         Self::Topic {
             message_id,
-            task_id,
+            pod_id,
             topic,
             data,
         }
     }
 
-    pub fn new_error(message_id: MessageId, task_id: PodId, error: String) -> Self {
+    pub fn new_error(message_id: MessageId, pod_id: PodId, error: String) -> Self {
         Self::Error {
             message_id,
-            task_id,
+            pod_id,
             error,
         }
     }
 
-    pub fn new_exit(message_id: MessageId, task_id: PodId, exit_code: i32) -> Self {
+    pub fn new_exit(message_id: MessageId, pod_id: PodId, exit_code: i32) -> Self {
         Self::Exit {
             message_id,
-            task_id,
+            pod_id,
             exit_code,
         }
     }
 
-    pub fn new_task_stdout(message_id: MessageId, task_id: PodId, data: String) -> Self {
+    pub fn new_task_stdout(message_id: MessageId, pod_id: PodId, data: String) -> Self {
         Self::Stdout {
             message_id,
-            task_id,
+            pod_id,
             data,
         }
     }
 
-    pub fn new_task_stderr(message_id: MessageId, task_id: PodId, data: String) -> Self {
+    pub fn new_task_stderr(message_id: MessageId, pod_id: PodId, data: String) -> Self {
         Self::Stderr {
             message_id,
-            task_id,
+            pod_id,
             data,
         }
     }

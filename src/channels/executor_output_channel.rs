@@ -29,31 +29,31 @@ impl ExecutorOutputEventSender {
     pub fn send_message(
         &self,
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         key: String,
         data: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.send(ExecutorOutputEvent::new_message(
-            message_id, task_id, key, data,
+            message_id, pod_id, key, data,
         ))
     }
 
     pub fn send_error(
         &self,
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         error: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_error(message_id, task_id, error))
+        self.send(ExecutorOutputEvent::new_error(message_id, pod_id, error))
     }
 
     pub fn send_exit(
         &self,
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         code: i32,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_exit(message_id, task_id, code))
+        self.send(ExecutorOutputEvent::new_exit(message_id, pod_id, code))
     }
 
     pub fn replicaset_id(&self) -> Option<ReplicaSetId> {

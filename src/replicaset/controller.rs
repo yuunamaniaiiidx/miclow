@@ -291,7 +291,7 @@ impl ReplicaSetWorker {
                             // to_task_idを設定してbroadcast
                             let executor_event = ExecutorOutputEvent::TopicResponse {
                                 message_id,
-                                task_id: pod_id.clone(),
+                                pod_id: pod_id.clone(),
                                 to_task_id,
                                 status,
                                 topic,
@@ -336,7 +336,7 @@ impl ReplicaSetWorker {
                             // ExecutorOutputEventに変換してbroadcast
                             let executor_event = ExecutorOutputEvent::Topic {
                                 message_id,
-                                task_id: pod_id.clone(),
+                                pod_id: pod_id.clone(),
                                 topic: topic.clone(),
                                 data,
                             };
@@ -514,10 +514,10 @@ impl ReplicaSetWorker {
                     return RouteStatus::Dropped;
                 } else {
                     if requires_response {
-                        // 元のメッセージのtask_idを保存
+                        // 元のメッセージのpod_idを保存
                         let from_task_id = match &event {
-                            ExecutorOutputEvent::Topic { task_id, .. } => task_id.clone(),
-                            ExecutorOutputEvent::TopicResponse { task_id, .. } => task_id.clone(),
+                            ExecutorOutputEvent::Topic { pod_id, .. } => pod_id.clone(),
+                            ExecutorOutputEvent::TopicResponse { pod_id, .. } => pod_id.clone(),
                             _ => target_pod_id.clone(), // フォールバック
                         };
                         pod.state = PodState::Busy(from_task_id);

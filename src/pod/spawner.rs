@@ -104,7 +104,7 @@ impl PodSpawner {
                                     match &event {
                                         ExecutorOutputEvent::TopicResponse {
                                             message_id,
-                                            task_id: _response_pod_id,
+                                            pod_id: _response_pod_id,
                                             topic,
                                             return_topic,
                                             status,
@@ -158,12 +158,12 @@ impl PodSpawner {
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {
                                             if view_stdout {
-                                                let _ = userlog_sender.send(UserLogEvent { task_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
                                             }
                                         },
                                         ExecutorOutputEvent::Stderr { data, .. } => {
                                             if view_stderr {
-                                                let _ = userlog_sender.send(UserLogEvent { task_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
                                             }
                                         },
                                         ExecutorOutputEvent::Error { error, .. } => {
@@ -199,7 +199,7 @@ impl PodSpawner {
                                         ReplicaSetTopicMessageKind::Topic => {
                                             ExecutorInputEvent::Topic {
                                                 message_id: MessageId::new(),
-                                                task_id: pod_id.clone(),
+                                                pod_id: pod_id.clone(),
                                                 topic,
                                                 data,
                                             }
@@ -209,7 +209,7 @@ impl PodSpawner {
                                             original_topic,
                                         } => ExecutorInputEvent::TopicResponse {
                                             message_id: MessageId::new(),
-                                            task_id: pod_id.clone(),
+                                            pod_id: pod_id.clone(),
                                             status,
                                             topic: original_topic,
                                             return_topic: topic,

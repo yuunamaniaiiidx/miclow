@@ -6,13 +6,13 @@ use crate::pod::PodId;
 pub enum ExecutorInputEvent {
     Topic {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         topic: String,
         data: String,
     },
     TopicResponse {
         message_id: MessageId,
-        task_id: PodId,
+        pod_id: PodId,
         status: TopicResponseStatus,
         topic: String,
         return_topic: String,

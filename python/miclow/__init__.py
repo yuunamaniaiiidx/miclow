@@ -13,9 +13,9 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from enum import Enum
 
-if not os.environ.get('MICLOW_TASK_ID'):
+if not os.environ.get('MICLOW_POD_ID'):
     raise ImportError(
-        "miclow module can only be imported within miclow-managed tasks. "
+        "miclow module can only be imported within miclow-managed pods. "
         "Make sure your Python process is started by miclow."
     )
 
@@ -267,7 +267,7 @@ class MiclowClient:
 
     def __init__(self) -> None:
         """Initialize the miclow client."""
-        self.task_id: str = os.environ['MICLOW_TASK_ID']
+        self.pod_id: str = os.environ['MICLOW_POD_ID']
         self.stdin = sys.stdin
         self.stdout = sys.stdout
         self._buffer: Buffer = Buffer()

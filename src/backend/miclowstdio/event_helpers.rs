@@ -6,7 +6,7 @@ use crate::pod::PodId;
 /// `.result`で終わるトピックの場合は`TopicResponse`に変換し、それ以外は通常の`Topic`として扱う。
 pub fn create_topic_event(
     message_id: MessageId,
-    task_id: PodId,
+    pod_id: PodId,
     topic: String,
     data: String,
 ) -> ExecutorOutputEvent {
@@ -18,8 +18,8 @@ pub fn create_topic_event(
 
         ExecutorOutputEvent::TopicResponse {
             message_id,
-            task_id: task_id.clone(),
-            to_task_id: task_id, // backend側ではtask_idをto_task_idとして使用（上位で上書きされる可能性がある）
+            pod_id: pod_id.clone(),
+            to_task_id: pod_id, // backend側ではpod_idをto_task_idとして使用（上位で上書きされる可能性がある）
             status: TopicResponseStatus::Unknown,
             topic: original_topic.to_string(),
             return_topic: topic,
@@ -27,6 +27,6 @@ pub fn create_topic_event(
         }
     } else {
         // 通常のトピックメッセージ
-        ExecutorOutputEvent::new_message(message_id, task_id, topic, data)
+        ExecutorOutputEvent::new_message(message_id, pod_id, topic, data)
     }
 }
