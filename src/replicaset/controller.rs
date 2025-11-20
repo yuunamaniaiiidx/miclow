@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::channels::{
-    ExecutorOutputEventChannel, ExecutorOutputEventSender, ReplicaSetTopicChannel,
-    ReplicaSetTopicMessage, ReplicaSetTopicSender, TaskExitChannel, TaskExitSender,
+    ExecutorOutputEventChannel, ExecutorOutputEventSender, PodEventChannel, PodEventSender,
+    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicSender,
 };
-use crate::messages::ExecutorOutputEvent;
-use crate::pod::{PodId, PodSpawnHandler, PodSpawner};
+use crate::messages::{ExecutorOutputEvent, PodEvent};
+use crate::pod::{PodId, PodSpawnHandler, PodSpawner, PodState};
 use crate::replicaset::context::{PodStartContext, ReplicaSetSpec};
 use crate::replicaset::ReplicaSetId;
 use crate::topic::TopicSubscriptionRegistry;
@@ -115,10 +115,10 @@ impl ReplicaSetWorker {
         )
         .await;
 
-        let TaskExitChannel {
-            sender: exit_sender,
-            receiver: mut exit_receiver,
-        } = TaskExitChannel::new();
+        let PodEventChannel {
+            sender: pod_event_sender,
+            receiver: mut pod_event_receiver,
+        } = PodEventChannel::new();
 
         let mut pods: HashMap<PodId, ManagedPod> = HashMap::new();
         let mut pod_router = PodRouter::default();
@@ -138,7 +138,7 @@ impl ReplicaSetWorker {
                     replicaset_id.clone(),
                     &task_name,
                     &start_context,
-                    exit_sender.clone(),
+                    pod_event_sender.clone(),
                     shutdown_token.clone(),
                 )
                 .await
@@ -197,9 +197,9 @@ impl ReplicaSetWorker {
                         }
                     }
                 }
-                exit_event = exit_receiver.recv() => {
-                    match exit_event {
-                        Some(pod_id) => {
+                pod_event = pod_event_receiver.recv() => {
+                    match pod_event {
+                        Some(PodEvent::PodExit { pod_id }) => {
                             if let Some(handle) = pods.remove(&pod_id) {
                                 log::info!(
                                     "ReplicaSet {} detected exit of pod {}, awaiting completion",
@@ -216,9 +216,20 @@ impl ReplicaSetWorker {
                                 );
                             }
                         }
+                        Some(PodEvent::PodResponse { pod_id, .. }) => {
+                            if let Some(pod) = pods.get_mut(&pod_id) {
+                                pod.state = PodState::Idle;
+                            } else {
+                                log::warn!(
+                                    "ReplicaSet {} received response for unknown pod {}",
+                                    replicaset_id,
+                                    pod_id
+                                );
+                            }
+                        }
                         None => {
                             log::warn!(
-                                "ReplicaSet {} exit receiver closed unexpectedly",
+                                "ReplicaSet {} pod event receiver closed unexpectedly",
                                 replicaset_id
                             );
                             return Self::shutdown_pods(pods).await;
@@ -240,7 +251,7 @@ impl ReplicaSetWorker {
         replicaset_id: ReplicaSetId,
         task_name: &str,
         start_context: &PodStartContext,
-        exit_sender: TaskExitSender,
+        pod_event_sender: PodEventSender,
         shutdown_token: CancellationToken,
     ) -> Result<ManagedPod, String> {
         let pod_id = PodId::new();
@@ -253,7 +264,7 @@ impl ReplicaSetWorker {
             start_context.topic_manager.clone(),
             instance_name.clone(),
             start_context.userlog_sender.clone(),
-            exit_sender,
+            pod_event_sender,
             start_context.view_stdout,
             start_context.view_stderr,
         );
@@ -269,6 +280,7 @@ impl ReplicaSetWorker {
         Ok(ManagedPod {
             handler,
             topic_sender: topic_channel.sender,
+            state: PodState::Idle,
         })
     }
 
@@ -328,7 +340,11 @@ impl ReplicaSetWorker {
                 break;
             };
 
-            if let Some(pod) = pods.get(&target_pod_id) {
+            if let Some(pod) = pods.get_mut(&target_pod_id) {
+                if pod.state != PodState::Idle {
+                    continue;
+                }
+
                 if let Err(e) = pod.topic_sender.send(message.clone()) {
                     log::warn!(
                         "ReplicaSet {} failed to send topic '{}' to pod {}: {}",
@@ -338,6 +354,7 @@ impl ReplicaSetWorker {
                         e
                     );
                 } else {
+                    pod.state = PodState::Busy;
                     log::debug!(
                         "ReplicaSet {} routed topic '{}' to pod {}",
                         replicaset_id,
@@ -352,7 +369,7 @@ impl ReplicaSetWorker {
         }
 
         log::info!(
-            "ReplicaSet {} could not route topic '{}' because no pods were reachable",
+            "ReplicaSet {} could not route topic '{}' because no idle pods were reachable",
             replicaset_id,
             topic_name
         );
@@ -375,6 +392,7 @@ fn short_pod_suffix(pod_id: &PodId) -> String {
 struct ManagedPod {
     handler: PodSpawnHandler,
     topic_sender: ReplicaSetTopicSender,
+    state: PodState,
 }
 
 #[derive(Default)]

@@ -1,11 +1,11 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, ReplicaSetTopicReceiver, ShutdownSender, TaskExitSender,
+    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicReceiver, ShutdownSender,
     UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
-use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
+use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, PodEvent};
 use crate::replicaset::ReplicaSetId;
 use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
@@ -27,7 +27,7 @@ pub struct PodSpawner {
     pub pod_name: String,
     pub userlog_sender: UserLogSender,
     pub state: PodState,
-    pub pod_exit_sender: TaskExitSender,
+    pub pod_event_sender: PodEventSender,
     pub view_stdout: bool,
     pub view_stderr: bool,
 }
@@ -39,7 +39,7 @@ impl PodSpawner {
         topic_manager: TopicSubscriptionRegistry,
         pod_name: String,
         userlog_sender: UserLogSender,
-        pod_exit_sender: TaskExitSender,
+        pod_event_sender: PodEventSender,
         view_stdout: bool,
         view_stderr: bool,
     ) -> Self {
@@ -50,7 +50,7 @@ impl PodSpawner {
             pod_name,
             userlog_sender,
             state: PodState::default(),
-            pod_exit_sender,
+            pod_event_sender,
             view_stdout,
             view_stderr,
         }
@@ -71,7 +71,7 @@ impl PodSpawner {
         let pod_name: String = self.pod_name.clone();
         let topic_manager: TopicSubscriptionRegistry = self.topic_manager;
         let userlog_sender = self.userlog_sender.clone();
-        let pod_exit_sender = self.pod_exit_sender.clone();
+        let pod_event_sender = self.pod_event_sender.clone();
         let view_stdout = self.view_stdout;
         let view_stderr = self.view_stderr;
 
@@ -88,7 +88,7 @@ impl PodSpawner {
             let pod_name = pod_name.clone();
             let topic_manager = topic_manager.clone();
             let userlog_sender = userlog_sender.clone();
-            let pod_exit_sender = pod_exit_sender.clone();
+            let pod_event_sender = pod_event_sender.clone();
             let mut topic_data_receiver = topic_data_receiver;
 
             async move {
@@ -148,6 +148,17 @@ impl PodSpawner {
                                                     );
                                                 }
                                             }
+
+                                            if let Err(e) = pod_event_sender.send(PodEvent::PodResponse {
+                                                pod_id: pod_id.clone(),
+                                                message_id: message_id.clone(),
+                                            }) {
+                                                log::warn!(
+                                                    "Failed to send PodResponse event for '{}': {}",
+                                                    pod_id,
+                                                    e
+                                                );
+                                            }
                                         }
                                         ExecutorOutputEvent::Topic { topic, data, .. } => {
                                             // 通常のトピックメッセージ（.resultで終わらない）
@@ -192,7 +203,9 @@ impl PodSpawner {
                                         },
                                         ExecutorOutputEvent::Exit { exit_code, .. } => {
                                             log::info!("Exit event for pod {} with exit code: {}", pod_id, exit_code);
-                                            if let Err(e) = pod_exit_sender.send(pod_id.clone()) {
+                                            if let Err(e) = pod_event_sender.send(PodEvent::PodExit {
+                                                pod_id: pod_id.clone(),
+                                            }) {
                                                 log::warn!(
                                                     "Failed to notify pod exit for '{}': {}",
                                                     pod_id,
