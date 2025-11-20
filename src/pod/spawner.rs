@@ -69,7 +69,17 @@ impl PodSpawner {
             let topic_data_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
             let mut topic_data_receiver = topic_data_channel.receiver;
 
+            // タスクが最初のメッセージを受信できる状態になるまで少し待機してから登録
+            // これにより、タスクがwait_for_topicを呼び出す準備ができるまでメッセージ配信を遅延させる
             if let Some(topics) = subscribe_topics {
+                log::info!(
+                    "Waiting for pod {} to be ready before registering topic subscriptions: {:?}",
+                    pod_id,
+                    topics
+                );
+                // タスクの初期化を待つために少し待機
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                
                 log::info!(
                     "Processing initial topic subscriptions for pod {}: {:?}",
                     pod_id,
@@ -139,6 +149,10 @@ impl PodSpawner {
                                                     return_topic
                                                 );
                                                 // 配信成功後にidleに戻す
+                                                log::info!(
+                                                    "TopicResponse received from pod {}, setting to idle",
+                                                    pod_id
+                                                );
                                                 pod_manager.set_pod_idle(&pod_id).await;
                                                 
                                                 // タスク名を取得してキュー処理をトリガー
@@ -165,6 +179,7 @@ impl PodSpawner {
                                             data
                                         );
 
+                                        // broadcast_messageを使用（状態管理はbroadcast_message内で行う）
                                         match topic_manager.broadcast_message(event.clone()).await {
                                             Ok(success_count) => {
                                                 log::info!(

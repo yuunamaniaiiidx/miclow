@@ -216,33 +216,95 @@ impl TopicSubscriptionRegistry {
             if subscriber_list.is_empty() {
                 return Ok(0);
             }
-            let send_workers: Vec<_> = subscriber_list
-                .into_iter()
-                .enumerate()
-                .map(|(index, sender)| {
-                    let event_clone = event.clone();
-                    tokio::spawn(async move {
-                        match sender.send(event_clone) {
-                            Ok(_) => Ok(index),
-                            Err(e) => Err((index, e)),
-                        }
-                    })
-                })
-                .collect();
-            let results = futures::future::join_all(send_workers).await;
-
+            
+            // 各購読者のTaskIdを取得し、idleなインスタンスのみにメッセージを送信
+            let task_subs = self.task_subscriptions.read().await;
             let mut success_count = 0;
             let mut failed_indices = Vec::new();
+            let mut tasks_to_set_busy = Vec::new();
 
-            for result in results {
-                match result {
-                    Ok(Ok(_)) => success_count += 1,
-                    Ok(Err((index, _))) => failed_indices.push(index),
-                    Err(_) => {
-                        failed_indices.push(0);
+            for (index, sender) in subscriber_list.iter().enumerate() {
+                // TaskIdを取得
+                let mut task_id_opt = None;
+                for ((sub_topic, task_id), weak_sender) in task_subs.iter() {
+                    if sub_topic == &topic_owned {
+                        if let Some(strong_ref) = weak_sender.upgrade() {
+                            if Arc::ptr_eq(sender, &strong_ref) {
+                                task_id_opt = Some(task_id.clone());
+                                break;
+                            }
+                        }
                     }
                 }
+                
+                // TaskIdが見つかった場合、idleかどうかをチェックしてアトミックにbusyに設定
+                if let Some(task_id) = task_id_opt {
+                    // 状態をチェックして、idleの場合のみbusyに設定（アトミック操作）
+                    let state_manager = self.pod_manager.pod_state_manager();
+                    let current_state = state_manager.get_state(&task_id).await;
+                    
+                    if let Some(state) = current_state {
+                        if state != crate::pod::state::PodInstanceState::Idle {
+                            // idleでない場合は配信しない
+                            log::debug!(
+                                "Skipping message delivery to task {} (not idle, state: {:?}) on topic '{}'",
+                                task_id,
+                                state,
+                                topic_owned
+                            );
+                            continue;
+                        }
+                    } else {
+                        // 状態が登録されていない場合は配信しない
+                        log::warn!(
+                            "Task {} not registered in state manager, skipping message delivery on topic '{}'",
+                            task_id,
+                            topic_owned
+                        );
+                        continue;
+                    }
+                    
+                    // メッセージを送信する前にbusyに設定（競合を防ぐため）
+                    // この時点で他のメッセージが来ても、既にbusyになっているので送信されない
+                    state_manager.set_busy(&task_id).await;
+                    log::debug!(
+                        "Set task {} to busy before sending message on topic '{}'",
+                        task_id,
+                        topic_owned
+                    );
+                    
+                    // idleなインスタンスにメッセージを送信
+                    match sender.send(event.clone()) {
+                        Ok(_) => {
+                            success_count += 1;
+                            log::debug!(
+                                "Sent message to task {} on topic '{}' (task is now busy)",
+                                task_id,
+                                topic_owned
+                            );
+                        }
+                        Err(_) => {
+                            // 送信失敗時はidleに戻す
+                            log::warn!(
+                                "Failed to send message to task {} on topic '{}', setting to idle",
+                                task_id,
+                                topic_owned
+                            );
+                            state_manager.set_idle(&task_id).await;
+                            failed_indices.push(index);
+                        }
+                    }
+                } else {
+                    // TaskIdが見つからない場合は配信しない（ログに記録）
+                    log::warn!(
+                        "TaskId not found for subscriber at index {} on topic '{}', skipping",
+                        index,
+                        topic_owned
+                    );
+                }
             }
+            drop(task_subs);
+            
             if !failed_indices.is_empty() {
                 self.remove_failed_subscribers(topic, failed_indices).await;
             }
@@ -372,8 +434,7 @@ impl TopicSubscriptionRegistry {
                     }
                 }
             } else {
-                // ブロードキャストモード: すべてのインスタンスに配信
-                // ExecutorOutputEvent を作成して broadcast_message を使用
+                // ブロードキャストモード: broadcast_messageを使用（状態管理はbroadcast_message内で行う）
                 let event = ExecutorOutputEvent::Topic {
                     message_id: crate::message_id::MessageId::new(),
                     task_id: TaskId::new(), // 外部からのメッセージなので task_id は新規作成
