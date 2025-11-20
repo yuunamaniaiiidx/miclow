@@ -7,7 +7,6 @@ use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, PodEvent};
 use crate::replicaset::ReplicaSetId;
-use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::PodId;
@@ -23,7 +22,6 @@ pub struct PodSpawnHandler {
 pub struct PodSpawner {
     pub pod_id: PodId,
     pub replicaset_id: ReplicaSetId,
-    pub topic_manager: TopicSubscriptionRegistry,
     pub pod_name: String,
     pub userlog_sender: UserLogSender,
     pub state: PodState,
@@ -36,7 +34,6 @@ impl PodSpawner {
     pub fn new(
         pod_id: PodId,
         replicaset_id: ReplicaSetId,
-        topic_manager: TopicSubscriptionRegistry,
         pod_name: String,
         userlog_sender: UserLogSender,
         pod_event_sender: PodEventSender,
@@ -46,7 +43,6 @@ impl PodSpawner {
         Self {
             pod_id,
             replicaset_id,
-            topic_manager,
             pod_name,
             userlog_sender,
             state: PodState::default(),
@@ -69,7 +65,6 @@ impl PodSpawner {
         let pod_id: PodId = self.pod_id.clone();
         let handler_pod_id = pod_id.clone();
         let pod_name: String = self.pod_name.clone();
-        let topic_manager: TopicSubscriptionRegistry = self.topic_manager;
         let userlog_sender = self.userlog_sender.clone();
         let pod_event_sender = self.pod_event_sender.clone();
         let view_stdout = self.view_stdout;
@@ -86,7 +81,6 @@ impl PodSpawner {
         let worker_handle = tokio::task::spawn({
             let pod_id = pod_id.clone();
             let pod_name = pod_name.clone();
-            let topic_manager = topic_manager.clone();
             let userlog_sender = userlog_sender.clone();
             let pod_event_sender = pod_event_sender.clone();
             let mut topic_data_receiver = topic_data_receiver;
@@ -113,10 +107,11 @@ impl PodSpawner {
                                             task_id: _response_pod_id,
                                             topic,
                                             return_topic,
-                                            data: _,
+                                            status,
+                                            data,
                                             ..
                                         } => {
-                                            // TopicResponseとして扱う（backend側で既に変換済み）
+                                            // TopicResponseをPodEventとして上位に送信
                                             log::info!(
                                                 "TopicResponse received from pod {} for topic '{}' (return topic '{}')",
                                                 pod_id,
@@ -124,40 +119,23 @@ impl PodSpawner {
                                                 return_topic
                                             );
 
-                                            match topic_manager
-                                                .broadcast_message(event.clone())
-                                                .await
-                                            {
-                                                Ok(_) => {
-                                                    log::info!(
-                                                        "Broadcasted TopicResponse from pod {} (return topic '{}')",
-                                                        pod_id,
-                                                        return_topic
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Failed to broadcast TopicResponse from pod {} (return topic '{}'): {}",
-                                                        pod_id,
-                                                        return_topic,
-                                                        e
-                                                    );
-                                                }
-                                            }
-
-                                            if let Err(e) = pod_event_sender.send(PodEvent::PodResponse {
+                                            if let Err(e) = pod_event_sender.send(PodEvent::PodTopicResponse {
                                                 pod_id: pod_id.clone(),
                                                 message_id: message_id.clone(),
+                                                topic: topic.clone(),
+                                                return_topic: return_topic.clone(),
+                                                status: status.clone(),
+                                                data: data.clone(),
                                             }) {
                                                 log::warn!(
-                                                    "Failed to send PodResponse event for '{}': {}",
+                                                    "Failed to send PodTopicResponse event for '{}': {}",
                                                     pod_id,
                                                     e
                                                 );
                                             }
                                         }
-                                        ExecutorOutputEvent::Topic { topic, data, .. } => {
-                                            // 通常のトピックメッセージ（.resultで終わらない）
+                                        ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
+                                            // 通常のトピックメッセージをPodEventとして上位に送信
                                             log::info!(
                                                 "Message event for pod {} on topic '{}': '{}'",
                                                 pod_id,
@@ -165,23 +143,17 @@ impl PodSpawner {
                                                 data
                                             );
 
-                                            // broadcast_messageを使用（状態管理はbroadcast_message内で行う）
-                                            match topic_manager.broadcast_message(event.clone()).await {
-                                                Ok(_) => {
-                                                    log::info!(
-                                                        "Broadcasted message from pod {} on topic '{}'",
-                                                        pod_id,
-                                                        topic
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Failed to broadcast message from pod {} on topic '{}': {}",
-                                                        pod_id,
-                                                        topic,
-                                                        e
-                                                    );
-                                                }
+                                            if let Err(e) = pod_event_sender.send(PodEvent::PodTopic {
+                                                pod_id: pod_id.clone(),
+                                                message_id: message_id.clone(),
+                                                topic: topic.clone(),
+                                                data: data.clone(),
+                                            }) {
+                                                log::warn!(
+                                                    "Failed to send PodTopic event for '{}': {}",
+                                                    pod_id,
+                                                    e
+                                                );
                                             }
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {

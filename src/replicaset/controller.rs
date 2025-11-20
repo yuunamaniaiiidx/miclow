@@ -111,7 +111,7 @@ impl ReplicaSetWorker {
         Self::register_topic_subscriptions(
             &replicaset_id,
             &subscribe_topics,
-            topic_manager,
+            &topic_manager,
             replicaset_subscription_sender.clone(),
         )
         .await;
@@ -238,7 +238,54 @@ impl ReplicaSetWorker {
                                 );
                             }
                         }
-                        Some(PodEvent::PodResponse { pod_id, .. }) => {
+                        Some(PodEvent::PodTopicResponse {
+                            pod_id,
+                            message_id,
+                            topic,
+                            return_topic,
+                            status,
+                            data,
+                        }) => {
+                            log::info!(
+                                "ReplicaSet {} received TopicResponse from pod {} for topic '{}' (return topic '{}')",
+                                replicaset_id,
+                                pod_id,
+                                topic,
+                                return_topic
+                            );
+
+                            // ExecutorOutputEventに変換してbroadcast
+                            let executor_event = ExecutorOutputEvent::TopicResponse {
+                                message_id,
+                                task_id: pod_id.clone(),
+                                to_task_id: None,
+                                status,
+                                topic,
+                                return_topic: return_topic.clone(),
+                                data,
+                            };
+
+                            match topic_manager.broadcast_message(executor_event.clone()).await {
+                                Ok(_) => {
+                                    log::info!(
+                                        "ReplicaSet {} broadcasted TopicResponse from pod {} (return topic '{}')",
+                                        replicaset_id,
+                                        pod_id,
+                                        return_topic
+                                    );
+                                }
+                                Err(e) => {
+                                    log::error!(
+                                        "ReplicaSet {} failed to broadcast TopicResponse from pod {} (return topic '{}'): {}",
+                                        replicaset_id,
+                                        pod_id,
+                                        return_topic,
+                                        e
+                                    );
+                                }
+                            }
+
+                            // PodResponseイベントも送信（状態管理用）
                             if let Some(pod) = pods.get_mut(&pod_id) {
                                 if pod.state != PodState::Idle {
                                     pod.state = PodState::Idle;
@@ -251,12 +298,48 @@ impl ReplicaSetWorker {
                                         &mut idle_pod_count,
                                     );
                                 }
-                            } else {
-                                log::warn!(
-                                    "ReplicaSet {} received response for unknown pod {}",
-                                    replicaset_id,
-                                    pod_id
-                                );
+                            }
+                        }
+                        Some(PodEvent::PodTopic {
+                            pod_id,
+                            message_id,
+                            topic,
+                            data,
+                        }) => {
+                            log::info!(
+                                "ReplicaSet {} received Topic message from pod {} on topic '{}': '{}'",
+                                replicaset_id,
+                                pod_id,
+                                topic,
+                                data
+                            );
+
+                            // ExecutorOutputEventに変換してbroadcast
+                            let executor_event = ExecutorOutputEvent::Topic {
+                                message_id,
+                                task_id: pod_id.clone(),
+                                topic: topic.clone(),
+                                data,
+                            };
+
+                            match topic_manager.broadcast_message(executor_event.clone()).await {
+                                Ok(_) => {
+                                    log::info!(
+                                        "ReplicaSet {} broadcasted message from pod {} on topic '{}'",
+                                        replicaset_id,
+                                        pod_id,
+                                        topic
+                                    );
+                                }
+                                Err(e) => {
+                                    log::error!(
+                                        "ReplicaSet {} failed to broadcast message from pod {} on topic '{}': {}",
+                                        replicaset_id,
+                                        pod_id,
+                                        topic,
+                                        e
+                                    );
+                                }
                             }
                         }
                         None => {
@@ -293,7 +376,6 @@ impl ReplicaSetWorker {
         let spawner = PodSpawner::new(
             pod_id.clone(),
             replicaset_id.clone(),
-            start_context.topic_manager.clone(),
             instance_name.clone(),
             start_context.userlog_sender.clone(),
             pod_event_sender,
@@ -319,7 +401,7 @@ impl ReplicaSetWorker {
     async fn register_topic_subscriptions(
         replicaset_id: &ReplicaSetId,
         topics: &[String],
-        topic_manager: TopicSubscriptionRegistry,
+        topic_manager: &TopicSubscriptionRegistry,
         sender: ExecutorOutputEventSender,
     ) {
         if topics.is_empty() {
