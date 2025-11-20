@@ -3,7 +3,7 @@ import time
 
 TOPIC = "demo.topic"
 TOTAL_MESSAGES = 5
-DELAY_SEC = 0.5
+DELAY_SEC = 2
 
 
 for idx in range(1, TOTAL_MESSAGES + 1):

@@ -123,6 +123,7 @@ impl ReplicaSetWorker {
         let mut pods: HashMap<PodId, ManagedPod> = HashMap::new();
         let mut pod_router = PodRouter::default();
         let mut pending_events: VecDeque<ExecutorOutputEvent> = VecDeque::new();
+        let mut idle_pod_count: usize = 0;
         let target_instances = desired_instances;
 
         loop {
@@ -148,12 +149,14 @@ impl ReplicaSetWorker {
                         let handle_id = handle.handler.pod_id.clone();
                         log::info!("ReplicaSet {} spawned pod {}", replicaset_id, handle_id);
                         pod_router.add(handle_id.clone());
+                        idle_pod_count += 1;
                         pods.insert(handle_id, handle);
                         Self::drain_pending_events(
                             &replicaset_id,
                             &mut pods,
                             &mut pod_router,
                             &mut pending_events,
+                            &mut idle_pod_count,
                         );
                     }
                     Err(err) => {
@@ -189,14 +192,19 @@ impl ReplicaSetWorker {
                 topic_event = topic_receiver.recv() => {
                     match topic_event {
                         Some(event) => {
-                            pending_events.push_back(event);
-                            if Self::has_idle_pod(&pods) {
-                                Self::drain_pending_events(
+                            if idle_pod_count > 0 {
+                                match Self::route_topic_event(
                                     &replicaset_id,
                                     &mut pods,
                                     &mut pod_router,
-                                    &mut pending_events,
-                                );
+                                    &mut idle_pod_count,
+                                    event,
+                                ) {
+                                    RouteStatus::Pending(event) => pending_events.push_back(event),
+                                    RouteStatus::Delivered | RouteStatus::Dropped => {}
+                                }
+                            } else {
+                                pending_events.push_back(event);
                             }
                         }
                         None => {
@@ -216,6 +224,9 @@ impl ReplicaSetWorker {
                                     replicaset_id,
                                     pod_id
                                 );
+                                if handle.state == PodState::Idle {
+                                    idle_pod_count = idle_pod_count.saturating_sub(1);
+                                }
                                 pod_router.remove(&pod_id);
                                 handle.handler.worker_handle.await.ok();
                             } else {
@@ -228,13 +239,17 @@ impl ReplicaSetWorker {
                         }
                         Some(PodEvent::PodResponse { pod_id, .. }) => {
                             if let Some(pod) = pods.get_mut(&pod_id) {
-                                pod.state = PodState::Idle;
-                                Self::drain_pending_events(
-                                    &replicaset_id,
-                                    &mut pods,
-                                    &mut pod_router,
-                                    &mut pending_events,
-                                );
+                                if pod.state != PodState::Idle {
+                                    pod.state = PodState::Idle;
+                                    idle_pod_count += 1;
+                                    Self::drain_pending_events(
+                                        &replicaset_id,
+                                        &mut pods,
+                                        &mut pod_router,
+                                        &mut pending_events,
+                                        &mut idle_pod_count,
+                                    );
+                                }
                             } else {
                                 log::warn!(
                                     "ReplicaSet {} received response for unknown pod {}",
@@ -331,9 +346,14 @@ impl ReplicaSetWorker {
         pods: &mut HashMap<PodId, ManagedPod>,
         router: &mut PodRouter,
         pending_events: &mut VecDeque<ExecutorOutputEvent>,
+        idle_pod_count: &mut usize,
     ) {
-        while let Some(event) = pending_events.pop_front() {
-            match Self::route_topic_event(replicaset_id, pods, router, event) {
+        while *idle_pod_count > 0 {
+            let Some(event) = pending_events.pop_front() else {
+                break;
+            };
+
+            match Self::route_topic_event(replicaset_id, pods, router, idle_pod_count, event) {
                 RouteStatus::Delivered | RouteStatus::Dropped => continue,
                 RouteStatus::Pending(event) => {
                     pending_events.push_front(event);
@@ -347,6 +367,7 @@ impl ReplicaSetWorker {
         replicaset_id: &ReplicaSetId,
         pods: &mut HashMap<PodId, ManagedPod>,
         router: &mut PodRouter,
+        idle_pod_count: &mut usize,
         event: ExecutorOutputEvent,
     ) -> RouteStatus {
         let Some(message) = Self::convert_to_replica_message(&event) else {
@@ -357,7 +378,7 @@ impl ReplicaSetWorker {
             return RouteStatus::Dropped;
         };
 
-        if pods.is_empty() || router.is_empty() {
+        if *idle_pod_count == 0 || pods.is_empty() || router.is_empty() {
             log::debug!(
                 "ReplicaSet {} has no pods available; queuing topic '{}'",
                 replicaset_id,
@@ -390,6 +411,7 @@ impl ReplicaSetWorker {
                     return RouteStatus::Dropped;
                 } else {
                     pod.state = PodState::Busy;
+                    *idle_pod_count = idle_pod_count.saturating_sub(1);
                     log::debug!(
                         "ReplicaSet {} routed topic '{}' to pod {}",
                         replicaset_id,
@@ -409,10 +431,6 @@ impl ReplicaSetWorker {
             topic_name
         );
         RouteStatus::Pending(event)
-    }
-
-    fn has_idle_pod(pods: &HashMap<PodId, ManagedPod>) -> bool {
-        pods.values().any(|pod| pod.state == PodState::Idle)
     }
 
     fn convert_to_replica_message(event: &ExecutorOutputEvent) -> Option<ReplicaSetTopicMessage> {
