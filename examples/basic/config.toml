@@ -4,8 +4,8 @@ task_name = "basic_sender"
 command = "uv"
 args = ["run", "sender.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
-view_stdout = true
-view_stderr = true
+view_stdout = false
+view_stderr = false
 
   [[tasks.lifecycle]]
   desired_instances = 1

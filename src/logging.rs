@@ -277,15 +277,19 @@ impl BackgroundWorker for UserLogAggregatorWorker {
                 _ = shutdown.cancelled() => { break; }
                 maybe = rx.recv() => {
                     if let Some(ev) = maybe {
-                        let base_style = colors.style_for(&ev.task_name);
+                        let task_style = colors.style_for(&ev.task_name);
                         let (kind_str, msg_style) = match ev.kind {
-                            UserLogKind::Stdout => ("stdout", base_style.clone()),
-                            UserLogKind::Stderr => ("stderr", base_style.clone().red()),
+                            UserLogKind::Stdout => ("stdout", Style::new().white()),
+                            UserLogKind::Stderr => ("stderr", Style::new().red()),
                         };
-                        let tag = base_style
+                        let tag = task_style
                             .apply_to(format!("[{} {}]", ev.task_name, kind_str))
                             .to_string();
-                        let _ = term.write_line(&format!("{} {}", tag, msg_style.apply_to(&ev.msg)));
+                        let _ = term.write_line(&format!(
+                            "{} {}",
+                            tag,
+                            msg_style.apply_to(&ev.msg)
+                        ));
                     } else {
                         break;
                     }
