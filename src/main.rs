@@ -1,7 +1,7 @@
-use miclow::config::SystemConfig;
-use miclow::miclow::MiclowSystem;
 use anyhow::Result;
 use clap::Parser;
+use miclow::config::SystemConfig;
+use miclow::miclow::MiclowSystem;
 use std::process::exit;
 
 #[derive(Parser)]

@@ -15,8 +15,6 @@ pub use executor_output_channel::{
 
 pub use shutdown_channel::{ShutdownChannel, ShutdownSender};
 
-pub use task_exit_channel::{
-    TaskExitChannel, TaskExitReceiver, TaskExitSender,
-};
+pub use task_exit_channel::{TaskExitChannel, TaskExitReceiver, TaskExitSender};
 
 pub use user_log::UserLogSender;

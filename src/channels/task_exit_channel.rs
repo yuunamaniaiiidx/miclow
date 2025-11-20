@@ -1,32 +1,34 @@
 use tokio::sync::mpsc;
 
-/// タスク終了通知の送信側（タスク名を送信）
+use crate::pod::PodId;
+
+/// タスク終了通知の送信側（PodIdを送信）
 #[derive(Clone, Debug)]
 pub struct TaskExitSender {
-    sender: mpsc::UnboundedSender<String>,
+    sender: mpsc::UnboundedSender<PodId>,
 }
 
 impl TaskExitSender {
-    pub fn new(sender: mpsc::UnboundedSender<String>) -> Self {
+    pub fn new(sender: mpsc::UnboundedSender<PodId>) -> Self {
         Self { sender }
     }
 
-    pub fn send(&self, task_name: String) -> Result<(), mpsc::error::SendError<String>> {
-        self.sender.send(task_name)
+    pub fn send(&self, pod_id: PodId) -> Result<(), mpsc::error::SendError<PodId>> {
+        self.sender.send(pod_id)
     }
 }
 
 /// タスク終了通知の受信側
 pub struct TaskExitReceiver {
-    receiver: mpsc::UnboundedReceiver<String>,
+    receiver: mpsc::UnboundedReceiver<PodId>,
 }
 
 impl TaskExitReceiver {
-    pub fn new(receiver: mpsc::UnboundedReceiver<String>) -> Self {
+    pub fn new(receiver: mpsc::UnboundedReceiver<PodId>) -> Self {
         Self { receiver }
     }
 
-    pub async fn recv(&mut self) -> Option<String> {
+    pub async fn recv(&mut self) -> Option<PodId> {
         self.receiver.recv().await
     }
 }
@@ -39,11 +41,10 @@ pub struct TaskExitChannel {
 
 impl TaskExitChannel {
     pub fn new() -> Self {
-        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        let (tx, rx) = mpsc::unbounded_channel::<PodId>();
         Self {
             sender: TaskExitSender::new(tx),
             receiver: TaskExitReceiver::new(rx),
         }
     }
 }
-

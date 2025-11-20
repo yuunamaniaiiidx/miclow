@@ -77,4 +77,3 @@ impl TopicSubscriptionRegistry {
         latest_messages.get(topic).cloned()
     }
 }
-

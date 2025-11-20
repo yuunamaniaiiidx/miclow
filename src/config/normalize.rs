@@ -1,6 +1,4 @@
-use crate::backend::{
-    get_default_view_stderr, get_default_view_stdout,
-};
+use crate::backend::{get_default_view_stderr, get_default_view_stdout};
 use crate::config::RawTaskConfig;
 use anyhow::Result;
 use toml::Value as TomlValue;

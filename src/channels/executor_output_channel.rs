@@ -1,7 +1,7 @@
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
-use crate::replicaset::ReplicaSetId;
 use crate::pod::PodId;
+use crate::replicaset::ReplicaSetId;
 use anyhow::Result;
 use tokio::sync::mpsc;
 

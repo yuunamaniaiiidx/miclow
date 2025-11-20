@@ -6,8 +6,7 @@ pub mod miclowstdio;
 pub mod spawn_result;
 
 pub use config::{
-    create_protocol_backend, get_default_view_stderr, get_default_view_stdout,
-    BackendConfigMeta,
+    create_protocol_backend, get_default_view_stderr, get_default_view_stdout, BackendConfigMeta,
 };
 pub use dispatcher::{ProtocolBackend, TaskBackend};
 pub use handle::TaskBackendHandle;

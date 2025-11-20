@@ -16,4 +16,3 @@ impl std::fmt::Display for ReplicaSetId {
         write!(f, "{}", self.0)
     }
 }
-

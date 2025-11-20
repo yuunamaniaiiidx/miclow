@@ -58,12 +58,7 @@ pub enum ExecutorOutputEvent {
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(
-        message_id: MessageId,
-        task_id: PodId,
-        topic: String,
-        data: String,
-    ) -> Self {
+    pub fn new_message(message_id: MessageId, task_id: PodId, topic: String, data: String) -> Self {
         Self::Topic {
             message_id,
             task_id,
