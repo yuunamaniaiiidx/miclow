@@ -19,7 +19,6 @@ pub fn create_topic_event(
         ExecutorOutputEvent::TopicResponse {
             message_id,
             pod_id: pod_id.clone(),
-            to_task_id: pod_id, // backend側ではpod_idをto_task_idとして使用（上位で上書きされる可能性がある）
             status: TopicResponseStatus::Unknown,
             topic: original_topic.to_string(),
             return_topic: topic,
