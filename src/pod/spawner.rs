@@ -10,6 +10,7 @@ use crate::topic_subscription_registry::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::PodId;
+use super::state::PodState;
 
 pub struct PodSpawnHandler {
     pub worker_handle: tokio::task::JoinHandle<()>,
@@ -23,6 +24,7 @@ pub struct PodSpawner {
     pub topic_manager: TopicSubscriptionRegistry,
     pub pod_name: String,
     pub userlog_sender: UserLogSender,
+    pub state: PodState,
 }
 
 impl PodSpawner {
@@ -39,7 +41,12 @@ impl PodSpawner {
             topic_manager,
             pod_name,
             userlog_sender,
+            state: PodState::default(),
         }
+    }
+
+    pub fn update_state(&mut self, next_state: PodState) {
+        self.state = next_state;
     }
 
     pub async fn spawn(
