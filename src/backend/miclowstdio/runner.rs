@@ -56,15 +56,15 @@ impl<'a> ExecutorInputEventStdio<'a> {
     }
 
     fn to_input_lines_raw(&self) -> Vec<String> {
-        if let ExecutorInputEvent::Topic { topic, data, .. } = self.event {
-            let mut lines = vec![topic.clone()];
-            let data_lines: Vec<&str> = data.lines().collect();
-            lines.push(data_lines.len().to_string());
-            lines.extend(data_lines.iter().map(|s| s.to_string()));
-            return lines;
-        }
+        let ExecutorInputEvent::Topic { topic, data, .. } = self.event else {
+            unreachable!("ExecutorInputEvent::Topic is the only supported variant");
+        };
 
-        unreachable!("ExecutorInputEvent::Topic is the only supported variant");
+        let mut lines = vec![topic.clone()];
+        let data_lines: Vec<&str> = data.lines().collect();
+        lines.push(data_lines.len().to_string());
+        lines.extend(data_lines.iter().map(|s| s.to_string()));
+        lines
     }
 }
 

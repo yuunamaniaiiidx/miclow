@@ -227,5 +227,6 @@ impl ReplicaSetWorker {
 
 fn short_pod_suffix(pod_id: &PodId) -> String {
     let id_string = pod_id.to_string();
-    id_string.chars().take(8).collect::<String>()
+    let len = id_string.len();
+    id_string[len.saturating_sub(8)..].to_string()
 }
