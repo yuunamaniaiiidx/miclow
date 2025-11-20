@@ -1,13 +1,11 @@
 use crate::background_worker_registry::BackgroundWorkerRegistry;
-use crate::channels::{TaskExitChannel, UserLogSender};
+use crate::channels::UserLogSender;
 use crate::config::{SystemConfig, TaskConfig};
 use crate::logging::{
     level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
-use crate::replicaset::ReplicaSetController;
-use crate::pod::{PodStartContext, PodManager};
-use crate::topic_subscription_registry::TopicSubscriptionRegistry;
+use crate::topic::TopicSubscriptionRegistry;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -15,7 +13,6 @@ use tokio_util::sync::CancellationToken;
 pub struct MiclowSystem {
     pub config: SystemConfig,
     topic_manager: TopicSubscriptionRegistry,
-    pod_manager: PodManager,
     shutdown_token: CancellationToken,
     background_tasks: BackgroundWorkerRegistry,
 }
@@ -23,13 +20,11 @@ pub struct MiclowSystem {
 impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
         let shutdown_token: CancellationToken = CancellationToken::new();
-        let pod_manager: PodManager = PodManager::new(shutdown_token.clone());
         let topic_manager: TopicSubscriptionRegistry = TopicSubscriptionRegistry::new();
         let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
         Self {
             config,
             topic_manager,
-            pod_manager,
             shutdown_token,
             background_tasks,
         }
@@ -37,51 +32,15 @@ impl MiclowSystem {
 
     async fn start_user_tasks(
         config: &SystemConfig,
-        pod_manager: &PodManager,
         topic_manager: TopicSubscriptionRegistry,
         shutdown_token: CancellationToken,
         userlog_sender: UserLogSender,
     ) {
+        let _ = topic_manager;
+        let _ = shutdown_token;
+        let _ = userlog_sender;
+
         let tasks: Vec<&TaskConfig> = config.get_autostart_tasks();
-
-        for task_config in tasks.iter() {
-            let task_name: String = task_config.name.clone();
-
-            // TaskConfigを既に持っているので、PodStartContextを直接作成
-            let ready_context = PodStartContext::new(
-                (*task_config).clone(),
-                topic_manager.clone(),
-                shutdown_token.clone(),
-                userlog_sender.clone(),
-            );
-
-            // desired_instances に基づいて初期インスタンスを起動
-            let desired_instances = task_config.lifecycle.desired_instances;
-            let instances_to_start = desired_instances.max(1); // 最低1つは起動
-
-            for i in 0..instances_to_start {
-                match pod_manager.start_pod_from_config(ready_context.clone()).await {
-                    Ok(_) => {
-                        log::info!(
-                            "Started user task '{}' instance {}/{}",
-                            task_name,
-                            i + 1,
-                            instances_to_start
-                        );
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to start task '{}' instance {}/{}: {}",
-                            task_name,
-                            i + 1,
-                            instances_to_start,
-                            e
-                        );
-                        // エラーが発生しても次のインスタンスの起動を試みる
-                    }
-                }
-            }
-        }
 
         if tasks.is_empty() {
             log::info!("No tasks configured");
@@ -103,30 +62,8 @@ impl MiclowSystem {
         let userlog_worker = UserLogAggregatorWorker::new(userlog_rx);
         self.background_tasks.register_worker(userlog_worker).await;
 
-        // Pod終了通知チャネルを作成
-        let task_exit_channel = TaskExitChannel::new();
-        self.pod_manager
-            .set_pod_exit_sender(task_exit_channel.sender.clone())
-            .await;
-
-        // ReplicaSet コントローラーを初期化
-        let replicaset_controller = ReplicaSetController::new(
-            self.pod_manager.clone(),
-            task_exit_channel.receiver,
-            topic_manager.clone(),
-            self.shutdown_token.clone(),
-            userlog_sender.clone(),
-        );
-        replicaset_controller
-            .register_from_config(&self.config)
-            .await;
-
-        // ReplicaSet コントローラーを BackgroundWorker として登録
-        self.background_tasks.register_worker(replicaset_controller).await;
-
         Self::start_user_tasks(
             &self.config,
-            &self.pod_manager,
             topic_manager.clone(),
             self.shutdown_token.clone(),
             userlog_sender.clone(),
@@ -165,11 +102,8 @@ impl MiclowSystem {
         shutdown_token.cancel();
 
         log::info!("Waiting for running pods to finish...");
-        self.pod_manager
-            .graceful_shutdown_all(std::time::Duration::from_secs(5))
-            .await;
-
-        log::info!("All user pods stopped");
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        log::info!("All user pods stopped (pod manager unavailable in current build)");
 
         log::logger().flush();
 

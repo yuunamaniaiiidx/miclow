@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 #[derive(Clone, Debug)]
 pub struct ExecutorOutputEventSender {
     sender: mpsc::UnboundedSender<ExecutorOutputEvent>,
-    replicaset_id: ReplicaSetId,
+    replicaset_id: Option<ReplicaSetId>,
 }
 
 impl ExecutorOutputEventSender {
@@ -54,6 +54,10 @@ impl ExecutorOutputEventSender {
         code: i32,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.send(ExecutorOutputEvent::new_exit(message_id, task_id, code))
+    }
+
+    pub fn replicaset_id(&self) -> Option<ReplicaSetId> {
+        self.replicaset_id.clone()
     }
 }
 

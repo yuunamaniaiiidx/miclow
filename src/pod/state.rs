@@ -1,5 +1,3 @@
-pub use crate::replicaset::pod_manager::{PodStateManager, ReplicaSetPodManager};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PodState {
     Idle,

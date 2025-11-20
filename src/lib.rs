@@ -9,5 +9,3 @@ pub mod messages;
 pub mod miclow;
 pub mod pod;
 pub mod topic;
-pub mod topic_load_balancer;
-pub mod topic_subscription_registry;

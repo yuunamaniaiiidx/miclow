@@ -7,7 +7,7 @@ use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::replicaset::ReplicaSetId;
-use crate::topic_subscription_registry::TopicSubscriptionRegistry;
+use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::PodId;

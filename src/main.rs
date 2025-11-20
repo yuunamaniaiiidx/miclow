@@ -1,20 +1,7 @@
-mod backend;
-mod background_worker_registry;
-mod channels;
-mod config;
-mod logging;
-mod message_id;
-mod messages;
-mod miclow;
-mod pod;
-mod replicaset;
-mod topic_load_balancer;
-mod topic_subscription_registry;
-
-use crate::config::SystemConfig;
+use miclow::config::SystemConfig;
+use miclow::miclow::MiclowSystem;
 use anyhow::Result;
 use clap::Parser;
-use miclow::MiclowSystem;
 use std::process::exit;
 
 #[derive(Parser)]

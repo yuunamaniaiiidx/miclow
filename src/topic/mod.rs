@@ -1,4 +1,5 @@
 pub mod balancer;
+pub mod topic_subscription_registry;
 
-pub use balancer::{DispatchResult, TopicLoadBalancer, TopicQueue};
+pub use topic_subscription_registry::TopicSubscriptionRegistry;
 
