@@ -1,12 +1,12 @@
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorOutputEvent, TopicResponseStatus, RESULT_TOPIC_SUFFIX};
-use crate::task_id::TaskId;
+use crate::pod::PodId;
 
 /// トピックとデータから適切な`ExecutorOutputEvent`を生成する。
 /// `.result`で終わるトピックの場合は`TopicResponse`に変換し、それ以外は通常の`Topic`として扱う。
 pub fn create_topic_event(
     message_id: MessageId,
-    task_id: TaskId,
+    task_id: PodId,
     topic: String,
     data: String,
 ) -> ExecutorOutputEvent {

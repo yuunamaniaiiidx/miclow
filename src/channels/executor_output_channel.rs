@@ -1,7 +1,7 @@
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::replicaset::ReplicaSetId;
-use crate::task_id::TaskId;
+use crate::pod::PodId;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -29,7 +29,7 @@ impl ExecutorOutputEventSender {
     pub fn send_message(
         &self,
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         key: String,
         data: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
@@ -41,7 +41,7 @@ impl ExecutorOutputEventSender {
     pub fn send_error(
         &self,
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         error: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.send(ExecutorOutputEvent::new_error(message_id, task_id, error))
@@ -50,7 +50,7 @@ impl ExecutorOutputEventSender {
     pub fn send_exit(
         &self,
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         code: i32,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.send(ExecutorOutputEvent::new_exit(message_id, task_id, code))

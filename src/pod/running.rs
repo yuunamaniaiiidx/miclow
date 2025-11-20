@@ -1,9 +1,9 @@
 use crate::channels::{ExecutorInputEventSender, ShutdownSender};
-use crate::task_id::TaskId;
+use crate::pod::PodId;
 
 #[derive(Debug)]
 pub struct RunningPod {
-    pub task_id: TaskId,
+    pub task_id: PodId,
     pub shutdown_sender: ShutdownSender,
     pub input_sender: ExecutorInputEventSender,
     pub task_handle: tokio::task::JoinHandle<()>,

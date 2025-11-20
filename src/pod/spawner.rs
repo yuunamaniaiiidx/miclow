@@ -1,66 +1,61 @@
-use crate::backend::{ProtocolBackend, SpawnBackendResult, TaskBackend};
+use crate::backend::ProtocolBackend;
 use crate::channels::{
-    ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel, UserLogSender,
+    ExecutorInputEventSender, ExecutorOutputEventChannel, ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
-use crate::task_id::TaskId;
 use crate::topic_subscription_registry::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
-use super::manager::PodManager;
+use super::pod_id::PodId;
 
 pub struct PodSpawner {
-    pub task_id: TaskId,
+    pub pod_id: PodId,
     pub topic_manager: TopicSubscriptionRegistry,
-    pub pod_manager: PodManager,
     pub pod_name: String,
     pub userlog_sender: UserLogSender,
 }
 
+pub struct PodSpawnHandler {
+    pub worker_handle: tokio::task::JoinHandle<()>,
+    pub input_sender: ExecutorInputEventSender,
+    pub shutdown_sender: ShutdownSender,
+}
+
 impl PodSpawner {
     pub fn new(
-        task_id: TaskId,
+        pod_id: PodId,
         topic_manager: TopicSubscriptionRegistry,
-        pod_manager: PodManager,
         pod_name: String,
         userlog_sender: UserLogSender,
     ) -> Self {
         Self {
             task_id,
             topic_manager,
-            pod_manager,
             pod_name,
             userlog_sender,
         }
     }
 
-    pub async fn spawn_backend(
+    pub async fn spawn(
         self,
         backend: ProtocolBackend,
         shutdown_token: CancellationToken,
         subscribe_topics: Option<Vec<String>>,
-    ) -> SpawnBackendResult {
-        let pod_id: TaskId = self.task_id.clone();
+    ) -> Result<PodSpawnHandler, String> {
+        let pod_id: PodId = self.pod_id.clone();
         let pod_name: String = self.pod_name.clone();
         let topic_manager: TopicSubscriptionRegistry = self.topic_manager;
-        let pod_manager: PodManager = self.pod_manager;
         let userlog_sender = self.userlog_sender.clone();
 
-        let mut backend_handle = match backend.spawn(pod_id.clone()).await {
-            Ok(handle) => handle,
-            Err(e) => {
+        let mut backend_handle = backend
+            .spawn(pod_id.clone())
+            .await
+            .map_err(|e| {
                 log::error!("Failed to spawn pod backend for pod {}: {}", pod_id, e);
-                let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
-                let shutdown_channel = ShutdownChannel::new();
-                return SpawnBackendResult {
-                    worker_handle: tokio::task::spawn(async {}),
-                    input_sender: input_channel.sender,
-                    shutdown_sender: shutdown_channel.sender,
-                };
-            }
-        };
+                format!("Failed to spawn backend for pod {}: {}", pod_id, e)
+            })?;
 
         let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
@@ -266,11 +261,11 @@ impl PodSpawner {
             log::info!("Pod {} completed", pod_id);
         });
 
-        SpawnBackendResult {
+        Ok(PodSpawnHandler {
             worker_handle,
             input_sender: input_sender_for_external,
             shutdown_sender: shutdown_sender_for_external,
-        }
+        })
     }
 }
 

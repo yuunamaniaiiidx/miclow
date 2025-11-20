@@ -1,10 +1,4 @@
-pub mod manager;
-pub mod running;
-pub mod spawner;
-pub mod context;
-pub mod state;
+pub mod pod_id;
 
-pub use manager::PodManager;
-pub use context::PodStartContext;
-pub use state::PodStateManager;
+pub use pod_id::PodId;
 

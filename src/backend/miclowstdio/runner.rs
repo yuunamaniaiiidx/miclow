@@ -6,7 +6,7 @@ use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, Shu
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
-use crate::task_id::TaskId;
+use crate::pod::PodId;
 use anyhow::{Error, Result};
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
@@ -76,7 +76,7 @@ impl<'a> From<&'a ExecutorInputEvent> for ExecutorInputEventStdio<'a> {
 
 pub async fn spawn_miclow_stdio_protocol(
     config: &MiclowStdIOConfig,
-    task_id: TaskId,
+    task_id: PodId,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();
     let args = config.args.clone();
@@ -145,7 +145,7 @@ pub async fn spawn_miclow_stdio_protocol(
             if view_stdout {
                 Some(
                     ExecutorOutputEvent::new_task_stdout
-                        as fn(MessageId, TaskId, String) -> ExecutorOutputEvent,
+                        as fn(MessageId, PodId, String) -> ExecutorOutputEvent,
                 )
             } else {
                 None
@@ -161,7 +161,7 @@ pub async fn spawn_miclow_stdio_protocol(
             if view_stderr {
                 Some(
                     ExecutorOutputEvent::new_task_stderr
-                        as fn(MessageId, TaskId, String) -> ExecutorOutputEvent,
+                        as fn(MessageId, PodId, String) -> ExecutorOutputEvent,
                 )
             } else {
                 None
@@ -212,7 +212,7 @@ pub async fn spawn_miclow_stdio_protocol(
 
         let event_tx_status: ExecutorOutputEventSender = event_tx_clone.clone();
         let status_cancel: CancellationToken = cancel_token.clone();
-        let task_id_status: TaskId = task_id.clone();
+        let task_id_status: PodId = task_id.clone();
         let status_worker = task::spawn(async move {
             let notify = |res: Result<std::process::ExitStatus, anyhow::Error>| {
                 let message_id = MessageId::new();
@@ -367,8 +367,8 @@ fn spawn_stream_reader<R>(
     topic_name: String,
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
-    task_id: TaskId,
-    emit_func: Option<fn(MessageId, TaskId, String) -> ExecutorOutputEvent>,
+    task_id: PodId,
+    emit_func: Option<fn(MessageId, PodId, String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,

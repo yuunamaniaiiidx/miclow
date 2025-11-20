@@ -9,7 +9,6 @@ mod miclow;
 mod pod;
 mod replicaset;
 mod topic_load_balancer;
-mod task_id;
 mod topic_subscription_registry;
 
 use crate::config::SystemConfig;

@@ -1,5 +1,5 @@
 use crate::message_id::MessageId;
-use crate::task_id::TaskId;
+use crate::pod::PodId;
 
 /// すべてのレスポンス topic が従うサフィックス。
 pub const RESULT_TOPIC_SUFFIX: &str = ".result";
@@ -22,14 +22,14 @@ impl Default for TopicResponseStatus {
 pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         topic: String,
         data: String,
     },
     TopicResponse {
         message_id: MessageId,
-        task_id: TaskId,
-        to_task_id: Option<TaskId>,
+        task_id: PodId,
+        to_task_id: Option<PodId>,
         status: TopicResponseStatus,
         topic: String,
         return_topic: String,
@@ -37,22 +37,22 @@ pub enum ExecutorOutputEvent {
     },
     Stdout {
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         data: String,
     },
     Stderr {
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         data: String,
     },
     Error {
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         error: String,
     },
     Exit {
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         exit_code: i32,
     },
 }
@@ -60,7 +60,7 @@ pub enum ExecutorOutputEvent {
 impl ExecutorOutputEvent {
     pub fn new_message(
         message_id: MessageId,
-        task_id: TaskId,
+        task_id: PodId,
         topic: String,
         data: String,
     ) -> Self {
@@ -72,7 +72,7 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_error(message_id: MessageId, task_id: TaskId, error: String) -> Self {
+    pub fn new_error(message_id: MessageId, task_id: PodId, error: String) -> Self {
         Self::Error {
             message_id,
             task_id,
@@ -80,7 +80,7 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_exit(message_id: MessageId, task_id: TaskId, exit_code: i32) -> Self {
+    pub fn new_exit(message_id: MessageId, task_id: PodId, exit_code: i32) -> Self {
         Self::Exit {
             message_id,
             task_id,
@@ -88,7 +88,7 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_task_stdout(message_id: MessageId, task_id: TaskId, data: String) -> Self {
+    pub fn new_task_stdout(message_id: MessageId, task_id: PodId, data: String) -> Self {
         Self::Stdout {
             message_id,
             task_id,
@@ -96,7 +96,7 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_task_stderr(message_id: MessageId, task_id: TaskId, data: String) -> Self {
+    pub fn new_task_stderr(message_id: MessageId, task_id: PodId, data: String) -> Self {
         Self::Stderr {
             message_id,
             task_id,
