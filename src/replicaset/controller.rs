@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use crate::channels::{
     ExecutorOutputEventChannel, ExecutorOutputEventSender, PodEventChannel, PodEventSender,
-    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicSender,
+    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicMessageKind,
+    ReplicaSetTopicSender,
 };
 use crate::messages::{ExecutorOutputEvent, PodEvent};
 use crate::pod::{PodId, PodSpawnHandler, PodSpawner, PodState};
@@ -377,6 +378,7 @@ impl ReplicaSetWorker {
             );
             return RouteStatus::Dropped;
         };
+        let requires_response = matches!(&message.kind, ReplicaSetTopicMessageKind::Topic);
 
         if *idle_pod_count == 0 || pods.is_empty() || router.is_empty() {
             log::debug!(
@@ -410,8 +412,10 @@ impl ReplicaSetWorker {
                     );
                     return RouteStatus::Dropped;
                 } else {
-                    pod.state = PodState::Busy;
-                    *idle_pod_count = idle_pod_count.saturating_sub(1);
+                    if requires_response {
+                        pod.state = PodState::Busy;
+                        *idle_pod_count = idle_pod_count.saturating_sub(1);
+                    }
                     log::debug!(
                         "ReplicaSet {} routed topic '{}' to pod {}",
                         replicaset_id,
@@ -434,10 +438,28 @@ impl ReplicaSetWorker {
     }
 
     fn convert_to_replica_message(event: &ExecutorOutputEvent) -> Option<ReplicaSetTopicMessage> {
-        let topic = event.topic()?.to_string();
-        let data = event.data()?.to_string();
-
-        Some(ReplicaSetTopicMessage { topic, data })
+        match event {
+            ExecutorOutputEvent::Topic { topic, data, .. } => Some(ReplicaSetTopicMessage {
+                topic: topic.clone(),
+                data: data.clone(),
+                kind: ReplicaSetTopicMessageKind::Topic,
+            }),
+            ExecutorOutputEvent::TopicResponse {
+                topic,
+                return_topic,
+                status,
+                data,
+                ..
+            } => Some(ReplicaSetTopicMessage {
+                topic: return_topic.clone(),
+                data: data.clone(),
+                kind: ReplicaSetTopicMessageKind::TopicResponse {
+                    status: status.clone(),
+                    original_topic: topic.clone(),
+                },
+            }),
+            _ => None,
+        }
     }
 }
 

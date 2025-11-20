@@ -14,7 +14,8 @@ pub use executor_output_channel::{
     ExecutorOutputEventChannel, ExecutorOutputEventReceiver, ExecutorOutputEventSender,
 };
 pub use replicaset_topic_channel::{
-    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicReceiver, ReplicaSetTopicSender,
+    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicMessageKind,
+    ReplicaSetTopicReceiver, ReplicaSetTopicSender,
 };
 
 pub use pod_event_channel::{PodEventChannel, PodEventReceiver, PodEventSender};

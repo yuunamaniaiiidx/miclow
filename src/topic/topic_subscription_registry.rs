@@ -43,7 +43,10 @@ impl TopicSubscriptionRegistry {
         };
         let topic_owned = topic.clone();
 
-        if matches!(event, ExecutorOutputEvent::Topic { .. }) {
+        if matches!(
+            event,
+            ExecutorOutputEvent::Topic { .. } | ExecutorOutputEvent::TopicResponse { .. }
+        ) {
             let mut latest_messages = self.latest_messages.write().await;
             latest_messages.insert(topic_owned.clone(), event.clone());
         }

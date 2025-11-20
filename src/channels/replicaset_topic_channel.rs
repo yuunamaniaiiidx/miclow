@@ -1,9 +1,20 @@
+use crate::messages::TopicResponseStatus;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ReplicaSetTopicMessage {
     pub topic: String,
     pub data: String,
+    pub kind: ReplicaSetTopicMessageKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum ReplicaSetTopicMessageKind {
+    Topic,
+    TopicResponse {
+        status: TopicResponseStatus,
+        original_topic: String,
+    },
 }
 
 #[derive(Clone)]

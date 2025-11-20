@@ -1,7 +1,7 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicReceiver, ShutdownSender,
-    UserLogSender,
+    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicMessage, ReplicaSetTopicMessageKind,
+    ReplicaSetTopicReceiver, ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
@@ -110,10 +110,10 @@ impl PodSpawner {
                                     match &event {
                                         ExecutorOutputEvent::TopicResponse {
                                             message_id,
-                                            task_id: response_pod_id,
+                                            task_id: _response_pod_id,
                                             topic,
                                             return_topic,
-                                            data,
+                                            data: _,
                                             ..
                                         } => {
                                             // TopicResponseとして扱う（backend側で既に変換済み）
@@ -124,14 +124,10 @@ impl PodSpawner {
                                                 return_topic
                                             );
 
-                                            // 配信時はExecutorOutputEvent::Topicに変換（PodSpawnerで実装）
-                                            let event_to_route = ExecutorOutputEvent::Topic {
-                                                message_id: message_id.clone(),
-                                                task_id: response_pod_id.clone(),
-                                                topic: return_topic.clone(),
-                                                data: data.clone(),
-                                            };
-                                            match topic_manager.broadcast_message(event_to_route).await {
+                                            match topic_manager
+                                                .broadcast_message(event.clone())
+                                                .await
+                                            {
                                                 Ok(_) => {
                                                     log::info!(
                                                         "Broadcasted TopicResponse from pod {} (return topic '{}')",
@@ -226,14 +222,30 @@ impl PodSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    if let Err(e) = backend_handle.input_sender.send(
-                                        ExecutorInputEvent::Topic {
+                                    let ReplicaSetTopicMessage { topic, data, kind } = topic_data;
+                                    let input_event = match kind {
+                                        ReplicaSetTopicMessageKind::Topic => {
+                                            ExecutorInputEvent::Topic {
+                                                message_id: MessageId::new(),
+                                                task_id: pod_id.clone(),
+                                                topic,
+                                                data,
+                                            }
+                                        }
+                                        ReplicaSetTopicMessageKind::TopicResponse {
+                                            status,
+                                            original_topic,
+                                        } => ExecutorInputEvent::TopicResponse {
                                             message_id: MessageId::new(),
                                             task_id: pod_id.clone(),
-                                            topic: topic_data.topic,
-                                            data: topic_data.data,
+                                            status,
+                                            topic: original_topic,
+                                            return_topic: topic,
+                                            data,
                                         },
-                                    ) {
+                                    };
+
+                                    if let Err(e) = backend_handle.input_sender.send(input_event) {
                                         log::warn!("Failed to send topic message to pod backend for pod {}: {}", pod_id, e);
                                     }
                                 },
