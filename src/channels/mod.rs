@@ -1,5 +1,6 @@
 pub mod executor_input_channel;
 pub mod executor_output_channel;
+pub mod replicaset_topic_channel;
 pub mod shutdown_channel;
 pub mod task_exit_channel;
 pub mod user_log;
@@ -11,6 +12,9 @@ pub use executor_input_channel::{
 
 pub use executor_output_channel::{
     ExecutorOutputEventChannel, ExecutorOutputEventReceiver, ExecutorOutputEventSender,
+};
+pub use replicaset_topic_channel::{
+    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicReceiver, ReplicaSetTopicSender,
 };
 
 pub use shutdown_channel::{ShutdownChannel, ShutdownSender};

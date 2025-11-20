@@ -7,7 +7,7 @@ myid = uuid.uuid4()
 
 TOPIC = "demo.topic"
 
-
-message = miclow.wait_for_topic(TOPIC)
-print(f"[receiver {myid}] {message.data}")
-time.sleep(1)
+while True:
+    message = miclow.wait_for_topic(TOPIC)
+    print(f"[receiver {myid}] {message.data}")
+    time.sleep(1)

@@ -18,13 +18,10 @@ impl RawTaskConfig {
 
         let subscribe_topics = if let Some(raw_value) = self.subscribe_topics {
             let expanded_value = expand_toml_value(&raw_value, context)?;
-            Some(
-                Vec::<String>::from_toml_value(&expanded_value).ok_or_else(|| {
-                    anyhow::anyhow!("subscribe_topics must be an array of strings")
-                })?,
-            )
+            Vec::<String>::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("subscribe_topics must be an array of strings"))?
         } else {
-            None
+            Vec::new()
         };
 
         let view_stdout = expand_bool_field(self.view_stdout, context, "view_stdout")?

@@ -16,22 +16,20 @@ impl SystemConfig {
                 ));
             }
 
-            if let Some(subscribe_topics) = &task.subscribe_topics {
-                for (topic_index, topic) in subscribe_topics.iter().enumerate() {
-                    if topic.is_empty() {
-                        return Err(anyhow::anyhow!(
-                            "Task '{}' has empty initial topic at index {}",
-                            task.name,
-                            topic_index
-                        ));
-                    }
-                    if topic.contains(' ') {
-                        return Err(anyhow::anyhow!(
-                            "Task '{}' initial topic '{}' contains spaces (not allowed)",
-                            task.name,
-                            topic
-                        ));
-                    }
+            for (topic_index, topic) in task.subscribe_topics.iter().enumerate() {
+                if topic.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "Task '{}' has empty initial topic at index {}",
+                        task.name,
+                        topic_index
+                    ));
+                }
+                if topic.contains(' ') {
+                    return Err(anyhow::anyhow!(
+                        "Task '{}' initial topic '{}' contains spaces (not allowed)",
+                        task.name,
+                        topic
+                    ));
                 }
             }
         }

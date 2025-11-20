@@ -1,6 +1,6 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, ExecutorOutputEventChannel, ShutdownSender, TaskExitSender,
+    ExecutorInputEventSender, ReplicaSetTopicReceiver, ShutdownSender, TaskExitSender,
     UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
@@ -64,7 +64,7 @@ impl PodSpawner {
         self,
         backend: ProtocolBackend,
         shutdown_token: CancellationToken,
-        subscribe_topics: Option<Vec<String>>,
+        topic_data_receiver: ReplicaSetTopicReceiver,
     ) -> Result<PodSpawnHandler, String> {
         let pod_id: PodId = self.pod_id.clone();
         let handler_pod_id = pod_id.clone();
@@ -89,41 +89,9 @@ impl PodSpawner {
             let topic_manager = topic_manager.clone();
             let userlog_sender = userlog_sender.clone();
             let pod_exit_sender = pod_exit_sender.clone();
-            let subscribe_topics = subscribe_topics.clone();
+            let mut topic_data_receiver = topic_data_receiver;
 
             async move {
-                let topic_data_channel: ExecutorOutputEventChannel =
-                    ExecutorOutputEventChannel::new();
-                let mut topic_data_receiver = topic_data_channel.receiver;
-
-                // タスクが最初のメッセージを受信できる状態になるまで少し待機してから登録
-                // これにより、タスクがwait_for_topicを呼び出す準備ができるまでメッセージ配信を遅延させる
-                if let Some(topics) = subscribe_topics {
-                    log::info!(
-                    "Waiting for pod {} to be ready before registering topic subscriptions: {:?}",
-                    pod_id,
-                    topics
-                );
-                    // タスクの初期化を待つために少し待機
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-                    log::info!(
-                        "Processing initial topic subscriptions for pod {}: {:?}",
-                        pod_id,
-                        topics
-                    );
-                    for topic in topics {
-                        topic_manager
-                            .add_subscriber(topic.clone(), topic_data_channel.sender.clone())
-                            .await;
-                        log::info!(
-                            "Added initial topic subscription for '{}' from pod {}",
-                            topic,
-                            pod_id
-                        );
-                    }
-                }
-
                 loop {
                     tokio::select! {
                         biased;
@@ -245,22 +213,15 @@ impl PodSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    if let Some(data) = topic_data.data() {
-                                        if let Some(topic_name) = topic_data.topic() {
-                                            if let Err(e) = backend_handle.input_sender.send(
-                                                ExecutorInputEvent::Topic {
-                                                    message_id: MessageId::new(),
-                                                    task_id: pod_id.clone(),
-                                                    topic: topic_name.clone(),
-                                                    data: data.clone(),
-                                                },
-                                            ) {
-                                                log::warn!("Failed to send topic message to pod backend for pod {}: {}", pod_id, e);
-                                            }
-                                        } else {
-                                            log::warn!("Topic data received without topic name for pod {}, skipping", pod_id);
-                                            continue;
-                                        }
+                                    if let Err(e) = backend_handle.input_sender.send(
+                                        ExecutorInputEvent::Topic {
+                                            message_id: MessageId::new(),
+                                            task_id: pod_id.clone(),
+                                            topic: topic_data.topic,
+                                            data: topic_data.data,
+                                        },
+                                    ) {
+                                        log::warn!("Failed to send topic message to pod backend for pod {}: {}", pod_id, e);
                                     }
                                 },
                                 None => {

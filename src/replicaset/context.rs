@@ -7,7 +7,7 @@ pub struct PodStartContext {
     pub protocol_backend: ProtocolBackend,
     pub topic_manager: TopicSubscriptionRegistry,
     pub userlog_sender: UserLogSender,
-    pub subscribe_topics: Option<Vec<String>>,
+    pub subscribe_topics: Vec<String>,
     pub view_stdout: bool,
     pub view_stderr: bool,
 }

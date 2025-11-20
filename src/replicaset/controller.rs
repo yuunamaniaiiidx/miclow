@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::channels::{TaskExitChannel, TaskExitSender};
+use crate::channels::{
+    ExecutorOutputEventChannel, ExecutorOutputEventSender, ReplicaSetTopicChannel,
+    ReplicaSetTopicMessage, ReplicaSetTopicSender, TaskExitChannel, TaskExitSender,
+};
+use crate::messages::ExecutorOutputEvent;
 use crate::pod::{PodId, PodSpawnHandler, PodSpawner};
 use crate::replicaset::context::{PodStartContext, ReplicaSetSpec};
 use crate::replicaset::ReplicaSetId;
+use crate::topic::TopicSubscriptionRegistry;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -94,12 +99,29 @@ impl ReplicaSetWorker {
             shutdown_token,
         } = self;
 
+        let subscribe_topics = start_context.subscribe_topics.clone();
+        let topic_manager = start_context.topic_manager.clone();
+
+        let ExecutorOutputEventChannel {
+            sender: replicaset_subscription_sender,
+            receiver: mut topic_receiver,
+        } = ExecutorOutputEventChannel::new();
+
+        Self::register_topic_subscriptions(
+            &replicaset_id,
+            &subscribe_topics,
+            topic_manager,
+            replicaset_subscription_sender.clone(),
+        )
+        .await;
+
         let TaskExitChannel {
             sender: exit_sender,
             receiver: mut exit_receiver,
         } = TaskExitChannel::new();
 
-        let mut pods: HashMap<PodId, PodSpawnHandler> = HashMap::new();
+        let mut pods: HashMap<PodId, ManagedPod> = HashMap::new();
+        let mut pod_router = PodRouter::default();
         let target_instances = desired_instances;
 
         loop {
@@ -122,8 +144,9 @@ impl ReplicaSetWorker {
                 .await
                 {
                     Ok(handle) => {
-                        let handle_id = handle.pod_id.clone();
+                        let handle_id = handle.handler.pod_id.clone();
                         log::info!("ReplicaSet {} spawned pod {}", replicaset_id, handle_id);
+                        pod_router.add(handle_id.clone());
                         pods.insert(handle_id, handle);
                     }
                     Err(err) => {
@@ -156,6 +179,24 @@ impl ReplicaSetWorker {
                     );
                     return Self::shutdown_pods(pods).await;
                 }
+                topic_event = topic_receiver.recv() => {
+                    match topic_event {
+                        Some(event) => {
+                            Self::route_topic_event(
+                                &replicaset_id,
+                                &mut pods,
+                                &mut pod_router,
+                                event,
+                            );
+                        }
+                        None => {
+                            log::warn!(
+                                "ReplicaSet {} topic subscription receiver closed",
+                                replicaset_id
+                            );
+                        }
+                    }
+                }
                 exit_event = exit_receiver.recv() => {
                     match exit_event {
                         Some(pod_id) => {
@@ -165,7 +206,8 @@ impl ReplicaSetWorker {
                                     replicaset_id,
                                     pod_id
                                 );
-                                handle.worker_handle.await.ok();
+                                pod_router.remove(&pod_id);
+                                handle.handler.worker_handle.await.ok();
                             } else {
                                 log::warn!(
                                     "ReplicaSet {} received exit notice for unknown pod {}",
@@ -187,10 +229,10 @@ impl ReplicaSetWorker {
         }
     }
 
-    async fn shutdown_pods(mut pods: HashMap<PodId, PodSpawnHandler>) {
+    async fn shutdown_pods(mut pods: HashMap<PodId, ManagedPod>) {
         for (_id, handle) in pods.drain() {
-            handle.shutdown_sender.shutdown().ok();
-            handle.worker_handle.await.ok();
+            handle.handler.shutdown_sender.shutdown().ok();
+            handle.handler.worker_handle.await.ok();
         }
     }
 
@@ -200,13 +242,14 @@ impl ReplicaSetWorker {
         start_context: &PodStartContext,
         exit_sender: TaskExitSender,
         shutdown_token: CancellationToken,
-    ) -> Result<PodSpawnHandler, String> {
+    ) -> Result<ManagedPod, String> {
         let pod_id = PodId::new();
         let instance_name = format!("{}-{}", task_name, short_pod_suffix(&pod_id));
+        let topic_channel = ReplicaSetTopicChannel::new();
 
         let spawner = PodSpawner::new(
             pod_id.clone(),
-            replicaset_id,
+            replicaset_id.clone(),
             start_context.topic_manager.clone(),
             instance_name.clone(),
             start_context.userlog_sender.clone(),
@@ -215,13 +258,111 @@ impl ReplicaSetWorker {
             start_context.view_stderr,
         );
 
-        spawner
+        let handler = spawner
             .spawn(
                 start_context.protocol_backend.clone(),
                 shutdown_token,
-                start_context.subscribe_topics.clone(),
+                topic_channel.receiver,
             )
-            .await
+            .await?;
+
+        Ok(ManagedPod {
+            handler,
+            topic_sender: topic_channel.sender,
+        })
+    }
+
+    async fn register_topic_subscriptions(
+        replicaset_id: &ReplicaSetId,
+        topics: &[String],
+        topic_manager: TopicSubscriptionRegistry,
+        sender: ExecutorOutputEventSender,
+    ) {
+        if topics.is_empty() {
+            log::info!(
+                "ReplicaSet {} has no topic subscriptions configured",
+                replicaset_id
+            );
+            return;
+        }
+
+        for topic in topics {
+            topic_manager
+                .add_subscriber(topic.clone(), sender.clone())
+                .await;
+            log::info!(
+                "ReplicaSet {} subscribed to topic '{}'",
+                replicaset_id,
+                topic
+            );
+        }
+    }
+
+    fn route_topic_event(
+        replicaset_id: &ReplicaSetId,
+        pods: &mut HashMap<PodId, ManagedPod>,
+        router: &mut PodRouter,
+        event: ExecutorOutputEvent,
+    ) {
+        if pods.is_empty() || router.is_empty() {
+            log::info!(
+                "ReplicaSet {} has no pods available to route topic events",
+                replicaset_id
+            );
+            return;
+        }
+
+        let Some(message) = Self::convert_to_replica_message(&event) else {
+            log::warn!(
+                "ReplicaSet {} received topic event without topic/data, skipping",
+                replicaset_id
+            );
+            return;
+        };
+
+        let topic_name = message.topic.clone();
+        let max_attempts = pods.len();
+
+        for _ in 0..max_attempts {
+            let Some(target_pod_id) = router.next_pod() else {
+                break;
+            };
+
+            if let Some(pod) = pods.get(&target_pod_id) {
+                if let Err(e) = pod.topic_sender.send(message.clone()) {
+                    log::warn!(
+                        "ReplicaSet {} failed to send topic '{}' to pod {}: {}",
+                        replicaset_id,
+                        topic_name,
+                        target_pod_id,
+                        e
+                    );
+                } else {
+                    log::debug!(
+                        "ReplicaSet {} routed topic '{}' to pod {}",
+                        replicaset_id,
+                        topic_name,
+                        target_pod_id
+                    );
+                }
+                return;
+            } else {
+                router.remove(&target_pod_id);
+            }
+        }
+
+        log::info!(
+            "ReplicaSet {} could not route topic '{}' because no pods were reachable",
+            replicaset_id,
+            topic_name
+        );
+    }
+
+    fn convert_to_replica_message(event: &ExecutorOutputEvent) -> Option<ReplicaSetTopicMessage> {
+        let topic = event.topic()?.to_string();
+        let data = event.data()?.to_string();
+
+        Some(ReplicaSetTopicMessage { topic, data })
     }
 }
 
@@ -229,4 +370,49 @@ fn short_pod_suffix(pod_id: &PodId) -> String {
     let id_string = pod_id.to_string();
     let len = id_string.len();
     id_string[len.saturating_sub(8)..].to_string()
+}
+
+struct ManagedPod {
+    handler: PodSpawnHandler,
+    topic_sender: ReplicaSetTopicSender,
+}
+
+#[derive(Default)]
+struct PodRouter {
+    order: Vec<PodId>,
+    next_index: usize,
+}
+
+impl PodRouter {
+    fn add(&mut self, pod_id: PodId) {
+        self.order.push(pod_id);
+    }
+
+    fn remove(&mut self, pod_id: &PodId) {
+        if let Some(pos) = self.order.iter().position(|id| id == pod_id) {
+            self.order.remove(pos);
+            if self.order.is_empty() {
+                self.next_index = 0;
+                return;
+            }
+            if pos < self.next_index {
+                self.next_index = self.next_index.saturating_sub(1);
+            } else if self.next_index >= self.order.len() {
+                self.next_index = 0;
+            }
+        }
+    }
+
+    fn next_pod(&mut self) -> Option<PodId> {
+        if self.order.is_empty() {
+            return None;
+        }
+        let pod_id = self.order[self.next_index].clone();
+        self.next_index = (self.next_index + 1) % self.order.len();
+        Some(pod_id)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
 }

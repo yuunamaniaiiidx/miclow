@@ -33,7 +33,7 @@ pub(crate) struct RawTaskConfig {
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
     pub name: String,
-    pub subscribe_topics: Option<Vec<String>>,
+    pub subscribe_topics: Vec<String>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -51,7 +51,7 @@ pub struct TaskConfig {
 #[derive(Debug, Clone)]
 pub struct ExpandedTaskConfig {
     pub name: String,
-    pub subscribe_topics: Option<Vec<String>>,
+    pub subscribe_topics: Vec<String>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -116,7 +116,8 @@ pub(crate) fn expand_toml_value(value: &TomlValue, context: &ExpandContext) -> R
 struct RawTaskEntry {
     task_name: String,
     protocol: String,
-    subscribe_topics: Option<Vec<String>>,
+    #[serde(default)]
+    subscribe_topics: Vec<String>,
     view_stdout: Option<bool>,
     view_stderr: Option<bool>,
     #[serde(default)]
@@ -195,12 +196,22 @@ impl RawSystemConfig {
         };
 
         // RawTaskConfigを作成
+        let subscribe_topics_value = if entry.subscribe_topics.is_empty() {
+            None
+        } else {
+            Some(TomlValue::Array(
+                entry
+                    .subscribe_topics
+                    .into_iter()
+                    .map(TomlValue::String)
+                    .collect(),
+            ))
+        };
+
         let mut task_config = RawTaskConfig {
             name: TomlValue::String(entry.task_name.clone()),
             protocol: TomlValue::String(protocol_name),
-            subscribe_topics: entry
-                .subscribe_topics
-                .map(|v| TomlValue::Array(v.into_iter().map(|s| TomlValue::String(s)).collect())),
+            subscribe_topics: subscribe_topics_value,
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
             view_stderr: entry.view_stderr.map(|v| TomlValue::Boolean(v)),
             lifecycle,
