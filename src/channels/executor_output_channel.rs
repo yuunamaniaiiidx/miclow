@@ -1,5 +1,6 @@
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
+use crate::replicaset::ReplicaSetId;
 use crate::task_id::TaskId;
 use anyhow::Result;
 use tokio::sync::mpsc;
@@ -7,11 +8,15 @@ use tokio::sync::mpsc;
 #[derive(Clone, Debug)]
 pub struct ExecutorOutputEventSender {
     sender: mpsc::UnboundedSender<ExecutorOutputEvent>,
+    replicaset_id: ReplicaSetId,
 }
 
 impl ExecutorOutputEventSender {
     pub fn new(sender: mpsc::UnboundedSender<ExecutorOutputEvent>) -> Self {
-        Self { sender }
+        Self {
+            sender,
+            replicaset_id: None,
+        }
     }
 
     pub fn send(

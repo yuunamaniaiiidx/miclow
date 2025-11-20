@@ -89,7 +89,6 @@ impl PodSpawner {
                     topic_manager
                         .add_subscriber(
                             topic.clone(),
-                            pod_id.clone(),
                             topic_data_channel.sender.clone(),
                         )
                         .await;
@@ -154,11 +153,6 @@ impl PodSpawner {
                                                     pod_id
                                                 );
                                                 pod_manager.set_pod_idle(&pod_id).await;
-                                                
-                                                // タスク名を取得してキュー処理をトリガー
-                                                if let Some(task_name) = pod_manager.get_pod_name_by_id(&pod_id).await {
-                                                    topic_manager.process_queue_for_task(&task_name).await;
-                                                }
                                             }
                                             Err(e) => {
                                                 log::error!(

@@ -8,7 +8,6 @@ use crate::logging::{
 use crate::replicaset::ReplicaSetController;
 use crate::pod::{PodStartContext, PodManager};
 use crate::topic_subscription_registry::TopicSubscriptionRegistry;
-use crate::topic_load_balancer::TopicLoadBalancer;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -25,13 +24,7 @@ impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
         let shutdown_token: CancellationToken = CancellationToken::new();
         let pod_manager: PodManager = PodManager::new(shutdown_token.clone());
-        let pod_state_manager = pod_manager.pod_state_manager().clone();
-        let load_balancer = TopicLoadBalancer::new(pod_manager.clone(), pod_state_manager);
-        let topic_manager: TopicSubscriptionRegistry = TopicSubscriptionRegistry::new(
-            pod_manager.clone(),
-            config.clone(),
-            load_balancer,
-        );
+        let topic_manager: TopicSubscriptionRegistry = TopicSubscriptionRegistry::new();
         let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
         Self {
             config,
