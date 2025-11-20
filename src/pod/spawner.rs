@@ -5,17 +5,11 @@ use crate::channels::{
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
+use crate::replicaset::ReplicaSetId;
 use crate::topic_subscription_registry::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::PodId;
-
-pub struct PodSpawner {
-    pub pod_id: PodId,
-    pub topic_manager: TopicSubscriptionRegistry,
-    pub pod_name: String,
-    pub userlog_sender: UserLogSender,
-}
 
 pub struct PodSpawnHandler {
     pub worker_handle: tokio::task::JoinHandle<()>,
@@ -23,15 +17,25 @@ pub struct PodSpawnHandler {
     pub shutdown_sender: ShutdownSender,
 }
 
+pub struct PodSpawner {
+    pub pod_id: PodId,
+    pub replicaset_id: ReplicaSetId,
+    pub topic_manager: TopicSubscriptionRegistry,
+    pub pod_name: String,
+    pub userlog_sender: UserLogSender,
+}
+
 impl PodSpawner {
     pub fn new(
         pod_id: PodId,
+        replicaset_id: ReplicaSetId,
         topic_manager: TopicSubscriptionRegistry,
         pod_name: String,
         userlog_sender: UserLogSender,
     ) -> Self {
         Self {
-            task_id,
+            pod_id,
+            replicaset_id,
             topic_manager,
             pod_name,
             userlog_sender,
