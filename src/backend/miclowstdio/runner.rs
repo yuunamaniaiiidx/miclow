@@ -1,5 +1,4 @@
 use super::buffer::{InputBufferManager, StreamOutcome};
-use super::event_helpers::create_topic_event;
 use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
@@ -391,7 +390,7 @@ where
                 let topic_name_for_outcome = topic_name_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
-                        let event = create_topic_event(
+                        let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
                             topic,
@@ -400,7 +399,7 @@ where
                         let _ = event_tx_for_outcome.send(event);
                     }
                     Ok(StreamOutcome::Plain(output)) => {
-                        let event = create_topic_event(
+                        let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
@@ -423,7 +422,7 @@ where
                             e.clone(),
                         );
                         let output = super::buffer::strip_crlf(line_content).to_string();
-                        let event = create_topic_event(
+                        let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),

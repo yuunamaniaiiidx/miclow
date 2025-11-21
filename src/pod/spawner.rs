@@ -103,7 +103,7 @@ impl PodSpawner {
 
                                     match &event {
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
-                                            // 通常のトピックメッセージをPodEventとして上位に送信
+                                            // トピックメッセージをPodEventとして上位に送信
                                             log::info!(
                                                 "Message event for pod {} on topic '{}': '{}'",
                                                 pod_id,
@@ -111,17 +111,40 @@ impl PodSpawner {
                                                 data
                                             );
 
-                                            if let Err(e) = pod_event_sender.send(PodEvent::PodTopic {
+                                            // PodTopicを送信
+                                            let pod_topic_result = pod_event_sender.send(PodEvent::PodTopic {
                                                 pod_id: pod_id.clone(),
                                                 message_id: message_id.clone(),
                                                 topic: topic.clone(),
                                                 data: data.clone(),
-                                            }) {
-                                                log::warn!(
-                                                    "Failed to send PodTopic event for '{}': {}",
+                                            });
+
+                                            // レスポンストピックの場合、PodTopicの送信が成功したらPodIdleも送信
+                                            if topic.is_result() {
+                                                if let Err(e) = pod_topic_result {
+                                                    log::warn!(
+                                                        "Failed to send PodTopic event for '{}', skipping PodIdle: {}",
                                                         pod_id,
                                                         e
                                                     );
+                                                } else {
+                                                    // PodTopicの送信が成功したので、PodIdleも送信
+                                                    if let Err(e) = pod_event_sender.send(PodEvent::PodIdle {
+                                                        pod_id: pod_id.clone(),
+                                                    }) {
+                                                        log::warn!(
+                                                            "Failed to send PodIdle event for '{}': {}",
+                                                            pod_id,
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                            } else if let Err(e) = pod_topic_result {
+                                                log::warn!(
+                                                    "Failed to send PodTopic event for '{}': {}",
+                                                    pod_id,
+                                                    e
+                                                );
                                             }
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {

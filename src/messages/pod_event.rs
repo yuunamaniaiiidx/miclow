@@ -13,4 +13,7 @@ pub enum PodEvent {
         topic: Topic,
         data: String,
     },
+    PodIdle {
+        pod_id: PodId,
+    },
 }
