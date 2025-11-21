@@ -13,12 +13,15 @@ pub struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
 
-    run_miclow(cli.config).await?;
+    if let Err(e) = run_miclow(cli.config).await {
+        eprintln!("Error: {}", e);
+        exit(1);
+    }
 
-    Ok(())
+    exit(0);
 }
 
 async fn run_miclow(config_file: String) -> Result<()> {
