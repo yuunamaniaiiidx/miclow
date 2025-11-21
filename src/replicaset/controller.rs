@@ -144,9 +144,8 @@ impl ReplicaSetWorker {
                 .await
                 {
                     Ok(handle) => {
-                        let handle_id = handle.handler.pod_id.clone();
+                        let handle_id = pod_registry.add_pod(handle);
                         log::info!("ReplicaSet {} spawned pod {}", replicaset_id, handle_id);
-                        pod_registry.add_pod(handle_id, handle);
                         Self::drain_pending_events(
                             &replicaset_id,
                             &mut pod_registry,
@@ -540,10 +539,12 @@ impl PodRegistry {
         }
     }
 
-    fn add_pod(&mut self, pod_id: PodId, pod: ManagedPod) {
+    fn add_pod(&mut self, pod: ManagedPod) -> PodId {
+        let pod_id = pod.handler.pod_id.clone();
         self.pods.insert(pod_id.clone(), pod);
-        self.router.add(pod_id);
+        self.router.add(pod_id.clone());
         self.idle_count += 1;
+        pod_id
     }
 
     fn remove_pod(&mut self, pod_id: &PodId) -> Option<ManagedPod> {
