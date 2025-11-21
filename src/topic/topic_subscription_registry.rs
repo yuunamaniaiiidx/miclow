@@ -1,13 +1,14 @@
 use crate::channels::ExecutorOutputEventSender;
 use crate::messages::ExecutorOutputEvent;
+use crate::topic::Topic;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct TopicSubscriptionRegistry {
-    topic_senders: Arc<RwLock<HashMap<String, Vec<ExecutorOutputEventSender>>>>,
-    latest_messages: Arc<RwLock<HashMap<String, ExecutorOutputEvent>>>,
+    topic_senders: Arc<RwLock<HashMap<Topic, Vec<ExecutorOutputEventSender>>>>,
+    latest_messages: Arc<RwLock<HashMap<Topic, ExecutorOutputEvent>>>,
 }
 
 impl TopicSubscriptionRegistry {
@@ -18,7 +19,8 @@ impl TopicSubscriptionRegistry {
         }
     }
 
-    pub async fn add_subscriber(&self, topic: String, sender: ExecutorOutputEventSender) {
+    pub async fn add_subscriber(&self, topic: impl Into<Topic>, sender: ExecutorOutputEventSender) {
+        let topic = topic.into();
         let replicaset_label = sender
             .replicaset_id()
             .map(|id| id.to_string())
@@ -37,18 +39,14 @@ impl TopicSubscriptionRegistry {
     }
 
     pub async fn broadcast_message(&self, event: ExecutorOutputEvent) -> Result<(), String> {
-        let topic = match event.topic() {
-            Some(topic) => topic,
+        let topic_owned = match event.topic() {
+            Some(topic) => topic.clone(),
             None => {
                 return Err("Event does not contain a topic".to_string());
             }
         };
-        let topic_owned = topic.clone();
 
-        if matches!(
-            event,
-            ExecutorOutputEvent::Topic { .. } | ExecutorOutputEvent::TopicResponse { .. }
-        ) {
+        if matches!(event, ExecutorOutputEvent::Topic { .. }) {
             let mut latest_messages = self.latest_messages.write().await;
             latest_messages.insert(topic_owned.clone(), event.clone());
         }
@@ -107,8 +105,9 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
-    pub async fn get_latest_message(&self, topic: &str) -> Option<ExecutorOutputEvent> {
+    pub async fn get_latest_message(&self, topic: impl Into<Topic>) -> Option<ExecutorOutputEvent> {
+        let topic = topic.into();
         let latest_messages = self.latest_messages.read().await;
-        latest_messages.get(topic).cloned()
+        latest_messages.get(&topic).cloned()
     }
 }

@@ -57,15 +57,12 @@ impl<'a> ExecutorInputEventStdio<'a> {
 
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
-            ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic, data),
-            ExecutorInputEvent::TopicResponse {
-                return_topic, data, ..
-            } => Self::lines_from(return_topic, data),
+            ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic.as_str(), data),
         }
     }
 
-    fn lines_from(topic: &String, data: &String) -> Vec<String> {
-        let mut lines = vec![topic.clone()];
+    fn lines_from(topic: &str, data: &String) -> Vec<String> {
+        let mut lines = vec![topic.to_string()];
         let data_lines: Vec<&str> = data.lines().collect();
         lines.push(data_lines.len().to_string());
         lines.extend(data_lines.iter().map(|s| s.to_string()));

@@ -3,8 +3,7 @@ use std::time::Duration;
 
 use crate::channels::{
     ExecutorOutputEventChannel, ExecutorOutputEventSender, PodEventChannel, PodEventSender,
-    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicMessageKind,
-    ReplicaSetTopicSender,
+    ReplicaSetTopicChannel, ReplicaSetTopicMessage, ReplicaSetTopicSender,
 };
 use crate::messages::{ExecutorOutputEvent, PodEvent};
 use crate::pod::{PodId, PodSpawnHandler, PodSpawner, PodState};
@@ -238,106 +237,103 @@ impl ReplicaSetWorker {
                                 );
                             }
                         }
-                        Some(PodEvent::PodTopicResponse {
-                            pod_id,
-                            message_id,
-                            topic,
-                            return_topic,
-                            status,
-                            data,
-                        }) => {
-                            log::info!(
-                                "ReplicaSet {} received TopicResponse from pod {} for topic '{}' (return topic '{}')",
-                                replicaset_id,
-                                pod_id,
-                                topic,
-                                return_topic
-                            );
-
-                            // 状態管理：BusyからIdleに戻す
-                            if let Some(pod) = pods.get_mut(&pod_id) {
-                                if !matches!(pod.state, PodState::Idle) {
-                                    pod.state = PodState::Idle;
-                                    idle_pod_count += 1;
-                                    Self::drain_pending_events(
-                                        &replicaset_id,
-                                        &mut pods,
-                                        &mut pod_router,
-                                        &mut pending_events,
-                                        &mut idle_pod_count,
-                                    );
-                                }
-                            }
-
-                            // TopicResponseをbroadcast
-                            let executor_event = ExecutorOutputEvent::TopicResponse {
-                                message_id,
-                                pod_id: pod_id.clone(),
-                                status,
-                                topic,
-                                return_topic: return_topic.clone(),
-                                data,
-                            };
-
-                            match topic_manager.broadcast_message(executor_event.clone()).await {
-                                Ok(_) => {
-                                    log::info!(
-                                        "ReplicaSet {} broadcasted TopicResponse from pod {} (return topic '{}')",
-                                        replicaset_id,
-                                        pod_id,
-                                        return_topic
-                                    );
-                                }
-                                Err(e) => {
-                                    log::error!(
-                                        "ReplicaSet {} failed to broadcast TopicResponse from pod {} (return topic '{}'): {}",
-                                        replicaset_id,
-                                        pod_id,
-                                        return_topic,
-                                        e
-                                    );
-                                }
-                            }
-                        }
                         Some(PodEvent::PodTopic {
                             pod_id,
                             message_id,
                             topic,
                             data,
                         }) => {
-                            log::info!(
-                                "ReplicaSet {} received Topic message from pod {} on topic '{}': '{}'",
-                                replicaset_id,
-                                pod_id,
-                                topic,
-                                data
-                            );
+                            let is_response = topic.is_result();
+                            
+                            if is_response {
+                                // レスポンストピックの場合
+                                let original_topic = topic.original().unwrap_or_else(|| topic.clone());
+                                log::info!(
+                                    "ReplicaSet {} received TopicResponse from pod {} for topic '{}' (return topic '{}')",
+                                    replicaset_id,
+                                    pod_id,
+                                    original_topic,
+                                    topic
+                                );
 
-                            // ExecutorOutputEventに変換してbroadcast
-                            let executor_event = ExecutorOutputEvent::Topic {
-                                message_id,
-                                pod_id: pod_id.clone(),
-                                topic: topic.clone(),
-                                data,
-                            };
-
-                            match topic_manager.broadcast_message(executor_event.clone()).await {
-                                Ok(_) => {
-                                    log::info!(
-                                        "ReplicaSet {} broadcasted message from pod {} on topic '{}'",
-                                        replicaset_id,
-                                        pod_id,
-                                        topic
-                                    );
+                                // 状態管理：BusyからIdleに戻す
+                                if let Some(pod) = pods.get_mut(&pod_id) {
+                                    if !matches!(pod.state, PodState::Idle) {
+                                        pod.state = PodState::Idle;
+                                        idle_pod_count += 1;
+                                        Self::drain_pending_events(
+                                            &replicaset_id,
+                                            &mut pods,
+                                            &mut pod_router,
+                                            &mut pending_events,
+                                            &mut idle_pod_count,
+                                        );
+                                    }
                                 }
-                                Err(e) => {
-                                    log::error!(
-                                        "ReplicaSet {} failed to broadcast message from pod {} on topic '{}': {}",
-                                        replicaset_id,
-                                        pod_id,
-                                        topic,
-                                        e
-                                    );
+
+                                // TopicResponseをbroadcast（ExecutorOutputEvent::Topicとして）
+                                let executor_event = ExecutorOutputEvent::Topic {
+                                    message_id,
+                                    pod_id: pod_id.clone(),
+                                    topic: topic.clone(),
+                                    data,
+                                };
+
+                                match topic_manager.broadcast_message(executor_event.clone()).await {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "ReplicaSet {} broadcasted TopicResponse from pod {} (return topic '{}')",
+                                            replicaset_id,
+                                            pod_id,
+                                            topic
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "ReplicaSet {} failed to broadcast TopicResponse from pod {} (return topic '{}'): {}",
+                                            replicaset_id,
+                                            pod_id,
+                                            topic,
+                                            e
+                                        );
+                                    }
+                                }
+                            } else {
+                                // 通常のトピックメッセージ
+                                log::info!(
+                                    "ReplicaSet {} received Topic message from pod {} on topic '{}': '{}'",
+                                    replicaset_id,
+                                    pod_id,
+                                    topic,
+                                    data
+                                );
+
+                                // ExecutorOutputEventに変換してbroadcast
+                                let executor_event = ExecutorOutputEvent::Topic {
+                                    message_id,
+                                    pod_id: pod_id.clone(),
+                                    topic: topic.clone(),
+                                    data,
+                                };
+
+                                match topic_manager.broadcast_message(executor_event.clone()).await {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "ReplicaSet {} broadcasted message from pod {} on topic '{}'",
+                                            replicaset_id,
+                                            pod_id,
+                                            topic
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "ReplicaSet {} failed to broadcast message from pod {} on topic '{}': {}",
+                                            replicaset_id,
+                                            pod_id,
+                                            topic,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -459,7 +455,8 @@ impl ReplicaSetWorker {
             );
             return RouteStatus::Dropped;
         };
-        let requires_response = matches!(&message.kind, ReplicaSetTopicMessageKind::Topic);
+        // レスポンストピックでない場合（通常のトピック）はレスポンスを要求
+        let requires_response = !message.topic.is_result();
 
         if *idle_pod_count == 0 || pods.is_empty() || router.is_empty() {
             log::debug!(
@@ -523,21 +520,6 @@ impl ReplicaSetWorker {
             ExecutorOutputEvent::Topic { topic, data, .. } => Some(ReplicaSetTopicMessage {
                 topic: topic.clone(),
                 data: data.clone(),
-                kind: ReplicaSetTopicMessageKind::Topic,
-            }),
-            ExecutorOutputEvent::TopicResponse {
-                topic,
-                return_topic,
-                status,
-                data,
-                ..
-            } => Some(ReplicaSetTopicMessage {
-                topic: return_topic.clone(),
-                data: data.clone(),
-                kind: ReplicaSetTopicMessageKind::TopicResponse {
-                    status: status.clone(),
-                    original_topic: topic.clone(),
-                },
             }),
             _ => None,
         }

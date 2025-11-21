@@ -1,7 +1,7 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicMessage, ReplicaSetTopicMessageKind,
-    ReplicaSetTopicReceiver, ShutdownSender, UserLogSender,
+    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicMessage, ReplicaSetTopicReceiver,
+    ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
@@ -102,38 +102,6 @@ impl PodSpawner {
                                     let event: ExecutorOutputEvent = event;
 
                                     match &event {
-                                        ExecutorOutputEvent::TopicResponse {
-                                            message_id,
-                                            pod_id: _response_pod_id,
-                                            topic,
-                                            return_topic,
-                                            status,
-                                            data,
-                                            ..
-                                        } => {
-                                            // TopicResponseをPodEventとして上位に送信
-                                            log::info!(
-                                                "TopicResponse received from pod {} for topic '{}' (return topic '{}')",
-                                                pod_id,
-                                                topic,
-                                                return_topic
-                                            );
-
-                                            if let Err(e) = pod_event_sender.send(PodEvent::PodTopicResponse {
-                                                pod_id: pod_id.clone(),
-                                                message_id: message_id.clone(),
-                                                topic: topic.clone(),
-                                                return_topic: return_topic.clone(),
-                                                status: status.clone(),
-                                                data: data.clone(),
-                                            }) {
-                                                log::warn!(
-                                                    "Failed to send PodTopicResponse event for '{}': {}",
-                                                    pod_id,
-                                                    e
-                                                );
-                                            }
-                                        }
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
                                             // 通常のトピックメッセージをPodEventとして上位に送信
                                             log::info!(
@@ -194,27 +162,14 @@ impl PodSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    let ReplicaSetTopicMessage { topic, data, kind } = topic_data;
-                                    let input_event = match kind {
-                                        ReplicaSetTopicMessageKind::Topic => {
-                                            ExecutorInputEvent::Topic {
-                                                message_id: MessageId::new(),
-                                                pod_id: pod_id.clone(),
-                                                topic,
-                                                data,
-                                            }
-                                        }
-                                        ReplicaSetTopicMessageKind::TopicResponse {
-                                            status,
-                                            original_topic,
-                                        } => ExecutorInputEvent::TopicResponse {
-                                            message_id: MessageId::new(),
-                                            pod_id: pod_id.clone(),
-                                            status,
-                                            topic: original_topic,
-                                            return_topic: topic,
-                                            data,
-                                        },
+                                    let ReplicaSetTopicMessage { topic, data } = topic_data;
+                                    // topic.is_result()でレスポンストピックかどうかを判定可能
+                                    // すべてのトピックメッセージをTopicとして扱う
+                                    let input_event = ExecutorInputEvent::Topic {
+                                        message_id: MessageId::new(),
+                                        pod_id: pod_id.clone(),
+                                        topic,
+                                        data,
                                     };
 
                                     if let Err(e) = backend_handle.input_sender.send(input_event) {

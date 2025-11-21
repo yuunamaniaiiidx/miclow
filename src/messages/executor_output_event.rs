@@ -1,37 +1,16 @@
 use crate::message_id::MessageId;
 use crate::pod::PodId;
+use crate::topic::Topic;
 
 /// すべてのレスポンス topic が従うサフィックス。
 pub const RESULT_TOPIC_SUFFIX: &str = ".result";
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TopicResponseStatus {
-    Success,
-    Error,
-    Unknown,
-}
-
-impl Default for TopicResponseStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
         pod_id: PodId,
-        topic: String,
-        data: String,
-    },
-    TopicResponse {
-        message_id: MessageId,
-        pod_id: PodId,
-        status: TopicResponseStatus,
-        topic: String,
-        return_topic: String,
+        topic: Topic,
         data: String,
     },
     Stdout {
@@ -57,11 +36,11 @@ pub enum ExecutorOutputEvent {
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(message_id: MessageId, pod_id: PodId, topic: String, data: String) -> Self {
+    pub fn new_message(message_id: MessageId, pod_id: PodId, topic: impl Into<Topic>, data: String) -> Self {
         Self::Topic {
             message_id,
             pod_id,
-            topic,
+            topic: topic.into(),
             data,
         }
     }
@@ -101,17 +80,15 @@ impl ExecutorOutputEvent {
     pub fn data(&self) -> Option<&String> {
         match self {
             Self::Topic { data, .. } => Some(data),
-            Self::TopicResponse { data, .. } => Some(data),
             Self::Stdout { data, .. } => Some(data),
             Self::Stderr { data, .. } => Some(data),
             _ => None,
         }
     }
 
-    pub fn topic(&self) -> Option<&String> {
+    pub fn topic(&self) -> Option<&Topic> {
         match self {
             Self::Topic { topic, .. } => Some(topic),
-            Self::TopicResponse { return_topic, .. } => Some(return_topic),
             _ => None,
         }
     }
