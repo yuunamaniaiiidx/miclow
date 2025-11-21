@@ -1,16 +1,18 @@
+use std::sync::Arc;
+
 /// すべてのレスポンス topic が従うサフィックス。
 const RESULT_TOPIC_SUFFIX: &str = ".result";
 
 /// Topic型 - トピック名を型安全に管理し、レスポンストピックを自動生成できる
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Topic {
-    name: String,
+    name: Arc<str>,
 }
 
 impl Topic {
     /// 新しいTopicを作成
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: impl Into<Arc<str>>) -> Self {
+        Self { name: name.into() }
     }
 
     /// トピック名を文字列スライスとして取得
@@ -20,7 +22,7 @@ impl Topic {
 
     /// トピック名を所有するStringとして取得
     pub fn into_string(self) -> String {
-        self.name
+        self.name.to_string()
     }
 
     /// このトピックのレスポンストピックを生成
@@ -39,7 +41,7 @@ impl Topic {
     pub fn original(&self) -> Option<Topic> {
         if self.is_result() {
             let original_name = self.name.strip_suffix(RESULT_TOPIC_SUFFIX)?;
-            Some(Topic::new(original_name.to_string()))
+            Some(Topic::new(Arc::from(original_name)))
         } else {
             None
         }
@@ -48,13 +50,13 @@ impl Topic {
 
 impl From<String> for Topic {
     fn from(s: String) -> Self {
-        Self::new(s)
+        Self::new(Arc::from(s))
     }
 }
 
 impl From<&str> for Topic {
     fn from(s: &str) -> Self {
-        Self::new(s.to_string())
+        Self::new(Arc::from(s))
     }
 }
 
