@@ -31,7 +31,6 @@ pub enum ExecutorOutputEvent {
         pod_id: PodId,
         status: TopicResponseStatus,
         topic: String,
-        return_topic: String,
         data: String,
     },
     Stdout {
@@ -111,7 +110,7 @@ impl ExecutorOutputEvent {
     pub fn topic(&self) -> Option<&String> {
         match self {
             Self::Topic { topic, .. } => Some(topic),
-            Self::TopicResponse { return_topic, .. } => Some(return_topic),
+            Self::TopicResponse { topic, .. } => Some(topic),
             _ => None,
         }
     }

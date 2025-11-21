@@ -106,24 +106,21 @@ impl PodSpawner {
                                             message_id,
                                             pod_id: _response_pod_id,
                                             topic,
-                                            return_topic,
                                             status,
                                             data,
                                             ..
                                         } => {
                                             // TopicResponseをPodEventとして上位に送信
                                             log::info!(
-                                                "TopicResponse received from pod {} for topic '{}' (return topic '{}')",
+                                                "TopicResponse received from pod {} for topic '{}'",
                                                 pod_id,
-                                                topic,
-                                                return_topic
+                                                topic
                                             );
 
                                             if let Err(e) = pod_event_sender.send(PodEvent::PodTopicResponse {
                                                 pod_id: pod_id.clone(),
                                                 message_id: message_id.clone(),
                                                 topic: topic.clone(),
-                                                return_topic: return_topic.clone(),
                                                 status: status.clone(),
                                                 data: data.clone(),
                                             }) {
@@ -212,7 +209,6 @@ impl PodSpawner {
                                             pod_id: pod_id.clone(),
                                             status,
                                             topic: original_topic,
-                                            return_topic: topic,
                                             data,
                                         },
                                     };

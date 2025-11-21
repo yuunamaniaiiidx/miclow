@@ -15,7 +15,6 @@ pub enum ExecutorInputEvent {
         pod_id: PodId,
         status: TopicResponseStatus,
         topic: String,
-        return_topic: String,
         data: String,
     },
 }

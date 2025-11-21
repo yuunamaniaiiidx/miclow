@@ -13,7 +13,7 @@ pub enum ReplicaSetTopicMessageKind {
     Topic,
     TopicResponse {
         status: TopicResponseStatus,
-        original_topic: String,
+        topic: String,
     },
 }
 

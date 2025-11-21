@@ -11,7 +11,6 @@ pub enum PodEvent {
         pod_id: PodId,
         message_id: MessageId,
         topic: String,
-        return_topic: String,
         status: TopicResponseStatus,
         data: String,
     },

@@ -21,7 +21,6 @@ pub fn create_topic_event(
             pod_id: pod_id.clone(),
             status: TopicResponseStatus::Unknown,
             topic: original_topic.to_string(),
-            return_topic: topic,
             data,
         }
     } else {

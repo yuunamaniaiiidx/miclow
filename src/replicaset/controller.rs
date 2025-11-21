@@ -242,16 +242,14 @@ impl ReplicaSetWorker {
                             pod_id,
                             message_id,
                             topic,
-                            return_topic,
                             status,
                             data,
                         }) => {
                             log::info!(
-                                "ReplicaSet {} received TopicResponse from pod {} for topic '{}' (return topic '{}')",
+                                "ReplicaSet {} received TopicResponse from pod {} for topic '{}'",
                                 replicaset_id,
                                 pod_id,
-                                topic,
-                                return_topic
+                                topic
                             );
 
                             // 状態管理：BusyからIdleに戻す
@@ -275,25 +273,22 @@ impl ReplicaSetWorker {
                                 pod_id: pod_id.clone(),
                                 status,
                                 topic,
-                                return_topic: return_topic.clone(),
                                 data,
                             };
 
                             match topic_manager.broadcast_message(executor_event.clone()).await {
                                 Ok(_) => {
                                     log::info!(
-                                        "ReplicaSet {} broadcasted TopicResponse from pod {} (return topic '{}')",
+                                        "ReplicaSet {} broadcasted TopicResponse from pod {}",
                                         replicaset_id,
-                                        pod_id,
-                                        return_topic
+                                        pod_id
                                     );
                                 }
                                 Err(e) => {
                                     log::error!(
-                                        "ReplicaSet {} failed to broadcast TopicResponse from pod {} (return topic '{}'): {}",
+                                        "ReplicaSet {} failed to broadcast TopicResponse from pod {}: {}",
                                         replicaset_id,
                                         pod_id,
-                                        return_topic,
                                         e
                                     );
                                 }
@@ -527,16 +522,15 @@ impl ReplicaSetWorker {
             }),
             ExecutorOutputEvent::TopicResponse {
                 topic,
-                return_topic,
                 status,
                 data,
                 ..
             } => Some(ReplicaSetTopicMessage {
-                topic: return_topic.clone(),
+                topic: topic.clone(),
                 data: data.clone(),
                 kind: ReplicaSetTopicMessageKind::TopicResponse {
                     status: status.clone(),
-                    original_topic: topic.clone(),
+                    topic: topic.clone(),
                 },
             }),
             _ => None,
