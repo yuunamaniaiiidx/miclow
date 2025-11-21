@@ -203,12 +203,12 @@ impl PodSpawner {
                                         }
                                         ReplicaSetTopicMessageKind::TopicResponse {
                                             status,
-                                            original_topic,
+                                            topic,
                                         } => ExecutorInputEvent::TopicResponse {
                                             message_id: MessageId::new(),
                                             pod_id: pod_id.clone(),
                                             status,
-                                            topic: original_topic,
+                                            topic,
                                             data,
                                         },
                                     };
