@@ -14,20 +14,11 @@ pub struct MiclowStdIOConfig {
     pub stderr_topic: String,
     pub view_stdout: bool,
     pub view_stderr: bool,
-    pub functions: Vec<String>,
 }
 
 impl BackendConfigMeta for MiclowStdIOConfig {
     fn protocol_name() -> &'static str {
         "MiclowStdIO"
-    }
-
-    fn force_allow_duplicate() -> bool {
-        false
-    }
-
-    fn force_auto_start() -> bool {
-        true
     }
 
     fn default_view_stdout() -> bool {
@@ -116,8 +107,6 @@ pub fn try_miclow_stdio_from_expanded_config(
         }
     }
 
-    let functions: Vec<String> = config.functions.clone();
-
     Ok(MiclowStdIOConfig {
         command,
         args,
@@ -127,6 +116,5 @@ pub fn try_miclow_stdio_from_expanded_config(
         stderr_topic,
         view_stdout,
         view_stderr,
-        functions,
     })
 }

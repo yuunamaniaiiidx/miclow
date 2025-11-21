@@ -1,20 +1,7 @@
-mod backend;
-mod background_worker_registry;
-mod channels;
-mod config;
-mod logging;
-mod message_id;
-mod messages;
-mod miclow;
-mod system_control;
-mod task_id;
-mod task_runtime;
-mod topic_broker;
-
-use crate::config::SystemConfig;
 use anyhow::Result;
 use clap::Parser;
-use miclow::MiclowSystem;
+use miclow::config::SystemConfig;
+use miclow::miclow::MiclowSystem;
 use std::process::exit;
 
 #[derive(Parser)]
@@ -40,6 +27,5 @@ async fn run_miclow(config_file: String) -> Result<()> {
     let miclow_system = MiclowSystem::new(config);
     miclow_system.start_system().await?;
 
-    exit(0);
     Ok(())
 }

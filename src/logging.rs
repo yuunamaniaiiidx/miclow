@@ -14,7 +14,7 @@ pub struct LogEvent {
     pub level: Level,
     pub target: String,
     pub msg: String,
-    pub task_id: Option<String>,
+    pub pod_id: Option<String>,
     pub task_name: Option<String>, // 追加
 }
 
@@ -41,7 +41,7 @@ impl Log for ChannelLogger {
             level: record.level(),
             target: record.target().to_string(),
             msg: format!("{}", record.args()),
-            task_id: None,
+            pod_id: None,
             task_name: None, // 追加
         });
     }
@@ -80,7 +80,7 @@ pub enum UserLogKind {
 
 #[derive(Debug, Clone)]
 pub struct UserLogEvent {
-    pub task_id: String,
+    pub pod_id: String,
     pub task_name: String,
     pub kind: UserLogKind,
     pub msg: String,
@@ -277,15 +277,19 @@ impl BackgroundWorker for UserLogAggregatorWorker {
                 _ = shutdown.cancelled() => { break; }
                 maybe = rx.recv() => {
                     if let Some(ev) = maybe {
-                        let base_style = colors.style_for(&ev.task_name);
+                        let task_style = colors.style_for(&ev.task_name);
                         let (kind_str, msg_style) = match ev.kind {
-                            UserLogKind::Stdout => ("stdout", base_style.clone()),
-                            UserLogKind::Stderr => ("stderr", base_style.clone().red()),
+                            UserLogKind::Stdout => ("stdout", Style::new().white()),
+                            UserLogKind::Stderr => ("stderr", Style::new().red()),
                         };
-                        let tag = base_style
+                        let tag = task_style
                             .apply_to(format!("[{} {}]", ev.task_name, kind_str))
                             .to_string();
-                        let _ = term.write_line(&format!("{} {}", tag, msg_style.apply_to(&ev.msg)));
+                        let _ = term.write_line(&format!(
+                            "{} {}",
+                            tag,
+                            msg_style.apply_to(&ev.msg)
+                        ));
                     } else {
                         break;
                     }

@@ -13,18 +13,20 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from enum import Enum
 
-if not os.environ.get('MICLOW_TASK_ID'):
+if not os.environ.get('MICLOW_POD_ID'):
     raise ImportError(
-        "miclow module can only be imported within miclow-managed tasks. "
+        "miclow module can only be imported within miclow-managed pods. "
         "Make sure your Python process is started by miclow."
     )
 
 __version__ = "0.1.0"
 __all__ = [
     "MiclowClient", "get_client", "send_message",
-    "subscribe_topic", "send_stdout", "send_stderr", "TopicMessage", "SystemResponse",
+    "subscribe_topic", "TopicMessage", "SystemResponse",
     "get_status", "get_latest_message",
-    "call_function", "wait_for_topic", "receive_message", "MessageType"
+    "wait_for_topic", "wait_for_response", "receive_message",
+    "MessageType",
+    "send_response", "return_topic_for"
 ]
 
 class SystemResponseType(Enum):
@@ -37,8 +39,6 @@ class MessageType(Enum):
     """Message type enumeration."""
     TOPIC = "topic"
     SYSTEM_RESPONSE = "system_response"
-    FUNCTION = "function"
-    RETURN = "return"
 
     @classmethod
     def from_topic_and_message(cls, topic: str, message: str) -> "MessageType":
@@ -54,19 +54,11 @@ class MessageType(Enum):
         """
         topic_lower = topic.lower()
 
-        # Check for specific system topics first (受信時の想定)
-        if topic_lower == "system.return":
-            return cls.RETURN
-        elif topic_lower == "system.function":
-            # 関数への入力メッセージ（FunctionMessage）は "system.function" というトピックで来る
-            return cls.FUNCTION
-        elif topic_lower.startswith("system."):
-            # system.function.{function_name} などの関数呼び出し応答は SystemResponse として扱う
+        if topic_lower.startswith("system."):
             return cls.SYSTEM_RESPONSE
-        else:
-            return cls.TOPIC
+        return cls.TOPIC
 
-    def to_message(self, topic: str, message: str) -> "TopicMessage | SystemResponse | FunctionMessage":
+    def to_message(self, topic: str, message: str) -> "TopicMessage | SystemResponse":
         """
         Convert topic and message pair to appropriate message object.
 
@@ -75,7 +67,7 @@ class MessageType(Enum):
             message: Message content
 
         Returns:
-            TopicMessage, SystemResponse, or FunctionMessage object
+            TopicMessage or SystemResponse object
 
         Raises:
             ValueError: If message type is not supported
@@ -84,12 +76,6 @@ class MessageType(Enum):
             return TopicMessage(topic, message)
         elif self == MessageType.SYSTEM_RESPONSE:
             return SystemResponse.from_message(topic, message)
-        elif self == MessageType.FUNCTION:
-            return FunctionMessage.from_message(topic, message)
-        elif self == MessageType.RETURN:
-            # ReturnMessage is treated as a TopicMessage for now
-            # since there's no ReturnMessage class in Python side
-            return TopicMessage(topic, message)
         else:
             raise ValueError(f"Unsupported message type: {self}")
 
@@ -175,30 +161,6 @@ class SystemResponse:
         """Return string representation of SystemResponse."""
         return self.__str__()
 
-class FunctionMessage:
-    """Function message."""
-
-    def __init__(
-        self,
-        data: str
-    ):
-        """Initialize FunctionMessage."""
-        self.topic = "system.function"
-        self.data = data
-
-    @classmethod
-    def from_message(cls, topic: str, message: str) -> "FunctionMessage":
-        """Create a FunctionMessage from a message."""
-        return cls(message)
-
-    def __str__(self) -> str:
-        """Return string representation of FunctionMessage."""
-        return f"FunctionMessage(data='{self.data}')"
-
-    def __repr__(self) -> str:
-        """Return string representation of FunctionMessage."""
-        return self.__str__()
-
 class Buffer:
     """
     Message buffer class.
@@ -209,7 +171,7 @@ class Buffer:
 
     def __init__(self) -> None:
         """Initialize the buffer."""
-        self.store: dict[str, TopicMessage | SystemResponse | FunctionMessage] = {}
+        self.store: dict[str, TopicMessage | SystemResponse] = {}
         self.topic_index: dict[str, deque[str]] = {}
         self.time_index: deque[str] = deque()
 
@@ -239,7 +201,7 @@ class Buffer:
         """
         uuid_key = self._generate_uuid()
         message_type = MessageType.from_topic_and_message(topic, message)
-        value: TopicMessage | SystemResponse | FunctionMessage = message_type.to_message(topic, message)
+        value: TopicMessage | SystemResponse = message_type.to_message(topic, message)
         self.store[uuid_key] = value
         if topic not in self.topic_index:
             self.topic_index[topic] = deque()
@@ -248,7 +210,7 @@ class Buffer:
 
     def wait_for_topic(
         self, topic: str
-    ) -> TopicMessage | SystemResponse | FunctionMessage | None:
+    ) -> TopicMessage | SystemResponse | None:
         """
         Retrieve a message for the specified topic from the buffer.
 
@@ -274,7 +236,7 @@ class Buffer:
 
     def get_oldest(
         self
-    ) -> TopicMessage | SystemResponse | FunctionMessage | None:
+    ) -> TopicMessage | SystemResponse | None:
         """
         Get the oldest message across all topics.
 
@@ -305,7 +267,7 @@ class MiclowClient:
 
     def __init__(self) -> None:
         """Initialize the miclow client."""
-        self.task_id: str = os.environ['MICLOW_TASK_ID']
+        self.pod_id: str = os.environ['MICLOW_POD_ID']
         self.stdin = sys.stdin
         self.stdout = sys.stdout
         self._buffer: Buffer = Buffer()
@@ -340,14 +302,14 @@ class MiclowClient:
 
         return key, value
 
-    def receive_message(self) -> TopicMessage | SystemResponse | FunctionMessage | None:
+    def receive_message(self) -> TopicMessage | SystemResponse | None:
         """
         Receive the oldest message across all topics based on arrival order.
         Returns buffered message if available, otherwise waits until received from stdin.
         Regular messages return TopicMessage objects, system responses return SystemResponse objects.
 
         Returns:
-            TopicMessage/SystemResponse/FunctionMessage, or None if no message is available
+            TopicMessage/SystemResponse, or None if no message is available
         """
         result = self._buffer.get_oldest()
         if result is not None:
@@ -356,7 +318,7 @@ class MiclowClient:
         self._internal_receive_message()
         return self._buffer.get_oldest()
 
-    def wait_for_topic(self, topic: str) -> TopicMessage | SystemResponse | FunctionMessage:
+    def wait_for_topic(self, topic: str) -> TopicMessage | SystemResponse:
         """
         Wait for and retrieve a message for the specified topic.
         Returns buffered message if available, otherwise waits until received from stdin.
@@ -366,7 +328,7 @@ class MiclowClient:
             topic: Topic name to wait for
 
         Returns:
-            TopicMessage/SystemResponse/FunctionMessage
+            TopicMessage/SystemResponse
         """
 
         message = self._buffer.wait_for_topic(topic)
@@ -379,6 +341,32 @@ class MiclowClient:
                 value = self._buffer.wait_for_topic(received_topic)
                 if value is not None:
                     return value
+
+    def wait_for_response(self, topic: str) -> TopicMessage | SystemResponse:
+        """
+        Wait for a response message on the return topic for the given topic.
+        The return topic follows the pattern: {topic}.result
+
+        This is typically used after sending a message to wait for the
+    response. Returns buffered message if available, otherwise waits
+    until received from stdin.
+
+        Args:
+            topic: The original topic name (response will be on {topic}.result)
+
+        Returns:
+            TopicMessage/SystemResponse from the return topic
+
+        Example:
+            # Send a message
+            send_message("demo.request", "Hello")
+
+            # Wait for response on "demo.request.result"
+            response = wait_for_response("demo.request")
+            print(response.data)
+        """
+        return_topic = return_topic_for(topic)
+        return self.wait_for_topic(return_topic)
 
     def subscribe_topic(self, topic: str) -> SystemResponse:
         """
@@ -461,48 +449,6 @@ class MiclowClient:
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
-    def call_function(self, function_name: str, data: str = "") -> SystemResponse:
-        """
-        Call a function defined in [[functions]] section and wait for return value.
-
-        Args:
-            function_name: The name of the function to call (must be defined in [[functions]])
-            data: Optional data to pass to the function (will be sent as input)
-
-        Returns:
-            The return value from the function (via system.return)
-
-        Raises:
-            RuntimeError: If the function call fails or no return value is received
-        """
-        function_command = f"system.function.{function_name}"
-        print(f'"{function_command}"::')
-        print(data)
-        print(f'::"{function_command}"')
-        expected_topic = f"system.function.{function_name}"
-        response = self.wait_for_topic(expected_topic)
-        if not isinstance(response, SystemResponse):
-            raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
-        if response.response_type == SystemResponseType.ERROR:
-            raise RuntimeError(f"Failed to call function '{function_name}': {response.data}")
-
-        return_message = self.wait_for_topic("system.return")
-
-        return return_message
-
-    def return_value(self, data: str) -> None:
-        """
-        Return a value to the caller.
-
-        Args:
-            data: The data to return
-        """
-        print('"system.return"::')
-        print(data)
-        print('::"system.return"')
-        sys.stdout.flush()
-
 
     @contextmanager
     def listen_to_topic(self, topic: str):
@@ -513,7 +459,7 @@ class MiclowClient:
             topic: The topic to listen to
 
         Yields:
-            Generator of TopicMessage, SystemResponse, or FunctionMessage objects
+            Generator of TopicMessage or SystemResponse objects
         """
         self.subscribe_topic(topic)
         try:
@@ -523,7 +469,7 @@ class MiclowClient:
 
     def _message_generator(
         self, target_topic: str
-    ) -> Generator[TopicMessage | SystemResponse | FunctionMessage, None, None]:
+    ) -> Generator[TopicMessage | SystemResponse, None, None]:
         """Generate messages for a specific topic."""
         while True:
             message = self.wait_for_topic(target_topic)
@@ -557,19 +503,19 @@ def unsubscribe_topic(topic: str) -> SystemResponse:
     return get_client().unsubscribe_topic(topic)
 
 
-def receive_message() -> TopicMessage | SystemResponse | FunctionMessage:
+def receive_message() -> TopicMessage | SystemResponse | None:
     """
     Receive the oldest message across all topics based on arrival order.
     Returns buffered message if available, otherwise waits until received from stdin.
     Regular messages return TopicMessage objects, system responses return SystemResponse objects.
 
     Returns:
-        TopicMessage/SystemResponse/FunctionMessage, or None if no message is available
+        TopicMessage/SystemResponse, or None if no message is available
     """
     return get_client().receive_message()
 
 
-def wait_for_topic(topic: str) -> TopicMessage | SystemResponse | FunctionMessage:
+def wait_for_topic(topic: str) -> TopicMessage | SystemResponse:
     """
     Wait for and retrieve a message for the specified topic.
     Returns buffered message if available, otherwise waits until received from stdin.
@@ -579,9 +525,35 @@ def wait_for_topic(topic: str) -> TopicMessage | SystemResponse | FunctionMessag
         topic: Topic name to wait for
 
     Returns:
-        TopicMessage/SystemResponse/FunctionMessage
+        TopicMessage/SystemResponse
     """
     return get_client().wait_for_topic(topic)
+
+
+def wait_for_response(topic: str) -> TopicMessage | SystemResponse:
+    """
+    Wait for a response message on the return topic for the given topic.
+    The return topic follows the pattern: {topic}.result
+
+    This is typically used after sending a message to wait for the response.
+    Returns buffered message if available, otherwise waits until received
+    from stdin.
+
+    Args:
+        topic: The original topic name (response will be on {topic}.result)
+
+    Returns:
+        TopicMessage/SystemResponse from the return topic
+
+    Example:
+        # Send a message
+        send_message("demo.request", "Hello")
+
+        # Wait for response on "demo.request.result"
+        response = wait_for_response("demo.request")
+        print(response.data)
+    """
+    return get_client().wait_for_response(topic)
 
 
 def get_status() -> SystemResponse:
@@ -602,28 +574,40 @@ def get_latest_message(topic: str) -> SystemResponse:
     return get_client().get_latest_message(topic)
 
 
-def call_function(function_name: str, data: str = "") -> SystemResponse:
+def return_topic_for(topic: str) -> str:
     """
-    Call a function defined in [[functions]] section and wait for return value.
+    Generate the return topic name for a given topic.
+    The return topic follows the pattern: {original_topic}.result
 
     Args:
-        function_name: The name of the function to call (must be defined in [[functions]])
-        data: Optional data to pass to the function (will be sent as input)
+        topic: The original topic name
 
     Returns:
-        The return value from the function (via system.return)
-
-    Raises:
-        RuntimeError: If the function call fails or no return value is received
+        The return topic name (e.g., "demo.topic" -> "demo.topic.result")
     """
-    return get_client().call_function(function_name, data)
+    return f"{topic}.result"
 
 
-def return_value(data: str) -> None:
+def send_response(original_topic: str, data: str) -> None:
     """
-    Return a value to the caller.
+    Send a response message to the return topic for the given topic.
+    This is a convenience function that automatically constructs the return
+    topic using the pattern: {original_topic}.result
 
     Args:
-        response: The response to return
+        original_topic: The original topic name that this response is for
+        data: The response data to send
+
+    Example:
+        # Receive a message on "demo.request"
+        message = wait_for_topic("demo.request")
+
+        # Process the message...
+        result = process(message.data)
+
+        # Send response to "demo.request.result"
+        send_response("demo.request", result)
     """
-    get_client().return_value(data)
+    return_topic = return_topic_for(original_topic)
+    send_message(return_topic, data)
+

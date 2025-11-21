@@ -3,19 +3,22 @@ use crate::messages::TopicResponseStatus;
 use crate::pod::PodId;
 
 #[derive(Clone, Debug)]
-pub enum ExecutorInputEvent {
-    Topic {
-        message_id: MessageId,
+pub enum PodEvent {
+    PodExit {
         pod_id: PodId,
-        topic: String,
-        data: String,
     },
-    TopicResponse {
-        message_id: MessageId,
+    PodTopicResponse {
         pod_id: PodId,
-        status: TopicResponseStatus,
+        message_id: MessageId,
         topic: String,
         return_topic: String,
+        status: TopicResponseStatus,
+        data: String,
+    },
+    PodTopic {
+        pod_id: PodId,
+        message_id: MessageId,
+        topic: String,
         data: String,
     },
 }
