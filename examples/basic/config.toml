@@ -6,7 +6,7 @@ args = ["run", "sender.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 view_stdout = true
 view_stderr = false
-subscribe_topics = ["demo.topic.result"]
+subscribe_topics = ["demo.topic.result", "demo.topic"]
 
   [[tasks.lifecycle]]
   desired_instances = 1

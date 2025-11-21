@@ -59,8 +59,8 @@ impl<'a> ExecutorInputEventStdio<'a> {
         match self.event {
             ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic, data),
             ExecutorInputEvent::TopicResponse {
-                topic, data, ..
-            } => Self::lines_from(topic, data),
+                return_topic, data, ..
+            } => Self::lines_from(return_topic, data),
         }
     }
 
