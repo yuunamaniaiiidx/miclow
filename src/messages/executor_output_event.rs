@@ -2,9 +2,6 @@ use crate::message_id::MessageId;
 use crate::pod::PodId;
 use crate::topic::Topic;
 
-/// すべてのレスポンス topic が従うサフィックス。
-pub const RESULT_TOPIC_SUFFIX: &str = ".result";
-
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
     Topic {

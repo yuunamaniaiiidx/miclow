@@ -1,4 +1,5 @@
-use crate::messages::RESULT_TOPIC_SUFFIX;
+/// すべてのレスポンス topic が従うサフィックス。
+const RESULT_TOPIC_SUFFIX: &str = ".result";
 
 /// Topic型 - トピック名を型安全に管理し、レスポンストピックを自動生成できる
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
