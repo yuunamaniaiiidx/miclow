@@ -7,6 +7,7 @@ use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(Clone, Debug)]
@@ -81,7 +82,7 @@ pub enum UserLogKind {
 #[derive(Debug, Clone)]
 pub struct UserLogEvent {
     pub pod_id: String,
-    pub task_name: String,
+    pub task_name: Arc<str>,
     pub kind: UserLogKind,
     pub msg: String,
 }
@@ -277,13 +278,13 @@ impl BackgroundWorker for UserLogAggregatorWorker {
                 _ = shutdown.cancelled() => { break; }
                 maybe = rx.recv() => {
                     if let Some(ev) = maybe {
-                        let task_style = colors.style_for(&ev.task_name);
+                        let task_style = colors.style_for(ev.task_name.as_ref());
                         let (kind_str, msg_style) = match ev.kind {
                             UserLogKind::Stdout => ("stdout", Style::new().white()),
                             UserLogKind::Stderr => ("stderr", Style::new().red()),
                         };
                         let tag = task_style
-                            .apply_to(format!("[{} {}]", ev.task_name, kind_str))
+                            .apply_to(format!("[{} {}]", ev.task_name.as_ref(), kind_str))
                             .to_string();
                         let _ = term.write_line(&format!(
                             "{} {}",

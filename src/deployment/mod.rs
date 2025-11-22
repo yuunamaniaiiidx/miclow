@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
@@ -9,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 pub struct DeploymentManager {
     replicaset_controller: Option<ReplicaSetController>,
     topic_manager: TopicSubscriptionRegistry,
-    deployments: HashMap<String, ReplicaSetId>,
+    deployments: HashMap<Arc<str>, ReplicaSetId>,
 }
 
 impl DeploymentManager {
@@ -52,7 +53,7 @@ impl DeploymentManager {
             log::info!(
                 "Created ReplicaSet {} for task '{}' (desired instances: {})",
                 replicaset_id,
-                task.name,
+                task.name.as_ref(),
                 task.lifecycle.desired_instances
             );
             self.deployments.insert(task.name.clone(), replicaset_id);

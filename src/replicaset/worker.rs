@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 use crate::topic::Topic;
 
@@ -17,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 pub struct ReplicaSetWorker {
     replicaset_id: ReplicaSetId,
-    task_name: String,
+    task_name: Arc<str>,
     desired_instances: u32,
     start_context: PodStartContext,
     shutdown_token: CancellationToken,
@@ -26,7 +27,7 @@ pub struct ReplicaSetWorker {
 impl ReplicaSetWorker {
     pub fn new(
         replicaset_id: ReplicaSetId,
-        task_name: String,
+        task_name: Arc<str>,
         desired_instances: u32,
         start_context: PodStartContext,
         shutdown_token: CancellationToken,
@@ -53,7 +54,7 @@ impl ReplicaSetWorker {
         let mut request_topic_to_from_replicaset: HashMap<Topic, ReplicaSetId> = HashMap::new();
 
         let subscribe_topics = start_context.subscribe_topics.clone();
-        let private_response_topics: Vec<Topic> = start_context.private_response_topics.iter().map(|s| Topic::from(s.as_str())).collect();
+        let private_response_topics: Vec<Topic> = start_context.private_response_topics.iter().map(|s| Topic::from(s.as_ref())).collect();
         let topic_manager = start_context.topic_manager.clone();
 
         let ExecutorOutputEventChannel {
@@ -70,7 +71,7 @@ impl ReplicaSetWorker {
         .await;
 
         // private_response_topicsもtopic registryに登録
-        let private_response_topics_strings: Vec<String> = start_context.private_response_topics.clone();
+        let private_response_topics_strings: Vec<Arc<str>> = start_context.private_response_topics.clone();
         Self::register_topic_subscriptions(
             &replicaset_id,
             &private_response_topics_strings,
@@ -100,7 +101,7 @@ impl ReplicaSetWorker {
 
                 match Self::spawn_pod(
                     replicaset_id.clone(),
-                    &task_name,
+                    task_name.as_ref(),
                     &start_context,
                     pod_event_sender.clone(),
                     shutdown_token.clone(),
@@ -121,7 +122,7 @@ impl ReplicaSetWorker {
                         log::error!(
                             "ReplicaSet {} failed to spawn pod for task '{}': {}",
                             replicaset_id,
-                            task_name,
+                            task_name.as_ref(),
                             err
                         );
 
@@ -328,13 +329,13 @@ impl ReplicaSetWorker {
         shutdown_token: CancellationToken,
     ) -> Result<ManagedPod, String> {
         let pod_id = PodId::new();
-        let instance_name = format!("{}-{}", task_name, short_pod_suffix(&pod_id));
+        let instance_name = Arc::from(format!("{}-{}", task_name, short_pod_suffix(&pod_id)));
         let topic_channel = ReplicaSetTopicChannel::new();
 
         let spawner = PodSpawner::new(
             pod_id.clone(),
             replicaset_id.clone(),
-            instance_name.clone(),
+            instance_name,
             start_context.userlog_sender.clone(),
             pod_event_sender,
             start_context.view_stdout,
@@ -358,7 +359,7 @@ impl ReplicaSetWorker {
 
     async fn register_topic_subscriptions(
         replicaset_id: &ReplicaSetId,
-        topics: &[String],
+        topics: &[Arc<str>],
         topic_manager: &TopicSubscriptionRegistry,
         sender: ExecutorOutputEventSender,
     ) {
@@ -372,12 +373,12 @@ impl ReplicaSetWorker {
 
         for topic in topics {
             topic_manager
-                .add_subscriber(topic.clone(), replicaset_id.clone(), sender.clone())
+                .add_subscriber(topic.as_ref(), replicaset_id.clone(), sender.clone())
                 .await;
             log::info!(
                 "ReplicaSet {} subscribed to topic '{}'",
                 replicaset_id,
-                topic
+                topic.as_ref()
             );
         }
     }

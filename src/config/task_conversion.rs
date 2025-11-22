@@ -6,6 +6,7 @@ use crate::config::{
 };
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 use toml::Value as TomlValue;
 
 impl RawTaskConfig {
@@ -13,21 +14,24 @@ impl RawTaskConfig {
     pub fn expand(self, context: &ExpandContext) -> Result<ExpandedTaskConfig> {
         // 文字列フィールドの展開
         let expanded_name = expand_toml_value(&self.name, context)?;
-        let name = String::from_toml_value(&expanded_name)
+        let name_str = String::from_toml_value(&expanded_name)
             .ok_or_else(|| anyhow::anyhow!("task_name must be a string"))?;
+        let name = Arc::from(name_str);
 
         let subscribe_topics = if let Some(raw_value) = self.subscribe_topics {
             let expanded_value = expand_toml_value(&raw_value, context)?;
-            Vec::<String>::from_toml_value(&expanded_value)
-                .ok_or_else(|| anyhow::anyhow!("subscribe_topics must be an array of strings"))?
+            let topics_vec: Vec<String> = Vec::<String>::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("subscribe_topics must be an array of strings"))?;
+            topics_vec.into_iter().map(|s| Arc::from(s)).collect()
         } else {
             Vec::new()
         };
 
         let private_response_topics = if let Some(raw_value) = self.private_response_topics {
             let expanded_value = expand_toml_value(&raw_value, context)?;
-            Vec::<String>::from_toml_value(&expanded_value)
-                .ok_or_else(|| anyhow::anyhow!("private_response_topics must be an array of strings"))?
+            let topics_vec: Vec<String> = Vec::<String>::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("private_response_topics must be an array of strings"))?;
+            topics_vec.into_iter().map(|s| Arc::from(s)).collect()
         } else {
             Vec::new()
         };

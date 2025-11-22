@@ -7,6 +7,7 @@ use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, PodEvent};
 use crate::replicaset::ReplicaSetId;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::PodId;
@@ -22,7 +23,7 @@ pub struct PodSpawnHandler {
 pub struct PodSpawner {
     pub pod_id: PodId,
     pub replicaset_id: ReplicaSetId,
-    pub pod_name: String,
+    pub pod_name: Arc<str>,
     pub userlog_sender: UserLogSender,
     pub state: PodState,
     pub pod_event_sender: PodEventSender,
@@ -34,7 +35,7 @@ impl PodSpawner {
     pub fn new(
         pod_id: PodId,
         replicaset_id: ReplicaSetId,
-        pod_name: String,
+        pod_name: Arc<str>,
         userlog_sender: UserLogSender,
         pod_event_sender: PodEventSender,
         view_stdout: bool,
@@ -64,7 +65,7 @@ impl PodSpawner {
     ) -> Result<PodSpawnHandler, String> {
         let pod_id: PodId = self.pod_id.clone();
         let handler_pod_id = pod_id.clone();
-        let pod_name: String = self.pod_name.clone();
+        let pod_name: Arc<str> = self.pod_name.clone();
         let replicaset_id = self.replicaset_id.clone();
         let userlog_sender = self.userlog_sender.clone();
         let pod_event_sender = self.pod_event_sender.clone();
