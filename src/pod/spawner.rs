@@ -125,10 +125,7 @@ impl PodSpawner {
                                                         pod_id
                                                     );
                                                 }
-                                                // system.Idleの場合はPodTopicを送信しない（処理を終了）
                                             } else {
-                                                // その他のトピックは通常通り処理
-                                                // トピックメッセージをPodEventとして上位に送信
                                                 log::info!(
                                                     "Message event for pod {} on topic '{}': '{}'",
                                                     pod_id,
@@ -144,27 +141,7 @@ impl PodSpawner {
                                                     data: data.clone(),
                                                 });
 
-                                                // レスポンストピックの場合、PodTopicの送信が成功したらPodIdleも送信
-                                                if topic.is_result() {
-                                                    if let Err(e) = pod_topic_result {
-                                                        log::warn!(
-                                                            "Failed to send PodTopic event for '{}', skipping PodIdle: {}",
-                                                            pod_id,
-                                                            e
-                                                        );
-                                                    } else {
-                                                        // PodTopicの送信が成功したので、PodIdleも送信
-                                                        if let Err(e) = pod_event_sender.send(PodEvent::PodIdle {
-                                                            pod_id: pod_id.clone(),
-                                                        }) {
-                                                            log::warn!(
-                                                                "Failed to send PodIdle event for '{}': {}",
-                                                                pod_id,
-                                                                e
-                                                            );
-                                                        }
-                                                    }
-                                                } else if let Err(e) = pod_topic_result {
+                                                if let Err(e) = pod_topic_result {
                                                     log::warn!(
                                                         "Failed to send PodTopic event for '{}': {}",
                                                         pod_id,
