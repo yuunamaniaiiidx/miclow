@@ -1,8 +1,10 @@
 import miclow
 
 for i in range(5):
-    print(f"Dynamic Subscriber: Subscribing to 'topic{i}'")
-    response1 = miclow.subscribe(f"topic{i}")
-    print(response1)
+    print('"system.subscribe-topic": ', "topic" + str(i))
+    print('"system.subscribe-topic.result": "dummy"')
+    message = (miclow.receive())
+    print(message)
 
-print(miclow.receive())
+while True:
+    print(miclow.receive())

@@ -374,66 +374,6 @@ class MiclowClient:
         return_topic = response_topic(topic)
         return self.receive(return_topic)
 
-    def subscribe(self, topic: str) -> SystemResponse:
-        """
-        Subscribe to a topic.
-
-        Args:
-            topic: The topic name to subscribe to
-
-        Returns:
-            SystemResponse with the result
-        """
-        print('"system.subscribe-topic"::')
-        print(topic)
-        print('::"system.subscribe-topic"')
-        sys.stdout.flush()
-
-        expected_topic = "system.subscribe-topic"
-        response = self.receive(expected_topic)
-        if isinstance(response, SystemResponse):
-            return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
-    def unsubscribe(self, topic: str) -> SystemResponse:
-        """
-        Unsubscribe from a topic.
-
-        Args:
-            topic: The topic name to unsubscribe from
-
-        Returns:
-            SystemResponse with the result
-        """
-        print('"system.unsubscribe-topic"::')
-        print(topic)
-        print('::"system.unsubscribe-topic"')
-        sys.stdout.flush()
-
-        expected_topic = "system.unsubscribe-topic"
-        response = self.receive(expected_topic)
-        if isinstance(response, SystemResponse):
-            return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
-    def get_status(self) -> SystemResponse:
-        """
-        Get the system status.
-
-        Returns:
-            SystemResponse with the status data
-        """
-        print('"system.status"::')
-        print('')
-        print('::"system.status"')
-        sys.stdout.flush()
-
-        expected_topic = "system.status"
-        response = self.receive(expected_topic)
-        if isinstance(response, SystemResponse):
-            return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
     def pull(self, topic: str) -> SystemResponse:
         """
         Pull the latest message for a topic.
@@ -449,29 +389,10 @@ class MiclowClient:
         print('::"system.pull"')
         sys.stdout.flush()
 
-        expected_topic = "system.pull"
-        response = self.receive(expected_topic)
+        response = self.receive_response("system.pull")
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
-
-
-    @contextmanager
-    def listen_to_topic(self, topic: str):
-        """
-        Context manager for listening to a specific topic.
-
-        Args:
-            topic: The topic to listen to
-
-        Yields:
-            Generator of TopicMessage or SystemResponse objects
-        """
-        self.subscribe(topic)
-        try:
-            yield self._message_generator(topic)
-        finally:
-            self.unsubscribe(topic)
 
     def _message_generator(
         self, target_topic: str

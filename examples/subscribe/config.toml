@@ -31,7 +31,7 @@ args = ["run", "dynamic_subscriber.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 view_stdout = true
 view_stderr = true
-subscribe_topics = ["system.subscribe"]
+subscribe_topics = ["system.subscribe-topic"]
 
 [[tasks.lifecycle]]
 desired_instances = 1

@@ -152,18 +152,19 @@ impl TopicSubscriptionRegistry {
     ) -> Result<(), String> {
         let from_replicaset_id = event.from_replicaset_id().cloned();
 
-        // レスポンスを送信
+        // レスポンスを送信（topic.resultトピックで）
+        let response_topic = topic.result();
         let response_event = ExecutorOutputEvent::Topic {
             message_id: MessageId::new(),
             pod_id: PodId::new(),
             from_replicaset_id: ReplicaSetId::new(),
             to_replicaset_id: from_replicaset_id,
-            topic: topic.clone(),
+            topic: response_topic.clone(),
             data: Arc::from("Unknown Command".to_string()),
         };
 
         // レスポンスを直接送信（broadcast_messageを再帰的に呼ばない）
-        self.send_to_topic_subscribers(topic, response_event).await;
+        self.send_to_topic_subscribers(&response_topic, response_event).await;
 
         Ok(())
     }
@@ -194,18 +195,19 @@ impl TopicSubscriptionRegistry {
             format!("error\nNo message found for topic '{}'", target_topic_str)
         };
 
-        // レスポンスを送信（system.pullトピックで）
+        // レスポンスを送信（system.pull.resultトピックで）
+        let response_topic = Topic::from("system.pull").result();
         let response_event = ExecutorOutputEvent::Topic {
             message_id: MessageId::new(),
             pod_id: PodId::new(),
             from_replicaset_id: ReplicaSetId::new(),
             to_replicaset_id: from_replicaset_id,
-            topic: Topic::from("system.pull"),
+            topic: response_topic.clone(),
             data: Arc::from(response_data),
         };
 
         // レスポンスを直接送信（broadcast_messageを再帰的に呼ばない）
-        self.send_to_topic_subscribers(&Topic::from("system.pull"), response_event).await;
+        self.send_to_topic_subscribers(&response_topic, response_event).await;
 
         Ok(())
     }

@@ -1,5 +1,8 @@
 import miclow
+import time
 
-print("pull message...")
+while True:
+    print("pull message...")
 
-print(miclow.pull("apply"))
+    print(miclow.pull("apply"))
+    time.sleep(1)
