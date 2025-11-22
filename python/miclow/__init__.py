@@ -389,7 +389,7 @@ class MiclowClient:
         print('::"system.pull"')
         sys.stdout.flush()
 
-        response = self.receive_response("system.pull")
+        response = self.receive("system.pull")
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")

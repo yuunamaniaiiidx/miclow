@@ -456,9 +456,8 @@ impl ReplicaSetWorker {
                     );
                     return RouteStatus::Dropped;
                 } else {
-                    if requires_response {
-                        pod_registry.set_pod_busy(&target_pod_id);
-                    }
+                    // メッセージをpodに送信したら、.resultトピックかどうかに関わらず常にBusyに遷移
+                    pod_registry.set_pod_busy(&target_pod_id);
                     log::debug!(
                         "ReplicaSet {} routed topic '{}' to pod {}",
                         replicaset_id,

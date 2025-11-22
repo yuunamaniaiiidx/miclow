@@ -105,7 +105,7 @@ impl PodSpawner {
                                     match &event {
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
                                             // system.Idleトピックの場合は、PodEvent::PodIdleを直接送信
-                                            if topic.as_str() == "system.Idle" {
+                                            if topic.as_str().to_lowercase() == "system.idle" {
                                                 log::info!(
                                                     "Pod {} received system.Idle topic, sending PodIdle event",
                                                     pod_id

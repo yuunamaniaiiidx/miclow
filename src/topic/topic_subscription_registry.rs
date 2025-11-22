@@ -138,7 +138,7 @@ impl TopicSubscriptionRegistry {
         topic: &Topic,
         event: ExecutorOutputEvent,
     ) -> Result<(), String> {
-        match topic.as_str() {
+        match topic.as_str().to_lowercase().as_str() {
             "system.pull" => self.handle_pull_command(event).await,
             _ => self.handle_unknown_command(topic, event).await,
         }
@@ -195,8 +195,8 @@ impl TopicSubscriptionRegistry {
             format!("error\nNo message found for topic '{}'", target_topic_str)
         };
 
-        // レスポンスを送信（system.pull.resultトピックで）
-        let response_topic = Topic::from("system.pull").result();
+        // レスポンスを送信（system.pullトピックで）
+        let response_topic = Topic::from("system.pull");
         let response_event = ExecutorOutputEvent::Topic {
             message_id: MessageId::new(),
             pod_id: PodId::new(),
@@ -228,7 +228,14 @@ impl TopicSubscriptionRegistry {
             let senders = self.senders.read().await;
             for replicaset_id in replicaset_ids.iter() {
                 if let Some(sender) = senders.get(replicaset_id) {
-                    let _ = sender.send(event.clone());
+                    if let Err(e) = sender.send(event.clone()) {
+                        log::warn!(
+                            "Failed to send message on topic '{}' to ReplicaSet {}: {}",
+                            topic,
+                            replicaset_id,
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -243,6 +250,6 @@ impl TopicSubscriptionRegistry {
     /// システムトピックかどうかを判定
     /// `system.*` プレフィックスで判定
     fn is_system_topic(&self, topic: &Topic) -> bool {
-        topic.as_str().starts_with("system.")
+        topic.as_str().to_lowercase().starts_with("system.")
     }
 }
