@@ -8,14 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// システムデータを生成する関数の型
-pub type SystemDataProvider = Arc<dyn Fn(&Topic) -> Option<String> + Send + Sync>;
-
 #[derive(Clone)]
 pub struct TopicSubscriptionRegistry {
     topic_senders: Arc<RwLock<HashMap<Topic, Vec<ExecutorOutputEventSender>>>>,
     latest_messages: Arc<RwLock<HashMap<Topic, ExecutorOutputEvent>>>,
-    system_data_provider: Option<SystemDataProvider>,
 }
 
 impl TopicSubscriptionRegistry {
@@ -23,15 +19,7 @@ impl TopicSubscriptionRegistry {
         Self {
             topic_senders: Arc::new(RwLock::new(HashMap::new())),
             latest_messages: Arc::new(RwLock::new(HashMap::new())),
-            system_data_provider: None,
         }
-    }
-
-    /// システムデータプロバイダーを設定（オプション）
-    /// 設定されていない場合はデフォルトの実装を使用
-    pub fn with_system_data_provider(mut self, provider: SystemDataProvider) -> Self {
-        self.system_data_provider = Some(provider);
-        self
     }
 
     pub async fn add_subscriber(
@@ -61,8 +49,8 @@ impl TopicSubscriptionRegistry {
         };
 
         // システムコマンドの処理
-        if topic_owned.as_str() == "system.pull" {
-            return self.handle_pull_command(event).await;
+        if self.is_system_topic(&topic_owned) {
+            return self.handle_system_command(&topic_owned, event).await;
         }
 
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {
@@ -119,6 +107,42 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
+    /// システムコマンドを処理
+    async fn handle_system_command(
+        &self,
+        topic: &Topic,
+        event: ExecutorOutputEvent,
+    ) -> Result<(), String> {
+        match topic.as_str() {
+            "system.pull" => self.handle_pull_command(event).await,
+            _ => self.handle_unknown_command(topic, event).await,
+        }
+    }
+
+    /// 不明なシステムコマンドを処理
+    async fn handle_unknown_command(
+        &self,
+        topic: &Topic,
+        event: ExecutorOutputEvent,
+    ) -> Result<(), String> {
+        let from_replicaset_id = event.from_replicaset_id().cloned();
+
+        // レスポンスを送信
+        let response_event = ExecutorOutputEvent::Topic {
+            message_id: MessageId::new(),
+            pod_id: PodId::new(),
+            from_replicaset_id: ReplicaSetId::new(),
+            to_replicaset_id: from_replicaset_id,
+            topic: topic.clone(),
+            data: Arc::from("Unknown Command".to_string()),
+        };
+
+        // レスポンスを直接送信（broadcast_messageを再帰的に呼ばない）
+        self.send_to_topic_subscribers(topic, response_event).await;
+
+        Ok(())
+    }
+
     /// system.pullコマンドを処理
     async fn handle_pull_command(
         &self,
@@ -156,89 +180,38 @@ impl TopicSubscriptionRegistry {
         };
 
         // レスポンスを直接送信（broadcast_messageを再帰的に呼ばない）
+        self.send_to_topic_subscribers(&Topic::from("system.pull"), response_event).await;
+
+        Ok(())
+    }
+
+    /// 特定のトピックの購読者にイベントを送信（内部用）
+    async fn send_to_topic_subscribers(
+        &self,
+        topic: &Topic,
+        event: ExecutorOutputEvent,
+    ) {
         let senders = {
             let topics = self.topic_senders.read().await;
-            topics.get(&Topic::from("system.pull")).cloned()
+            topics.get(topic).cloned()
         };
 
         if let Some(senders) = senders {
             for sender in senders.iter() {
-                let _ = sender.send(response_event.clone());
+                let _ = sender.send(event.clone());
             }
         }
-
-        Ok(())
     }
 
     pub async fn get_latest_message(&self, topic: impl Into<Topic>) -> Option<ExecutorOutputEvent> {
         let topic = topic.into();
         let latest_messages = self.latest_messages.read().await;
-        
-        // まず通常のメッセージをチェック
-        if let Some(event) = latest_messages.get(&topic).cloned() {
-            drop(latest_messages);
-            
-            // 特定のシステムトピックの場合、データがあればシステムデータを返す
-            if self.is_system_topic(&topic) {
-                if let Some(system_response) = self.generate_system_response(&topic, &event) {
-                    return Some(system_response);
-                }
-            }
-            
-            return Some(event);
-        }
-        
-        None
+        latest_messages.get(&topic).cloned()
     }
 
     /// システムトピックかどうかを判定
     /// `system.*` プレフィックスで判定
     fn is_system_topic(&self, topic: &Topic) -> bool {
         topic.as_str().starts_with("system.")
-    }
-
-    /// システムトピックの場合、システムデータを生成して返す
-    /// 汎用的に使えるよう、元のイベント情報を活用
-    fn generate_system_response(
-        &self,
-        topic: &Topic,
-        original_event: &ExecutorOutputEvent,
-    ) -> Option<ExecutorOutputEvent> {
-        // 元のイベントから情報を取得
-        let from_replicaset_id = original_event.from_replicaset_id()?.clone();
-        // Topicイベントであることを確認
-        match original_event {
-            ExecutorOutputEvent::Topic { .. } => {}
-            _ => return None,
-        };
-
-        // システムデータを生成
-        let system_data = if let Some(provider) = &self.system_data_provider {
-            // カスタムプロバイダーが設定されている場合はそれを使用
-            provider(topic)?
-        } else {
-            // デフォルトの実装
-            self.get_default_system_data(topic)?
-        };
-
-        // レスポンストピックでシステムデータを返す
-        let response_topic = topic.result();
-        Some(ExecutorOutputEvent::Topic {
-            message_id: MessageId::new(),
-            pod_id: PodId::new(), // システム用の仮想Pod ID
-            from_replicaset_id: ReplicaSetId::new(), // システム用の仮想ReplicaSet ID
-            to_replicaset_id: Some(from_replicaset_id),
-            topic: response_topic,
-            data: Arc::from(system_data),
-        })
-    }
-
-    /// デフォルトのシステムデータを取得
-    fn get_default_system_data(&self, topic: &Topic) -> Option<String> {
-        match topic.as_str() {
-            "system.status" => Some(r#"{"status": "running"}"#.to_string()),
-            "system.config" => Some(r#"{"version": "0.1.0"}"#.to_string()),
-            _ => None,
-        }
     }
 }

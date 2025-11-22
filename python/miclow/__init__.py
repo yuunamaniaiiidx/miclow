@@ -12,6 +12,7 @@ from collections import deque
 from collections.abc import Generator
 from contextlib import contextmanager
 from enum import Enum
+from typing import overload
 
 if not os.environ.get('MICLOW_POD_ID'):
     raise ImportError(
@@ -302,6 +303,16 @@ class MiclowClient:
 
         return key, value
 
+    @overload
+    def receive(self, topic: None = None) -> TopicMessage | SystemResponse | None:
+        """Receive a message from any topic. May return None if no message is available."""
+        ...
+
+    @overload
+    def receive(self, topic: str) -> TopicMessage | SystemResponse:
+        """Receive a message from a specific topic. Waits until a message is available."""
+        ...
+
     def receive(self, topic: str | None = None) -> TopicMessage | SystemResponse | None:
         """
         Receive a message from subscribed topics.
@@ -498,6 +509,16 @@ def unsubscribe(topic: str) -> SystemResponse:
     """Unsubscribe from a topic."""
     return get_client().unsubscribe(topic)
 
+
+@overload
+def receive(topic: None = None) -> TopicMessage | SystemResponse | None:
+    """Receive a message from any topic. May return None if no message is available."""
+    ...
+
+@overload
+def receive(topic: str) -> TopicMessage | SystemResponse:
+    """Receive a message from a specific topic. Waits until a message is available."""
+    ...
 
 def receive(topic: str | None = None) -> TopicMessage | SystemResponse | None:
     """
