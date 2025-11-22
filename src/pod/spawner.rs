@@ -1,7 +1,7 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicMessage, ReplicaSetTopicMessageKind,
-    ReplicaSetTopicReceiver, ShutdownSender, UserLogSender,
+    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicMessage, ReplicaSetTopicReceiver,
+    ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
@@ -65,12 +65,13 @@ impl PodSpawner {
         let pod_id: PodId = self.pod_id.clone();
         let handler_pod_id = pod_id.clone();
         let pod_name: String = self.pod_name.clone();
+        let replicaset_id = self.replicaset_id.clone();
         let userlog_sender = self.userlog_sender.clone();
         let pod_event_sender = self.pod_event_sender.clone();
         let view_stdout = self.view_stdout;
         let view_stderr = self.view_stderr;
 
-        let mut backend_handle = backend.spawn(pod_id.clone()).await.map_err(|e| {
+        let mut backend_handle = backend.spawn(pod_id.clone(), replicaset_id.clone()).await.map_err(|e| {
             log::error!("Failed to spawn pod backend for pod {}: {}", pod_id, e);
             format!("Failed to spawn backend for pod {}: {}", pod_id, e)
         })?;
@@ -102,40 +103,8 @@ impl PodSpawner {
                                     let event: ExecutorOutputEvent = event;
 
                                     match &event {
-                                        ExecutorOutputEvent::TopicResponse {
-                                            message_id,
-                                            pod_id: _response_pod_id,
-                                            topic,
-                                            return_topic,
-                                            status,
-                                            data,
-                                            ..
-                                        } => {
-                                            // TopicResponseをPodEventとして上位に送信
-                                            log::info!(
-                                                "TopicResponse received from pod {} for topic '{}' (return topic '{}')",
-                                                pod_id,
-                                                topic,
-                                                return_topic
-                                            );
-
-                                            if let Err(e) = pod_event_sender.send(PodEvent::PodTopicResponse {
-                                                pod_id: pod_id.clone(),
-                                                message_id: message_id.clone(),
-                                                topic: topic.clone(),
-                                                return_topic: return_topic.clone(),
-                                                status: status.clone(),
-                                                data: data.clone(),
-                                            }) {
-                                                log::warn!(
-                                                    "Failed to send PodTopicResponse event for '{}': {}",
-                                                    pod_id,
-                                                    e
-                                                );
-                                            }
-                                        }
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
-                                            // 通常のトピックメッセージをPodEventとして上位に送信
+                                            // トピックメッセージをPodEventとして上位に送信
                                             log::info!(
                                                 "Message event for pod {} on topic '{}': '{}'",
                                                 pod_id,
@@ -143,27 +112,50 @@ impl PodSpawner {
                                                 data
                                             );
 
-                                            if let Err(e) = pod_event_sender.send(PodEvent::PodTopic {
+                                            // PodTopicを送信
+                                            let pod_topic_result = pod_event_sender.send(PodEvent::PodTopic {
                                                 pod_id: pod_id.clone(),
                                                 message_id: message_id.clone(),
                                                 topic: topic.clone(),
                                                 data: data.clone(),
-                                            }) {
-                                                log::warn!(
-                                                    "Failed to send PodTopic event for '{}': {}",
+                                            });
+
+                                            // レスポンストピックの場合、PodTopicの送信が成功したらPodIdleも送信
+                                            if topic.is_result() {
+                                                if let Err(e) = pod_topic_result {
+                                                    log::warn!(
+                                                        "Failed to send PodTopic event for '{}', skipping PodIdle: {}",
                                                         pod_id,
                                                         e
                                                     );
+                                                } else {
+                                                    // PodTopicの送信が成功したので、PodIdleも送信
+                                                    if let Err(e) = pod_event_sender.send(PodEvent::PodIdle {
+                                                        pod_id: pod_id.clone(),
+                                                    }) {
+                                                        log::warn!(
+                                                            "Failed to send PodIdle event for '{}': {}",
+                                                            pod_id,
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                            } else if let Err(e) = pod_topic_result {
+                                                log::warn!(
+                                                    "Failed to send PodTopic event for '{}': {}",
+                                                    pod_id,
+                                                    e
+                                                );
                                             }
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {
                                             if view_stdout {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.as_ref().to_string() });
                                             }
                                         },
                                         ExecutorOutputEvent::Stderr { data, .. } => {
                                             if view_stderr {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.as_ref().to_string() });
                                             }
                                         },
                                         ExecutorOutputEvent::Error { error, .. } => {
@@ -194,27 +186,15 @@ impl PodSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    let ReplicaSetTopicMessage { topic, data, kind } = topic_data;
-                                    let input_event = match kind {
-                                        ReplicaSetTopicMessageKind::Topic => {
-                                            ExecutorInputEvent::Topic {
-                                                message_id: MessageId::new(),
-                                                pod_id: pod_id.clone(),
-                                                topic,
-                                                data,
-                                            }
-                                        }
-                                        ReplicaSetTopicMessageKind::TopicResponse {
-                                            status,
-                                            original_topic,
-                                        } => ExecutorInputEvent::TopicResponse {
-                                            message_id: MessageId::new(),
-                                            pod_id: pod_id.clone(),
-                                            status,
-                                            topic: original_topic,
-                                            return_topic: topic,
-                                            data,
-                                        },
+                                    let ReplicaSetTopicMessage { topic, data, from_replicaset_id } = topic_data;
+                                    // topic.is_result()でレスポンストピックかどうかを判定可能
+                                    // すべてのトピックメッセージをTopicとして扱う
+                                    let input_event = ExecutorInputEvent::Topic {
+                                        message_id: MessageId::new(),
+                                        pod_id: pod_id.clone(),
+                                        topic: topic.clone(),
+                                        data: data.clone(),
+                                        from_replicaset_id: from_replicaset_id.clone(),
                                     };
 
                                     if let Err(e) = backend_handle.input_sender.send(input_event) {

@@ -1,5 +1,4 @@
 use super::buffer::{InputBufferManager, StreamOutcome};
-use super::event_helpers::create_topic_event;
 use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
@@ -7,6 +6,7 @@ use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::pod::PodId;
+use crate::replicaset::ReplicaSetId;
 use anyhow::{Error, Result};
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
@@ -57,15 +57,12 @@ impl<'a> ExecutorInputEventStdio<'a> {
 
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
-            ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic, data),
-            ExecutorInputEvent::TopicResponse {
-                return_topic, data, ..
-            } => Self::lines_from(return_topic, data),
+            ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic.as_str(), data.as_ref()),
         }
     }
 
-    fn lines_from(topic: &String, data: &String) -> Vec<String> {
-        let mut lines = vec![topic.clone()];
+    fn lines_from(topic: &str, data: &str) -> Vec<String> {
+        let mut lines = vec![topic.to_string()];
         let data_lines: Vec<&str> = data.lines().collect();
         lines.push(data_lines.len().to_string());
         lines.extend(data_lines.iter().map(|s| s.to_string()));
@@ -82,6 +79,7 @@ impl<'a> From<&'a ExecutorInputEvent> for ExecutorInputEventStdio<'a> {
 pub async fn spawn_miclow_stdio_protocol(
     config: &MiclowStdIOConfig,
     pod_id: PodId,
+    replicaset_id: ReplicaSetId,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();
     let args = config.args.clone();
@@ -147,6 +145,7 @@ pub async fn spawn_miclow_stdio_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             pod_id.clone(),
+            replicaset_id.clone(),
             if view_stdout {
                 Some(
                     ExecutorOutputEvent::new_task_stdout
@@ -163,6 +162,7 @@ pub async fn spawn_miclow_stdio_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             pod_id.clone(),
+            replicaset_id.clone(),
             if view_stderr {
                 Some(
                     ExecutorOutputEvent::new_task_stderr
@@ -373,6 +373,7 @@ fn spawn_stream_reader<R>(
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     pod_id: PodId,
+    replicaset_id: ReplicaSetId,
     emit_func: Option<fn(MessageId, PodId, String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
@@ -385,6 +386,7 @@ where
         let topic_name_clone = topic_name.clone();
         let event_tx_clone = event_tx.clone();
         let pod_id_clone = pod_id.clone();
+        let replicaset_id_clone = replicaset_id.clone();
 
         let process_stream_outcome =
             move |outcome: Result<StreamOutcome, String>, line_content: &str| {
@@ -392,20 +394,23 @@ where
                 let pod_id_for_outcome = pod_id_clone.clone();
                 let event_tx_for_outcome = event_tx_clone.clone();
                 let topic_name_for_outcome = topic_name_clone.clone();
+                let replicaset_id_for_outcome = replicaset_id_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
-                        let event = create_topic_event(
+                        let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
+                            replicaset_id_for_outcome.clone(),
                             topic,
                             data,
                         );
                         let _ = event_tx_for_outcome.send(event);
                     }
                     Ok(StreamOutcome::Plain(output)) => {
-                        let event = create_topic_event(
+                        let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
+                            replicaset_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
                             output.clone(),
                         );
@@ -426,9 +431,10 @@ where
                             e.clone(),
                         );
                         let output = super::buffer::strip_crlf(line_content).to_string();
-                        let event = create_topic_event(
+                        let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
+                            replicaset_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
                             output.clone(),
                         );

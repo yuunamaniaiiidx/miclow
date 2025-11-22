@@ -46,8 +46,3 @@ regex = "1.10"
 
 [dev-dependencies]
 tempfile = "3.0"
-
-[patch.crates-io]
-darling = { git = "https://github.com/TedDriggs/darling", tag = "v0.21.3" }
-darling_core = { git = "https://github.com/TedDriggs/darling", tag = "v0.21.3", package = "darling_core" }
-darling_macro = { git = "https://github.com/TedDriggs/darling", tag = "v0.21.3", package = "darling_macro" }

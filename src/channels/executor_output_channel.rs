@@ -1,22 +1,17 @@
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::pod::PodId;
-use crate::replicaset::ReplicaSetId;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ExecutorOutputEventSender {
     sender: mpsc::UnboundedSender<ExecutorOutputEvent>,
-    replicaset_id: Option<ReplicaSetId>,
 }
 
 impl ExecutorOutputEventSender {
     pub fn new(sender: mpsc::UnboundedSender<ExecutorOutputEvent>) -> Self {
-        Self {
-            sender,
-            replicaset_id: None,
-        }
+        Self { sender }
     }
 
     pub fn send(
@@ -24,18 +19,6 @@ impl ExecutorOutputEventSender {
         event: ExecutorOutputEvent,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.sender.send(event)
-    }
-
-    pub fn send_message(
-        &self,
-        message_id: MessageId,
-        pod_id: PodId,
-        key: String,
-        data: String,
-    ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_message(
-            message_id, pod_id, key, data,
-        ))
     }
 
     pub fn send_error(
@@ -54,10 +37,6 @@ impl ExecutorOutputEventSender {
         code: i32,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
         self.send(ExecutorOutputEvent::new_exit(message_id, pod_id, code))
-    }
-
-    pub fn replicaset_id(&self) -> Option<ReplicaSetId> {
-        self.replicaset_id.clone()
     }
 }
 

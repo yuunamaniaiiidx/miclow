@@ -4,6 +4,7 @@ use crate::channels::{ExecutorInputEventChannel, ExecutorOutputEventChannel, Shu
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::pod::PodId;
+use crate::replicaset::ReplicaSetId;
 use anyhow::{Error, Result};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::task;
@@ -12,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 pub async fn spawn_interactive_protocol(
     config: &InteractiveConfig,
     pod_id: PodId,
+    replicaset_id: ReplicaSetId,
 ) -> Result<TaskBackendHandle, Error> {
     let system_input_topic = config.system_input_topic.clone();
 
@@ -53,6 +55,7 @@ pub async fn spawn_interactive_protocol(
                             let event = ExecutorOutputEvent::new_message(
                                 message_id,
                                 pod_id.clone(),
+                                replicaset_id.clone(),
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
                             );

@@ -21,6 +21,7 @@ pub(crate) struct RawTaskConfig {
     pub name: TomlValue,
     pub protocol: TomlValue, // セクション名から設定される
     pub subscribe_topics: Option<TomlValue>,
+    pub private_response_topics: Option<TomlValue>,
     pub view_stdout: Option<TomlValue>,
     pub view_stderr: Option<TomlValue>,
     pub lifecycle: Option<RawLifecycleConfig>,
@@ -34,6 +35,7 @@ pub(crate) struct RawTaskConfig {
 pub struct TaskConfig {
     pub name: String,
     pub subscribe_topics: Vec<String>,
+    pub private_response_topics: Vec<String>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -52,6 +54,7 @@ pub struct TaskConfig {
 pub struct ExpandedTaskConfig {
     pub name: String,
     pub subscribe_topics: Vec<String>,
+    pub private_response_topics: Vec<String>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -118,6 +121,8 @@ struct RawTaskEntry {
     protocol: String,
     #[serde(default)]
     subscribe_topics: Vec<String>,
+    #[serde(default)]
+    private_response_topics: Vec<String>,
     view_stdout: Option<bool>,
     view_stderr: Option<bool>,
     #[serde(default)]
@@ -208,10 +213,23 @@ impl RawSystemConfig {
             ))
         };
 
+        let private_response_topics_value = if entry.private_response_topics.is_empty() {
+            None
+        } else {
+            Some(TomlValue::Array(
+                entry
+                    .private_response_topics
+                    .into_iter()
+                    .map(TomlValue::String)
+                    .collect(),
+            ))
+        };
+
         let mut task_config = RawTaskConfig {
             name: TomlValue::String(entry.task_name.clone()),
             protocol: TomlValue::String(protocol_name),
             subscribe_topics: subscribe_topics_value,
+            private_response_topics: private_response_topics_value,
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
             view_stderr: entry.view_stderr.map(|v| TomlValue::Boolean(v)),
             lifecycle,

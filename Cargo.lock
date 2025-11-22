@@ -3019,18 +3019,3 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[patch.unused]]
-name = "darling"
-version = "0.21.3"
-source = "git+https://github.com/TedDriggs/darling?tag=v0.21.3#f21aa2c5ccd002f978a18758815bd7e7cdba4741"
-
-[[patch.unused]]
-name = "darling_core"
-version = "0.21.3"
-source = "git+https://github.com/TedDriggs/darling?tag=v0.21.3#f21aa2c5ccd002f978a18758815bd7e7cdba4741"
-
-[[patch.unused]]
-name = "darling_macro"
-version = "0.21.3"
-source = "git+https://github.com/TedDriggs/darling?tag=v0.21.3#f21aa2c5ccd002f978a18758815bd7e7cdba4741"

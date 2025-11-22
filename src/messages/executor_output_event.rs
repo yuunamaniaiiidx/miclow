@@ -1,48 +1,28 @@
 use crate::message_id::MessageId;
 use crate::pod::PodId;
-
-/// すべてのレスポンス topic が従うサフィックス。
-pub const RESULT_TOPIC_SUFFIX: &str = ".result";
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TopicResponseStatus {
-    Success,
-    Error,
-    Unknown,
-}
-
-impl Default for TopicResponseStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
+use crate::replicaset::ReplicaSetId;
+use crate::topic::Topic;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
         pod_id: PodId,
-        topic: String,
-        data: String,
-    },
-    TopicResponse {
-        message_id: MessageId,
-        pod_id: PodId,
-        status: TopicResponseStatus,
-        topic: String,
-        return_topic: String,
-        data: String,
+        from_replicaset_id: ReplicaSetId,
+        to_replicaset_id: Option<ReplicaSetId>,
+        topic: Topic,
+        data: Arc<str>,
     },
     Stdout {
         message_id: MessageId,
         pod_id: PodId,
-        data: String,
+        data: Arc<str>,
     },
     Stderr {
         message_id: MessageId,
         pod_id: PodId,
-        data: String,
+        data: Arc<str>,
     },
     Error {
         message_id: MessageId,
@@ -57,12 +37,20 @@ pub enum ExecutorOutputEvent {
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(message_id: MessageId, pod_id: PodId, topic: String, data: String) -> Self {
+    pub fn new_message(
+        message_id: MessageId,
+        pod_id: PodId,
+        from_replicaset_id: ReplicaSetId,
+        topic: impl Into<Topic>,
+        data: impl Into<Arc<str>>,
+    ) -> Self {
         Self::Topic {
             message_id,
             pod_id,
-            topic,
-            data,
+            from_replicaset_id,
+            to_replicaset_id: None,
+            topic: topic.into(),
+            data: data.into(),
         }
     }
 
@@ -82,37 +70,54 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_task_stdout(message_id: MessageId, pod_id: PodId, data: String) -> Self {
+    pub fn new_task_stdout(message_id: MessageId, pod_id: PodId, data: impl Into<Arc<str>>) -> Self {
         Self::Stdout {
             message_id,
             pod_id,
-            data,
+            data: data.into(),
         }
     }
 
-    pub fn new_task_stderr(message_id: MessageId, pod_id: PodId, data: String) -> Self {
+    pub fn new_task_stderr(message_id: MessageId, pod_id: PodId, data: impl Into<Arc<str>>) -> Self {
         Self::Stderr {
             message_id,
             pod_id,
-            data,
+            data: data.into(),
         }
     }
 
-    pub fn data(&self) -> Option<&String> {
+    pub fn data(&self) -> Option<&str> {
         match self {
             Self::Topic { data, .. } => Some(data),
-            Self::TopicResponse { data, .. } => Some(data),
             Self::Stdout { data, .. } => Some(data),
             Self::Stderr { data, .. } => Some(data),
             _ => None,
         }
     }
 
-    pub fn topic(&self) -> Option<&String> {
+    pub fn topic(&self) -> Option<&Topic> {
         match self {
             Self::Topic { topic, .. } => Some(topic),
-            Self::TopicResponse { return_topic, .. } => Some(return_topic),
             _ => None,
         }
+    }
+
+    pub fn from_replicaset_id(&self) -> Option<&ReplicaSetId> {
+        match self {
+            Self::Topic { from_replicaset_id, .. } => Some(from_replicaset_id),
+            _ => None,
+        }
+    }
+
+    pub fn to_replicaset_id(&self) -> Option<&ReplicaSetId> {
+        match self {
+            Self::Topic { to_replicaset_id, .. } => to_replicaset_id.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn replicaset_id(&self) -> Option<&ReplicaSetId> {
+        // 後方互換性のため、from_replicaset_idを返す
+        self.from_replicaset_id()
     }
 }

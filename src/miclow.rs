@@ -13,21 +13,24 @@ use tokio_util::sync::CancellationToken;
 pub struct MiclowSystem {
     pub config: SystemConfig,
     deployment_manager: DeploymentManager,
-    shutdown_token: CancellationToken,
+    log_shutdown_token: CancellationToken,
+    user_shutdown_token: CancellationToken,
     background_tasks: BackgroundWorkerRegistry,
 }
 
 impl MiclowSystem {
     pub fn new(config: SystemConfig) -> Self {
-        let shutdown_token: CancellationToken = CancellationToken::new();
+        let log_shutdown_token: CancellationToken = CancellationToken::new();
+        let user_shutdown_token: CancellationToken = CancellationToken::new();
         let topic_manager = crate::topic::TopicSubscriptionRegistry::new();
         let deployment_manager =
-            DeploymentManager::new(topic_manager.clone(), shutdown_token.clone());
-        let background_tasks = BackgroundWorkerRegistry::new(shutdown_token.clone());
+            DeploymentManager::new(topic_manager.clone(), user_shutdown_token.clone());
+        let background_tasks = BackgroundWorkerRegistry::new(log_shutdown_token.clone());
         Self {
             config,
             deployment_manager,
-            shutdown_token,
+            log_shutdown_token,
+            user_shutdown_token,
             background_tasks,
         }
     }
@@ -48,18 +51,20 @@ impl MiclowSystem {
 
         log::info!("System running. Press Ctrl+C to stop.");
 
-        let shutdown_token = self.shutdown_token.clone();
+        let log_shutdown_token = self.log_shutdown_token.clone();
+        let user_shutdown_token = self.user_shutdown_token.clone();
 
         let ctrlc_fut = async {
             if let Err(e) = tokio::signal::ctrl_c().await {
                 log::error!("Ctrl+C signal error: {}", e);
             } else {
                 log::info!("Received Ctrl+C. Requesting graceful shutdown...");
-                shutdown_token.cancel();
+                // まずログタスクの終了を開始
+                log_shutdown_token.cancel();
             }
         };
         tokio::select! {
-            _ = shutdown_token.cancelled() => {
+            _ = log_shutdown_token.cancelled() => {
                 log::info!("Shutdown signal received");
             },
             _ = ctrlc_fut => {
@@ -67,16 +72,14 @@ impl MiclowSystem {
             },
         }
 
-        log::info!("Received shutdown signal, stopping all workers...");
+        log::info!("Received shutdown signal, stopping log workers first...");
+        // ログタスクの終了を待つ（タイムアウト付き）
+        self.background_tasks.shutdown_all(std::time::Duration::from_secs(5)).await;
+        log::info!("All log workers stopped");
 
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        self.background_tasks.abort_all().await;
-
-        log::info!("Starting graceful shutdown...");
-
-        log::info!("Cancelling shutdown token");
-        shutdown_token.cancel();
-
+        log::info!("Stopping user tasks...");
+        // ログタスク終了後、ユーザータスクを終了
+        user_shutdown_token.cancel();
         log::info!("Waiting for running pods to finish...");
         self.deployment_manager.shutdown().await;
         log::info!("All user pods stopped");

@@ -1,20 +1,13 @@
-use crate::messages::TopicResponseStatus;
+use crate::replicaset::ReplicaSetId;
+use crate::topic::Topic;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ReplicaSetTopicMessage {
-    pub topic: String,
-    pub data: String,
-    pub kind: ReplicaSetTopicMessageKind,
-}
-
-#[derive(Clone, Debug)]
-pub enum ReplicaSetTopicMessageKind {
-    Topic,
-    TopicResponse {
-        status: TopicResponseStatus,
-        original_topic: String,
-    },
+    pub topic: Topic,
+    pub data: Arc<str>,
+    pub from_replicaset_id: ReplicaSetId,
 }
 
 #[derive(Clone)]

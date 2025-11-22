@@ -8,6 +8,7 @@ pub struct PodStartContext {
     pub topic_manager: TopicSubscriptionRegistry,
     pub userlog_sender: UserLogSender,
     pub subscribe_topics: Vec<String>,
+    pub private_response_topics: Vec<String>,
     pub view_stdout: bool,
     pub view_stderr: bool,
 }
