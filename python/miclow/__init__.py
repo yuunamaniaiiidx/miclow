@@ -21,12 +21,12 @@ if not os.environ.get('MICLOW_POD_ID'):
 
 __version__ = "0.1.0"
 __all__ = [
-    "MiclowClient", "get_client", "send_message",
-    "subscribe_topic", "TopicMessage", "SystemResponse",
-    "get_status", "get_latest_message",
-    "wait_for_topic", "wait_for_response", "receive_message",
+    "MiclowClient", "get_client", "publish",
+    "subscribe", "unsubscribe", "TopicMessage", "SystemResponse",
+    "get_status", "pull",
+    "receive", "receive_response",
     "MessageType",
-    "send_response", "return_topic_for"
+    "publish_response", "response_topic"
 ]
 
 class SystemResponseType(Enum):
@@ -272,12 +272,12 @@ class MiclowClient:
         self.stdout = sys.stdout
         self._buffer: Buffer = Buffer()
 
-    def send_message(self, topic: str, message: str) -> None:
+    def publish(self, topic: str, message: str) -> None:
         """
-        Send a message to a topic using multiline protocol.
+        Publish a message to a topic using multiline protocol.
 
         Args:
-            topic: The topic name to send the message to
+            topic: The topic name to publish the message to
             message: The message content (can be multiline)
         """
         print(f'"{topic}"::')
@@ -302,54 +302,49 @@ class MiclowClient:
 
         return key, value
 
-    def receive_message(self) -> TopicMessage | SystemResponse | None:
+    def receive(self, topic: str | None = None) -> TopicMessage | SystemResponse | None:
         """
-        Receive the oldest message across all topics based on arrival order.
-        Returns buffered message if available, otherwise waits until received from stdin.
-        Regular messages return TopicMessage objects, system responses return SystemResponse objects.
-
-        Returns:
-            TopicMessage/SystemResponse, or None if no message is available
-        """
-        result = self._buffer.get_oldest()
-        if result is not None:
-            return result
-
-        self._internal_receive_message()
-        return self._buffer.get_oldest()
-
-    def wait_for_topic(self, topic: str) -> TopicMessage | SystemResponse:
-        """
-        Wait for and retrieve a message for the specified topic.
+        Receive a message from subscribed topics.
+        If topic is None, returns the oldest message across all topics based on arrival order.
+        If topic is specified, waits for and retrieves a message for that specific topic.
         Returns buffered message if available, otherwise waits until received from stdin.
         Regular messages return TopicMessage objects, system responses return SystemResponse objects.
 
         Args:
-            topic: Topic name to wait for
+            topic: Optional topic name to receive from. If None, receives from any topic.
 
         Returns:
-            TopicMessage/SystemResponse
+            TopicMessage/SystemResponse, or None if no message is available (only when topic is None)
         """
+        if topic is None:
+            # Receive from any topic
+            result = self._buffer.get_oldest()
+            if result is not None:
+                return result
 
-        message = self._buffer.wait_for_topic(topic)
-        if message is not None:
-            return message
+            self._internal_receive_message()
+            return self._buffer.get_oldest()
+        else:
+            # Receive from specific topic
+            message = self._buffer.wait_for_topic(topic)
+            if message is not None:
+                return message
 
-        while True:
-            received_topic, received_message = self._internal_receive_message()
-            if received_topic == topic:
-                value = self._buffer.wait_for_topic(received_topic)
-                if value is not None:
-                    return value
+            while True:
+                received_topic, received_message = self._internal_receive_message()
+                if received_topic == topic:
+                    value = self._buffer.wait_for_topic(received_topic)
+                    if value is not None:
+                        return value
 
-    def wait_for_response(self, topic: str) -> TopicMessage | SystemResponse:
+    def receive_response(self, topic: str) -> TopicMessage | SystemResponse:
         """
-        Wait for a response message on the return topic for the given topic.
+        Receive a response message on the return topic for the given topic.
         The return topic follows the pattern: {topic}.result
 
-        This is typically used after sending a message to wait for the
-    response. Returns buffered message if available, otherwise waits
-    until received from stdin.
+        This is typically used after publishing a message to wait for the
+        response. Returns buffered message if available, otherwise waits
+        until received from stdin.
 
         Args:
             topic: The original topic name (response will be on {topic}.result)
@@ -358,17 +353,17 @@ class MiclowClient:
             TopicMessage/SystemResponse from the return topic
 
         Example:
-            # Send a message
-            send_message("demo.request", "Hello")
+            # Publish a message
+            publish("demo.request", "Hello")
 
-            # Wait for response on "demo.request.result"
-            response = wait_for_response("demo.request")
+            # Receive response on "demo.request.result"
+            response = receive_response("demo.request")
             print(response.data)
         """
-        return_topic = return_topic_for(topic)
-        return self.wait_for_topic(return_topic)
+        return_topic = response_topic(topic)
+        return self.receive(return_topic)
 
-    def subscribe_topic(self, topic: str) -> SystemResponse:
+    def subscribe(self, topic: str) -> SystemResponse:
         """
         Subscribe to a topic.
 
@@ -384,12 +379,12 @@ class MiclowClient:
         sys.stdout.flush()
 
         expected_topic = "system.subscribe-topic"
-        response = self.wait_for_topic(expected_topic)
+        response = self.receive(expected_topic)
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
-    def unsubscribe_topic(self, topic: str) -> SystemResponse:
+    def unsubscribe(self, topic: str) -> SystemResponse:
         """
         Unsubscribe from a topic.
 
@@ -405,7 +400,7 @@ class MiclowClient:
         sys.stdout.flush()
 
         expected_topic = "system.unsubscribe-topic"
-        response = self.wait_for_topic(expected_topic)
+        response = self.receive(expected_topic)
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
@@ -423,28 +418,28 @@ class MiclowClient:
         sys.stdout.flush()
 
         expected_topic = "system.status"
-        response = self.wait_for_topic(expected_topic)
+        response = self.receive(expected_topic)
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
 
-    def get_latest_message(self, topic: str) -> SystemResponse:
+    def pull(self, topic: str) -> SystemResponse:
         """
-        Get the latest message for a topic.
+        Pull the latest message for a topic.
 
         Args:
-            topic: The topic name to get the latest message for
+            topic: The topic name to pull the latest message for
 
         Returns:
             SystemResponse with the latest message data (if available) or error
         """
-        print('"system.get-latest-message"::')
+        print('"system.pull"::')
         print(topic)
-        print('::"system.get-latest-message"')
+        print('::"system.pull"')
         sys.stdout.flush()
 
-        expected_topic = "system.get-latest-message"
-        response = self.wait_for_topic(expected_topic)
+        expected_topic = "system.pull"
+        response = self.receive(expected_topic)
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
@@ -461,19 +456,20 @@ class MiclowClient:
         Yields:
             Generator of TopicMessage or SystemResponse objects
         """
-        self.subscribe_topic(topic)
+        self.subscribe(topic)
         try:
             yield self._message_generator(topic)
         finally:
-            self.unsubscribe_topic(topic)
+            self.unsubscribe(topic)
 
     def _message_generator(
         self, target_topic: str
     ) -> Generator[TopicMessage | SystemResponse, None, None]:
         """Generate messages for a specific topic."""
         while True:
-            message = self.wait_for_topic(target_topic)
-            yield message
+            message = self.receive(target_topic)
+            if message is not None:
+                yield message
 
 
 # Global client instance
@@ -488,54 +484,44 @@ def get_client() -> MiclowClient:
     return _client
 
 
-def send_message(topic: str, message: str) -> None:
-    """Send a message to a topic."""
-    get_client().send_message(topic, message)
+def publish(topic: str, message: str) -> None:
+    """Publish a message to a topic."""
+    get_client().publish(topic, message)
 
 
-def subscribe_topic(topic: str) -> SystemResponse:
+def subscribe(topic: str) -> SystemResponse:
     """Subscribe to a topic."""
-    return get_client().subscribe_topic(topic)
+    return get_client().subscribe(topic)
 
 
-def unsubscribe_topic(topic: str) -> SystemResponse:
+def unsubscribe(topic: str) -> SystemResponse:
     """Unsubscribe from a topic."""
-    return get_client().unsubscribe_topic(topic)
+    return get_client().unsubscribe(topic)
 
 
-def receive_message() -> TopicMessage | SystemResponse | None:
+def receive(topic: str | None = None) -> TopicMessage | SystemResponse | None:
     """
-    Receive the oldest message across all topics based on arrival order.
-    Returns buffered message if available, otherwise waits until received from stdin.
-    Regular messages return TopicMessage objects, system responses return SystemResponse objects.
-
-    Returns:
-        TopicMessage/SystemResponse, or None if no message is available
-    """
-    return get_client().receive_message()
-
-
-def wait_for_topic(topic: str) -> TopicMessage | SystemResponse:
-    """
-    Wait for and retrieve a message for the specified topic.
+    Receive a message from subscribed topics.
+    If topic is None, returns the oldest message across all topics based on arrival order.
+    If topic is specified, waits for and retrieves a message for that specific topic.
     Returns buffered message if available, otherwise waits until received from stdin.
     Regular messages return TopicMessage objects, system responses return SystemResponse objects.
 
     Args:
-        topic: Topic name to wait for
+        topic: Optional topic name to receive from. If None, receives from any topic.
 
     Returns:
-        TopicMessage/SystemResponse
+        TopicMessage/SystemResponse, or None if no message is available (only when topic is None)
     """
-    return get_client().wait_for_topic(topic)
+    return get_client().receive(topic)
 
 
-def wait_for_response(topic: str) -> TopicMessage | SystemResponse:
+def receive_response(topic: str) -> TopicMessage | SystemResponse:
     """
-    Wait for a response message on the return topic for the given topic.
+    Receive a response message on the return topic for the given topic.
     The return topic follows the pattern: {topic}.result
 
-    This is typically used after sending a message to wait for the response.
+    This is typically used after publishing a message to wait for the response.
     Returns buffered message if available, otherwise waits until received
     from stdin.
 
@@ -546,14 +532,14 @@ def wait_for_response(topic: str) -> TopicMessage | SystemResponse:
         TopicMessage/SystemResponse from the return topic
 
     Example:
-        # Send a message
-        send_message("demo.request", "Hello")
+        # Publish a message
+        publish("demo.request", "Hello")
 
-        # Wait for response on "demo.request.result"
-        response = wait_for_response("demo.request")
+        # Receive response on "demo.request.result"
+        response = receive_response("demo.request")
         print(response.data)
     """
-    return get_client().wait_for_response(topic)
+    return get_client().receive_response(topic)
 
 
 def get_status() -> SystemResponse:
@@ -561,53 +547,53 @@ def get_status() -> SystemResponse:
     return get_client().get_status()
 
 
-def get_latest_message(topic: str) -> SystemResponse:
+def pull(topic: str) -> SystemResponse:
     """
-    Get the latest message for a topic.
+    Pull the latest message for a topic.
 
     Args:
-        topic: The topic name to get the latest message for
+        topic: The topic name to pull the latest message for
 
     Returns:
         SystemResponse with the latest message data (if available) or error
     """
-    return get_client().get_latest_message(topic)
+    return get_client().pull(topic)
 
 
-def return_topic_for(topic: str) -> str:
+def response_topic(topic: str) -> str:
     """
-    Generate the return topic name for a given topic.
-    The return topic follows the pattern: {original_topic}.result
+    Generate the response topic name for a given topic.
+    The response topic follows the pattern: {original_topic}.result
 
     Args:
         topic: The original topic name
 
     Returns:
-        The return topic name (e.g., "demo.topic" -> "demo.topic.result")
+        The response topic name (e.g., "demo.topic" -> "demo.topic.result")
     """
     return f"{topic}.result"
 
 
-def send_response(original_topic: str, data: str) -> None:
+def publish_response(original_topic: str, data: str) -> None:
     """
-    Send a response message to the return topic for the given topic.
+    Publish a response message to the return topic for the given topic.
     This is a convenience function that automatically constructs the return
     topic using the pattern: {original_topic}.result
 
     Args:
         original_topic: The original topic name that this response is for
-        data: The response data to send
+        data: The response data to publish
 
     Example:
         # Receive a message on "demo.request"
-        message = wait_for_topic("demo.request")
+        message = receive("demo.request")
 
         # Process the message...
         result = process(message.data)
 
-        # Send response to "demo.request.result"
-        send_response("demo.request", result)
+        # Publish response to "demo.request.result"
+        publish_response("demo.request", result)
     """
-    return_topic = return_topic_for(original_topic)
-    send_message(return_topic, data)
+    return_topic = response_topic(original_topic)
+    publish(return_topic, data)
 
