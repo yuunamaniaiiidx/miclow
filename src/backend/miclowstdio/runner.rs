@@ -13,6 +13,7 @@ use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::task;
@@ -98,14 +99,14 @@ pub async fn spawn_miclow_stdio_protocol(
     let mut input_receiver: ExecutorInputEventReceiver = input_channel.receiver;
 
     task::spawn(async move {
-        let mut command_builder = TokioCommand::new(&command);
+        let mut command_builder = TokioCommand::new(command.as_ref());
 
         for arg in &args {
-            command_builder.arg(arg);
+            command_builder.arg(arg.as_ref());
         }
 
         if let Some(working_dir) = &working_directory {
-            command_builder.current_dir(working_dir);
+            command_builder.current_dir(working_dir.as_ref());
         }
 
         if let Some(env_vars) = &environment_vars {
@@ -369,7 +370,7 @@ pub async fn spawn_miclow_stdio_protocol(
 
 fn spawn_stream_reader<R>(
     mut reader: R,
-    topic_name: String,
+    topic_name: Arc<str>,
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     pod_id: PodId,
@@ -401,25 +402,26 @@ where
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
                             replicaset_id_for_outcome.clone(),
-                            topic,
+                            topic.as_ref(),
                             data,
                         );
                         let _ = event_tx_for_outcome.send(event);
                     }
                     Ok(StreamOutcome::Plain(output)) => {
+                        let output_clone = output.clone();
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
                             replicaset_id_for_outcome.clone(),
-                            topic_name_for_outcome.clone(),
-                            output.clone(),
+                            topic_name_for_outcome.as_ref(),
+                            output,
                         );
                         let _ = event_tx_for_outcome.send(event);
                         if let Some(emit) = emit_func {
                             let _ = event_tx_for_outcome.send(emit(
                                 message_id.clone(),
                                 pod_id_for_outcome.clone(),
-                                output,
+                                output_clone.to_string(),
                             ));
                         }
                     }
@@ -430,12 +432,12 @@ where
                             pod_id_for_outcome.clone(),
                             e.clone(),
                         );
-                        let output = super::buffer::strip_crlf(line_content).to_string();
+                        let output: Arc<str> = Arc::from(super::buffer::strip_crlf(line_content));
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
                             replicaset_id_for_outcome.clone(),
-                            topic_name_for_outcome.clone(),
+                            topic_name_for_outcome.as_ref(),
                             output.clone(),
                         );
                         let _ = event_tx_for_outcome.send(event);
@@ -443,7 +445,7 @@ where
                             let _ = event_tx_for_outcome.send(emit(
                                 message_id.clone(),
                                 pod_id_for_outcome.clone(),
-                                output,
+                                output.to_string(),
                             ));
                         }
                     }
@@ -455,7 +457,7 @@ where
                 _ = cancel_token.cancelled() => {
                     let unfinished = buffer_manager.flush_all_unfinished();
                     for (_, topic, data) in unfinished {
-                        process_stream_outcome(Ok(StreamOutcome::Emit { topic, data }), "");
+                        process_stream_outcome(Ok(StreamOutcome::Emit { topic: Arc::from(topic), data: Arc::from(data) }), "");
                     }
                     break;
                 }
@@ -464,7 +466,7 @@ where
                         Ok(0) => {
                             let unfinished = buffer_manager.flush_all_unfinished();
                             for (_, topic, data) in unfinished {
-                                process_stream_outcome(Ok(StreamOutcome::Emit { topic, data }), "");
+                                process_stream_outcome(Ok(StreamOutcome::Emit { topic: Arc::from(topic), data: Arc::from(data) }), "");
                             }
                             break;
                         }
@@ -473,11 +475,11 @@ where
                             line.clear();
                         },
                         Err(e) => {
-                            log::error!("Error reading from {}: {}", topic_name, e);
+                            log::error!("Error reading from {}: {}", topic_name.as_ref(), e);
                             let _ = event_tx.send_error(
                                 MessageId::new(),
                                 pod_id.clone(),
-                                format!("Error reading from {}: {}", topic_name, e),
+                                format!("Error reading from {}: {}", topic_name.as_ref(), e),
                             );
                             break;
                         }
