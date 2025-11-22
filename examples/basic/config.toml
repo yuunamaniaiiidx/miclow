@@ -7,6 +7,7 @@ working_directory = "${MICLOW_CONFIG_DIR}"
 view_stdout = true
 view_stderr = true
 subscribe_topics = ["demo.topic"]
+exclusive_topics = ["demo.topic.result"]
 
 [[tasks.lifecycle]]
 desired_instances = 1
@@ -24,3 +25,15 @@ subscribe_topics = ["demo.topic"]
 [[tasks.lifecycle]]
 desired_instances = 1
 
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "basic_block_own_topic"
+command = "uv"
+args = ["run", "block_own_topic.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+subscribe_topics = ["mytopic"]
+
+[[tasks.lifecycle]]
+desired_instances = 1

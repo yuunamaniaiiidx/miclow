@@ -65,12 +65,13 @@ impl PodSpawner {
         let pod_id: PodId = self.pod_id.clone();
         let handler_pod_id = pod_id.clone();
         let pod_name: String = self.pod_name.clone();
+        let replicaset_id = self.replicaset_id.clone();
         let userlog_sender = self.userlog_sender.clone();
         let pod_event_sender = self.pod_event_sender.clone();
         let view_stdout = self.view_stdout;
         let view_stderr = self.view_stderr;
 
-        let mut backend_handle = backend.spawn(pod_id.clone()).await.map_err(|e| {
+        let mut backend_handle = backend.spawn(pod_id.clone(), replicaset_id.clone()).await.map_err(|e| {
             log::error!("Failed to spawn pod backend for pod {}: {}", pod_id, e);
             format!("Failed to spawn backend for pod {}: {}", pod_id, e)
         })?;

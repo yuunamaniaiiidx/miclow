@@ -1,5 +1,6 @@
 use crate::message_id::MessageId;
 use crate::pod::PodId;
+use crate::replicaset::ReplicaSetId;
 use crate::topic::Topic;
 
 #[derive(Debug, Clone)]
@@ -7,6 +8,7 @@ pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
         pod_id: PodId,
+        replicaset_id: ReplicaSetId,
         topic: Topic,
         data: String,
     },
@@ -33,10 +35,17 @@ pub enum ExecutorOutputEvent {
 }
 
 impl ExecutorOutputEvent {
-    pub fn new_message(message_id: MessageId, pod_id: PodId, topic: impl Into<Topic>, data: String) -> Self {
+    pub fn new_message(
+        message_id: MessageId,
+        pod_id: PodId,
+        replicaset_id: ReplicaSetId,
+        topic: impl Into<Topic>,
+        data: String,
+    ) -> Self {
         Self::Topic {
             message_id,
             pod_id,
+            replicaset_id,
             topic: topic.into(),
             data,
         }
@@ -86,6 +95,13 @@ impl ExecutorOutputEvent {
     pub fn topic(&self) -> Option<&Topic> {
         match self {
             Self::Topic { topic, .. } => Some(topic),
+            _ => None,
+        }
+    }
+
+    pub fn replicaset_id(&self) -> Option<&ReplicaSetId> {
+        match self {
+            Self::Topic { replicaset_id, .. } => Some(replicaset_id),
             _ => None,
         }
     }

@@ -64,9 +64,26 @@ impl TopicSubscriptionRegistry {
             return Ok(());
         };
 
+        // 送信元のreplicaset_idを取得
+        let sender_replicaset_id = event.replicaset_id();
+
         let mut success_count = 0;
         let mut error_count = 0;
+        let mut filtered_count = 0;
         for sender in senders.iter() {
+            // 送信元と受信側のreplicaset_idが同じ場合はスキップ
+            if let (Some(sender_id), Some(receiver_id)) = (sender_replicaset_id, sender.replicaset_id()) {
+                if *sender_id == receiver_id {
+                    filtered_count += 1;
+                    log::debug!(
+                        "Filtered message on topic '{}' from ReplicaSet {} (same replicaset)",
+                        topic_owned,
+                        sender_id
+                    );
+                    continue;
+                }
+            }
+
             match sender.send(event.clone()) {
                 Ok(_) => {
                     success_count += 1;
@@ -89,10 +106,18 @@ impl TopicSubscriptionRegistry {
 
         if error_count > 0 {
             log::warn!(
-                "Broadcasted message on topic '{}' to {} subscribers ({} failed)",
+                "Broadcasted message on topic '{}' to {} subscribers ({} failed, {} filtered)",
                 topic_owned,
                 success_count,
-                error_count
+                error_count,
+                filtered_count
+            );
+        } else if filtered_count > 0 {
+            log::info!(
+                "Broadcasted message on topic '{}' to {} subscribers ({} filtered)",
+                topic_owned,
+                success_count,
+                filtered_count
             );
         } else {
             log::info!(

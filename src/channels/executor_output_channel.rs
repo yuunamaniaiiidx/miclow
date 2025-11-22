@@ -19,6 +19,16 @@ impl ExecutorOutputEventSender {
         }
     }
 
+    pub fn with_replicaset_id(
+        sender: mpsc::UnboundedSender<ExecutorOutputEvent>,
+        replicaset_id: ReplicaSetId,
+    ) -> Self {
+        Self {
+            sender,
+            replicaset_id: Some(replicaset_id),
+        }
+    }
+
     pub fn send(
         &self,
         event: ExecutorOutputEvent,
@@ -33,8 +43,17 @@ impl ExecutorOutputEventSender {
         key: String,
         data: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
+        let Some(replicaset_id) = self.replicaset_id.clone() else {
+            // replicaset_idが設定されていない場合は、エラーイベントを作成して送信
+            let error_event = ExecutorOutputEvent::new_error(
+                message_id,
+                pod_id,
+                "replicaset_id is not set for send_message".to_string(),
+            );
+            return self.send(error_event);
+        };
         self.send(ExecutorOutputEvent::new_message(
-            message_id, pod_id, key, data,
+            message_id, pod_id, replicaset_id, key, data,
         ))
     }
 
@@ -85,6 +104,14 @@ impl ExecutorOutputEventChannel {
         let (tx, receiver) = mpsc::unbounded_channel::<ExecutorOutputEvent>();
         Self {
             sender: ExecutorOutputEventSender::new(tx),
+            receiver: ExecutorOutputEventReceiver::new(receiver),
+        }
+    }
+
+    pub fn with_replicaset_id(replicaset_id: ReplicaSetId) -> Self {
+        let (tx, receiver) = mpsc::unbounded_channel::<ExecutorOutputEvent>();
+        Self {
+            sender: ExecutorOutputEventSender::with_replicaset_id(tx, replicaset_id),
             receiver: ExecutorOutputEventReceiver::new(receiver),
         }
     }

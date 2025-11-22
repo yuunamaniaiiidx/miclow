@@ -105,7 +105,7 @@ impl ReplicaSetWorker {
         let ExecutorOutputEventChannel {
             sender: replicaset_subscription_sender,
             receiver: mut topic_receiver,
-        } = ExecutorOutputEventChannel::new();
+        } = ExecutorOutputEventChannel::with_replicaset_id(replicaset_id.clone());
 
         Self::register_topic_subscriptions(
             &replicaset_id,
@@ -243,6 +243,7 @@ impl ReplicaSetWorker {
                             let executor_event = ExecutorOutputEvent::Topic {
                                 message_id,
                                 pod_id: pod_id.clone(),
+                                replicaset_id: replicaset_id.clone(),
                                 topic: topic.clone(),
                                 data,
                             };

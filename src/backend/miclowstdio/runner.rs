@@ -6,6 +6,7 @@ use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::pod::PodId;
+use crate::replicaset::ReplicaSetId;
 use anyhow::{Error, Result};
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
@@ -78,6 +79,7 @@ impl<'a> From<&'a ExecutorInputEvent> for ExecutorInputEventStdio<'a> {
 pub async fn spawn_miclow_stdio_protocol(
     config: &MiclowStdIOConfig,
     pod_id: PodId,
+    replicaset_id: ReplicaSetId,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();
     let args = config.args.clone();
@@ -88,7 +90,7 @@ pub async fn spawn_miclow_stdio_protocol(
     let view_stdout = config.view_stdout;
     let view_stderr = config.view_stderr;
 
-    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::with_replicaset_id(replicaset_id.clone());
     let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let mut shutdown_channel = ShutdownChannel::new();
 
@@ -143,6 +145,7 @@ pub async fn spawn_miclow_stdio_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             pod_id.clone(),
+            replicaset_id.clone(),
             if view_stdout {
                 Some(
                     ExecutorOutputEvent::new_task_stdout
@@ -159,6 +162,7 @@ pub async fn spawn_miclow_stdio_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             pod_id.clone(),
+            replicaset_id.clone(),
             if view_stderr {
                 Some(
                     ExecutorOutputEvent::new_task_stderr
@@ -369,6 +373,7 @@ fn spawn_stream_reader<R>(
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     pod_id: PodId,
+    replicaset_id: ReplicaSetId,
     emit_func: Option<fn(MessageId, PodId, String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
@@ -381,6 +386,7 @@ where
         let topic_name_clone = topic_name.clone();
         let event_tx_clone = event_tx.clone();
         let pod_id_clone = pod_id.clone();
+        let replicaset_id_clone = replicaset_id.clone();
 
         let process_stream_outcome =
             move |outcome: Result<StreamOutcome, String>, line_content: &str| {
@@ -388,11 +394,13 @@ where
                 let pod_id_for_outcome = pod_id_clone.clone();
                 let event_tx_for_outcome = event_tx_clone.clone();
                 let topic_name_for_outcome = topic_name_clone.clone();
+                let replicaset_id_for_outcome = replicaset_id_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
+                            replicaset_id_for_outcome.clone(),
                             topic,
                             data,
                         );
@@ -402,6 +410,7 @@ where
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
+                            replicaset_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
                             output.clone(),
                         );
@@ -425,6 +434,7 @@ where
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
                             pod_id_for_outcome.clone(),
+                            replicaset_id_for_outcome.clone(),
                             topic_name_for_outcome.clone(),
                             output.clone(),
                         );
