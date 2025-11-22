@@ -24,6 +24,14 @@ impl RawTaskConfig {
             Vec::new()
         };
 
+        let private_response_topics = if let Some(raw_value) = self.private_response_topics {
+            let expanded_value = expand_toml_value(&raw_value, context)?;
+            Vec::<String>::from_toml_value(&expanded_value)
+                .ok_or_else(|| anyhow::anyhow!("private_response_topics must be an array of strings"))?
+        } else {
+            Vec::new()
+        };
+
         let view_stdout = expand_bool_field(self.view_stdout, context, "view_stdout")?
             .expect("view_stdout should be set by normalize_defaults()");
 
@@ -48,6 +56,7 @@ impl RawTaskConfig {
         Ok(ExpandedTaskConfig {
             name,
             subscribe_topics,
+            private_response_topics,
             view_stdout,
             view_stderr,
             lifecycle,
@@ -71,6 +80,7 @@ impl RawTaskConfig {
         Ok(TaskConfig {
             name: expanded.name,
             subscribe_topics: expanded.subscribe_topics,
+            private_response_topics: expanded.private_response_topics,
             view_stdout: expanded.view_stdout,
             view_stderr: expanded.view_stderr,
             lifecycle: expanded.lifecycle,

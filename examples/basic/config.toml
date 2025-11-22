@@ -7,7 +7,7 @@ working_directory = "${MICLOW_CONFIG_DIR}"
 view_stdout = true
 view_stderr = true
 subscribe_topics = ["demo.topic"]
-exclusive_topics = ["demo.topic.result"]
+private_response_topics = ["demo.topic.result"]
 
 [[tasks.lifecycle]]
 desired_instances = 1

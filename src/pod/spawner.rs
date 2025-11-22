@@ -186,14 +186,15 @@ impl PodSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    let ReplicaSetTopicMessage { topic, data } = topic_data;
+                                    let ReplicaSetTopicMessage { topic, data, from_replicaset_id } = topic_data;
                                     // topic.is_result()でレスポンストピックかどうかを判定可能
                                     // すべてのトピックメッセージをTopicとして扱う
                                     let input_event = ExecutorInputEvent::Topic {
                                         message_id: MessageId::new(),
                                         pod_id: pod_id.clone(),
-                                        topic,
-                                        data,
+                                        topic: topic.clone(),
+                                        data: data.clone(),
+                                        from_replicaset_id: from_replicaset_id.clone(),
                                     };
 
                                     if let Err(e) = backend_handle.input_sender.send(input_event) {

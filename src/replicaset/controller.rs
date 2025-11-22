@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
+use crate::topic::Topic;
 
 use crate::channels::{
     ExecutorOutputEventChannel, ExecutorOutputEventSender, PodEventChannel, PodEventSender,
@@ -99,7 +100,11 @@ impl ReplicaSetWorker {
             shutdown_token,
         } = self;
 
+        // リクエストトピックとfrom_replicaset_idのマッピング（レスポンス時に使用）
+        let mut request_topic_to_from_replicaset: HashMap<Topic, ReplicaSetId> = HashMap::new();
+
         let subscribe_topics = start_context.subscribe_topics.clone();
+        let private_response_topics: Vec<Topic> = start_context.private_response_topics.iter().map(|s| Topic::from(s.as_str())).collect();
         let topic_manager = start_context.topic_manager.clone();
 
         let ExecutorOutputEventChannel {
@@ -110,6 +115,16 @@ impl ReplicaSetWorker {
         Self::register_topic_subscriptions(
             &replicaset_id,
             &subscribe_topics,
+            &topic_manager,
+            replicaset_subscription_sender.clone(),
+        )
+        .await;
+
+        // private_response_topicsもtopic registryに登録
+        let private_response_topics_strings: Vec<String> = start_context.private_response_topics.clone();
+        Self::register_topic_subscriptions(
+            &replicaset_id,
+            &private_response_topics_strings,
             &topic_manager,
             replicaset_subscription_sender.clone(),
         )
@@ -149,8 +164,9 @@ impl ReplicaSetWorker {
                         Self::drain_pending_events(
                             &replicaset_id,
                             &mut pod_registry,
+                            &mut request_topic_to_from_replicaset,
                             &mut pending_events,
-                        );
+                        ).await;
                     }
                     Err(err) => {
                         log::error!(
@@ -185,12 +201,39 @@ impl ReplicaSetWorker {
                 topic_event = topic_receiver.recv() => {
                     match topic_event {
                         Some(event) => {
+                            // private_response_topicsに含まれるトピックの場合、to_replicaset_idをチェック
+                            let should_accept = if let Some(topic) = event.topic() {
+                                if private_response_topics.contains(topic) {
+                                    // private_response_topicsに含まれるトピックの場合、to_replicaset_idが自分のIDと一致するかチェック
+                                    if let Some(to_id) = event.to_replicaset_id() {
+                                        to_id == &replicaset_id
+                                    } else {
+                                        // to_replicaset_idが設定されていない場合は拒否
+                                        false
+                                    }
+                                } else {
+                                    // private_response_topicsに含まれないトピックは常に受け入れる
+                                    true
+                                }
+                            } else {
+                                true
+                            };
+
+                            if !should_accept {
+                                log::debug!(
+                                    "ReplicaSet {} filtered message on private_response_topic (to_replicaset_id mismatch)",
+                                    replicaset_id
+                                );
+                                continue;
+                            }
+
                             if pod_registry.idle_count() > 0 {
                                 match Self::route_topic_event(
                                     &replicaset_id,
                                     &mut pod_registry,
+                                    &mut request_topic_to_from_replicaset,
                                     event,
-                                ) {
+                                ).await {
                                     RouteStatus::Pending(event) => pending_events.push_back(event),
                                     RouteStatus::Delivered | RouteStatus::Dropped => {}
                                 }
@@ -239,11 +282,24 @@ impl ReplicaSetWorker {
                                 data
                             );
 
+                            // レスポンストピックの場合、to_replicaset_idを設定
+                            let to_replicaset_id = if topic.is_result() {
+                                // レスポンストピックの場合、元のリクエストのfrom_replicaset_idをto_replicaset_idとして設定
+                                if let Some(original_topic) = topic.original() {
+                                    request_topic_to_from_replicaset.get(&original_topic).cloned()
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
                             // ExecutorOutputEventに変換してbroadcast
                             let executor_event = ExecutorOutputEvent::Topic {
                                 message_id,
                                 pod_id: pod_id.clone(),
-                                replicaset_id: replicaset_id.clone(),
+                                from_replicaset_id: replicaset_id.clone(),
+                                to_replicaset_id,
                                 topic: topic.clone(),
                                 data,
                             };
@@ -280,8 +336,9 @@ impl ReplicaSetWorker {
                             Self::drain_pending_events(
                                 &replicaset_id,
                                 &mut pod_registry,
+                                &mut request_topic_to_from_replicaset,
                                 &mut pending_events,
-                            );
+                            ).await;
                         }
                         None => {
                             log::warn!(
@@ -365,9 +422,10 @@ impl ReplicaSetWorker {
         }
     }
 
-    fn drain_pending_events(
+    async fn drain_pending_events(
         replicaset_id: &ReplicaSetId,
         pod_registry: &mut PodRegistry,
+        request_topic_to_from_replicaset: &mut HashMap<Topic, ReplicaSetId>,
         pending_events: &mut VecDeque<ExecutorOutputEvent>,
     ) {
         while pod_registry.idle_count() > 0 {
@@ -375,7 +433,7 @@ impl ReplicaSetWorker {
                 break;
             };
 
-            match Self::route_topic_event(replicaset_id, pod_registry, event) {
+            match Self::route_topic_event(replicaset_id, pod_registry, request_topic_to_from_replicaset, event).await {
                 RouteStatus::Delivered | RouteStatus::Dropped => continue,
                 RouteStatus::Pending(event) => {
                     pending_events.push_front(event);
@@ -385,12 +443,13 @@ impl ReplicaSetWorker {
         }
     }
 
-    fn route_topic_event(
+    async fn route_topic_event(
         replicaset_id: &ReplicaSetId,
         pod_registry: &mut PodRegistry,
+        request_topic_to_from_replicaset: &mut HashMap<Topic, ReplicaSetId>,
         event: ExecutorOutputEvent,
     ) -> RouteStatus {
-        let Some(message) = Self::convert_to_replica_message(&event) else {
+        let Some(message) = Self::convert_to_replica_message(replicaset_id, &event) else {
             log::warn!(
                 "ReplicaSet {} received topic event without topic/data, dropping",
                 replicaset_id
@@ -399,6 +458,11 @@ impl ReplicaSetWorker {
         };
         // レスポンストピックでない場合（通常のトピック）はレスポンスを要求
         let requires_response = !message.topic.is_result();
+
+        // リクエスト送信時（レスポンスを要求する場合）にマッピングを保存
+        if requires_response {
+            request_topic_to_from_replicaset.insert(message.topic.clone(), message.from_replicaset_id.clone());
+        }
 
         if pod_registry.idle_count() == 0 || pod_registry.is_empty() {
             log::debug!(
@@ -456,12 +520,21 @@ impl ReplicaSetWorker {
         RouteStatus::Pending(event)
     }
 
-    fn convert_to_replica_message(event: &ExecutorOutputEvent) -> Option<ReplicaSetTopicMessage> {
+    fn convert_to_replica_message(
+        _replicaset_id: &ReplicaSetId,
+        event: &ExecutorOutputEvent,
+    ) -> Option<ReplicaSetTopicMessage> {
         match event {
-            ExecutorOutputEvent::Topic { topic, data, .. } => Some(ReplicaSetTopicMessage {
-                topic: topic.clone(),
-                data: data.clone(),
-            }),
+            ExecutorOutputEvent::Topic { topic, data, from_replicaset_id, .. } => {
+                // リクエスト送信時は、このReplicaSetのIDをfrom_replicaset_idとして設定
+                // ただし、既にfrom_replicaset_idが設定されている場合はそれを使用（他のReplicaSetからの転送の場合）
+                let from_id = from_replicaset_id.clone();
+                Some(ReplicaSetTopicMessage {
+                    topic: topic.clone(),
+                    data: data.clone(),
+                    from_replicaset_id: from_id,
+                })
+            }
             _ => None,
         }
     }

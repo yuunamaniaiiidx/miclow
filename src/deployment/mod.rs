@@ -38,6 +38,7 @@ impl DeploymentManager {
                 topic_manager: topic_manager.clone(),
                 userlog_sender: userlog_sender.clone(),
                 subscribe_topics: task.subscribe_topics.clone(),
+                private_response_topics: task.private_response_topics.clone(),
                 view_stdout: task.view_stdout,
                 view_stderr: task.view_stderr,
             };

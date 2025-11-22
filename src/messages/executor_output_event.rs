@@ -8,7 +8,8 @@ pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
         pod_id: PodId,
-        replicaset_id: ReplicaSetId,
+        from_replicaset_id: ReplicaSetId,
+        to_replicaset_id: Option<ReplicaSetId>,
         topic: Topic,
         data: String,
     },
@@ -38,14 +39,15 @@ impl ExecutorOutputEvent {
     pub fn new_message(
         message_id: MessageId,
         pod_id: PodId,
-        replicaset_id: ReplicaSetId,
+        from_replicaset_id: ReplicaSetId,
         topic: impl Into<Topic>,
         data: String,
     ) -> Self {
         Self::Topic {
             message_id,
             pod_id,
-            replicaset_id,
+            from_replicaset_id,
+            to_replicaset_id: None,
             topic: topic.into(),
             data,
         }
@@ -99,10 +101,22 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn replicaset_id(&self) -> Option<&ReplicaSetId> {
+    pub fn from_replicaset_id(&self) -> Option<&ReplicaSetId> {
         match self {
-            Self::Topic { replicaset_id, .. } => Some(replicaset_id),
+            Self::Topic { from_replicaset_id, .. } => Some(from_replicaset_id),
             _ => None,
         }
+    }
+
+    pub fn to_replicaset_id(&self) -> Option<&ReplicaSetId> {
+        match self {
+            Self::Topic { to_replicaset_id, .. } => to_replicaset_id.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn replicaset_id(&self) -> Option<&ReplicaSetId> {
+        // 後方互換性のため、from_replicaset_idを返す
+        self.from_replicaset_id()
     }
 }
