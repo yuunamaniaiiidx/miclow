@@ -372,7 +372,7 @@ impl ReplicaSetWorker {
 
         for topic in topics {
             topic_manager
-                .add_subscriber(topic.clone(), sender.clone())
+                .add_subscriber(topic.clone(), replicaset_id.clone(), sender.clone())
                 .await;
             log::info!(
                 "ReplicaSet {} subscribed to topic '{}'",
