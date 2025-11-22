@@ -1,5 +1,4 @@
 import miclow
-
 print("Sending message...")
 miclow.send_message("mytopic", "Hello, World!")
 

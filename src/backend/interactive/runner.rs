@@ -17,7 +17,7 @@ pub async fn spawn_interactive_protocol(
 ) -> Result<TaskBackendHandle, Error> {
     let system_input_topic = config.system_input_topic.clone();
 
-    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::with_replicaset_id(replicaset_id.clone());
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
     let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let shutdown_channel = ShutdownChannel::new();
 

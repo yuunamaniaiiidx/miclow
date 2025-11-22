@@ -59,7 +59,7 @@ impl ReplicaSetWorker {
         let ExecutorOutputEventChannel {
             sender: replicaset_subscription_sender,
             receiver: mut topic_receiver,
-        } = ExecutorOutputEventChannel::with_replicaset_id(replicaset_id.clone());
+        } = ExecutorOutputEventChannel::new();
 
         Self::register_topic_subscriptions(
             &replicaset_id,
@@ -150,6 +150,17 @@ impl ReplicaSetWorker {
                 topic_event = topic_receiver.recv() => {
                     match topic_event {
                         Some(event) => {
+                            // 送信元が自分自身の場合はスキップ
+                            if let Some(from_id) = event.from_replicaset_id() {
+                                if from_id == &replicaset_id {
+                                    log::debug!(
+                                        "ReplicaSet {} filtered message from itself",
+                                        replicaset_id
+                                    );
+                                    continue;
+                                }
+                            }
+
                             // private_response_topicsに含まれるトピックの場合、to_replicaset_idをチェック
                             let should_accept = if let Some(topic) = event.topic() {
                                 if private_response_topics.contains(topic) {

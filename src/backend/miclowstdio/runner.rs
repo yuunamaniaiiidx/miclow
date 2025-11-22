@@ -90,7 +90,7 @@ pub async fn spawn_miclow_stdio_protocol(
     let view_stdout = config.view_stdout;
     let view_stderr = config.view_stderr;
 
-    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::with_replicaset_id(replicaset_id.clone());
+    let event_channel: ExecutorOutputEventChannel = ExecutorOutputEventChannel::new();
     let input_channel: ExecutorInputEventChannel = ExecutorInputEventChannel::new();
     let mut shutdown_channel = ShutdownChannel::new();
 
