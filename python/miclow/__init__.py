@@ -27,7 +27,7 @@ __all__ = [
     "get_status", "pull",
     "receive", "receive_response",
     "MessageType",
-    "publish_response", "response_topic"
+    "publish_response", "response_topic", "idle"
 ]
 
 class SystemResponseType(Enum):
@@ -333,6 +333,8 @@ class MiclowClient:
             if result is not None:
                 return result
 
+            # Signal that we're ready to receive messages
+            self.idle()
             self._internal_receive_message()
             return self._buffer.get_oldest()
         else:
@@ -341,6 +343,8 @@ class MiclowClient:
             if message is not None:
                 return message
 
+            # Signal that we're ready to receive messages
+            self.idle()
             while True:
                 received_topic, received_message = self._internal_receive_message()
                 if received_topic == topic:
@@ -389,10 +393,19 @@ class MiclowClient:
         print('::"system.pull"')
         sys.stdout.flush()
 
+        # receive() will automatically send idle() when waiting for messages
         response = self.receive("system.pull")
         if isinstance(response, SystemResponse):
             return response
         raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
+
+    def idle(self) -> None:
+        """
+        Send an idle signal to the system.
+        This informs the system that the process is ready to receive messages.
+        The message content is empty.
+        """
+        self.publish("system.idle", "")
 
     def _message_generator(
         self, target_topic: str
@@ -538,4 +551,17 @@ def publish_response(original_topic: str, data: str) -> None:
     """
     return_topic = response_topic(original_topic)
     publish(return_topic, data)
+
+
+def idle() -> None:
+    """
+    Send an idle signal to the system.
+    This informs the system that the process is ready to receive messages.
+    The message content is empty.
+
+    Example:
+        # Signal that the process is ready to receive messages
+        idle()
+    """
+    get_client().idle()
 

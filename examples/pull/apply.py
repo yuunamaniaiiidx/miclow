@@ -1,3 +1,4 @@
 import miclow
 
-miclow.publish("apply", "apply")
+miclow.publish("apply", "data")
+input()
