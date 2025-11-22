@@ -86,7 +86,7 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn data(&self) -> Option<&Arc<str>> {
+    pub fn data(&self) -> Option<&str> {
         match self {
             Self::Topic { data, .. } => Some(data),
             Self::Stdout { data, .. } => Some(data),
