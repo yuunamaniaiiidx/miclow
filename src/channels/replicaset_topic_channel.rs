@@ -1,11 +1,12 @@
 use crate::replicaset::ReplicaSetId;
 use crate::topic::Topic;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ReplicaSetTopicMessage {
     pub topic: Topic,
-    pub data: String,
+    pub data: Arc<str>,
     pub from_replicaset_id: ReplicaSetId,
 }
 

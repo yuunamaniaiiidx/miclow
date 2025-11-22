@@ -2,6 +2,7 @@ use crate::message_id::MessageId;
 use crate::pod::PodId;
 use crate::replicaset::ReplicaSetId;
 use crate::topic::Topic;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum ExecutorOutputEvent {
@@ -11,17 +12,17 @@ pub enum ExecutorOutputEvent {
         from_replicaset_id: ReplicaSetId,
         to_replicaset_id: Option<ReplicaSetId>,
         topic: Topic,
-        data: String,
+        data: Arc<str>,
     },
     Stdout {
         message_id: MessageId,
         pod_id: PodId,
-        data: String,
+        data: Arc<str>,
     },
     Stderr {
         message_id: MessageId,
         pod_id: PodId,
-        data: String,
+        data: Arc<str>,
     },
     Error {
         message_id: MessageId,
@@ -41,7 +42,7 @@ impl ExecutorOutputEvent {
         pod_id: PodId,
         from_replicaset_id: ReplicaSetId,
         topic: impl Into<Topic>,
-        data: String,
+        data: impl Into<Arc<str>>,
     ) -> Self {
         Self::Topic {
             message_id,
@@ -49,7 +50,7 @@ impl ExecutorOutputEvent {
             from_replicaset_id,
             to_replicaset_id: None,
             topic: topic.into(),
-            data,
+            data: data.into(),
         }
     }
 
@@ -69,23 +70,23 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_task_stdout(message_id: MessageId, pod_id: PodId, data: String) -> Self {
+    pub fn new_task_stdout(message_id: MessageId, pod_id: PodId, data: impl Into<Arc<str>>) -> Self {
         Self::Stdout {
             message_id,
             pod_id,
-            data,
+            data: data.into(),
         }
     }
 
-    pub fn new_task_stderr(message_id: MessageId, pod_id: PodId, data: String) -> Self {
+    pub fn new_task_stderr(message_id: MessageId, pod_id: PodId, data: impl Into<Arc<str>>) -> Self {
         Self::Stderr {
             message_id,
             pod_id,
-            data,
+            data: data.into(),
         }
     }
 
-    pub fn data(&self) -> Option<&String> {
+    pub fn data(&self) -> Option<&Arc<str>> {
         match self {
             Self::Topic { data, .. } => Some(data),
             Self::Stdout { data, .. } => Some(data),

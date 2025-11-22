@@ -150,12 +150,12 @@ impl PodSpawner {
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {
                                             if view_stdout {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.as_ref().to_string() });
                                             }
                                         },
                                         ExecutorOutputEvent::Stderr { data, .. } => {
                                             if view_stderr {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.as_ref().to_string() });
                                             }
                                         },
                                         ExecutorOutputEvent::Error { error, .. } => {
