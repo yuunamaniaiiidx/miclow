@@ -352,7 +352,7 @@ impl ReplicaSetWorker {
         Ok(ManagedPod {
             handler,
             topic_sender: topic_channel.sender,
-            state: crate::pod::PodState::Idle,
+            state: crate::pod::PodState::Busy,
         })
     }
 
