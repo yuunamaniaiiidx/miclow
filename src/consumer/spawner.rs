@@ -4,7 +4,7 @@ use crate::channels::{
     ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
-use crate::message_id::MessageId;
+use crate::messages::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::shutdown_registry::TaskHandle;
 use crate::subscription::SubscriptionId;

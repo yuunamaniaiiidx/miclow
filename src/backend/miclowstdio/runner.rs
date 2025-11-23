@@ -3,7 +3,7 @@ use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
-use crate::message_id::MessageId;
+use crate::messages::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
 use crate::consumer::ConsumerId;
 use crate::subscription::SubscriptionId;

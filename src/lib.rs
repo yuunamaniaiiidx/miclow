@@ -3,7 +3,6 @@ pub mod channels;
 pub mod config;
 pub mod coordinator;
 pub mod logging;
-pub mod message_id;
 pub mod messages;
 pub mod miclow;
 pub mod consumer;

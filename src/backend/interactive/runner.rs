@@ -1,7 +1,7 @@
 use crate::backend::interactive::config::InteractiveConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel};
-use crate::message_id::MessageId;
+use crate::messages::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::consumer::ConsumerId;
 use crate::subscription::SubscriptionId;

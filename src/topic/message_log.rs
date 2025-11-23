@@ -119,7 +119,7 @@ where
 mod tests {
     use super::*;
     use crate::consumer::ConsumerId;
-    use crate::message_id::MessageId;
+    use crate::messages::MessageId;
     use crate::messages::ExecutorOutputEvent;
     use crate::subscription::SubscriptionId;
     use crate::topic::Topic;

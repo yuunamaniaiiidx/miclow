@@ -1,4 +1,4 @@
-use crate::message_id::MessageId;
+use crate::messages::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::consumer::ConsumerId;
 use anyhow::Result;
