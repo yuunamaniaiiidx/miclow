@@ -44,11 +44,18 @@ impl TopicSubscriptionRegistry {
         };
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {
             let mut messages = self.messages.write().await;
+            // entry()は所有権を取るので、カーソル調整用にクローンを保存（必要な場合のみ）
+            let topic_for_cursor = if self.max_log_size.is_some() {
+                Some(topic_owned.clone())
+            } else {
+                None
+            };
+            let topic_str = topic_owned.as_str().to_string();
             let queue = messages
-                .entry(topic_owned.clone())
+                .entry(topic_owned)
                 .or_insert_with(VecDeque::new);
             let before_len = queue.len();
-            log::info!("store_message push: topic={:?}, topic_addr={:p}, topic_str={:?}, before_len={:?}", topic_owned, &topic_owned, topic_owned.as_str(), before_len);
+            log::debug!("store_message push: topic_str={:?}, before_len={:?}", topic_str, before_len);
             queue.push_back(event);
             let mut removed_count = 0;
             if let Some(max_size) = self.max_log_size {
@@ -58,20 +65,25 @@ impl TopicSubscriptionRegistry {
                 }
             }
             // カーソル位置を調整（削除されたメッセージ数分だけ減らす）
+            // 該当トピックのカーソルのみを更新
             if removed_count > 0 {
-                let mut cursors = self.message_cursors.write().await;
-                for (key, cursor) in cursors.iter_mut() {
-                    if key.1 == topic_owned {
-                        if *cursor >= removed_count {
-                            *cursor -= removed_count;
-                        } else {
-                            *cursor = 0;
+                if let Some(topic_for_cursor) = topic_for_cursor {
+                    let mut cursors = self.message_cursors.write().await;
+                    // 該当トピックのカーソルのみを効率的に更新
+                    // イテレータで直接更新することで、不要なクローンを避ける
+                    for (key, cursor) in cursors.iter_mut() {
+                        if key.1 == topic_for_cursor {
+                            if *cursor >= removed_count {
+                                *cursor -= removed_count;
+                            } else {
+                                *cursor = 0;
+                            }
                         }
                     }
                 }
             }
             let after_len = queue.len();
-            log::info!("store_message push: topic={:?}, topic_addr={:p}, after_len={:?}", topic_owned, &topic_owned, after_len);
+            log::debug!("store_message push: topic_str={:?}, after_len={:?}", topic_str, after_len);
         }
         Ok(())
     }
@@ -81,22 +93,26 @@ impl TopicSubscriptionRegistry {
         subscription_id: SubscriptionId,
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
-        let mut messages = self.messages.write().await;
-        let queue = messages.get_mut(&topic)?;
+        // まずreadロックでメッセージを読み取る
+        let messages = self.messages.read().await;
+        let queue = messages.get(&topic)?;
+        let queue_len = queue.len();
         
-        let key = (subscription_id.clone(), topic.clone());
+        // カーソル更新のためにwriteロックを取得
         let mut cursors = self.message_cursors.write().await;
+        let key = (subscription_id, topic);
         let cursor = cursors.entry(key.clone()).or_insert(0);
         
-        log::info!("called pull_message: key={:?}, topic_addr={:p}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, &key.1, key.1.as_str(), cursor, queue.len());
+        log::debug!("called pull_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
         
-        if *cursor < queue.len() {
+        if *cursor < queue_len {
+            // readロックを保持したままクローン
             let result = queue[*cursor].clone();
             *cursor += 1;
-            log::info!("pull_message: key={:?}, topic_addr={:p}, pulled_ok, new_cursor={:?}", key, &key.1, cursor);
+            log::debug!("pull_message: key={:?}, pulled_ok, new_cursor={:?}", key, cursor);
             Some(result)
         } else {
-            log::info!("pull_message: key={:?}, topic_addr={:p}, no_data", key, &key.1);
+            log::debug!("pull_message: key={:?}, no_data", key);
             None
         }
     }
@@ -117,12 +133,12 @@ impl TopicSubscriptionRegistry {
         }
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {
             let mut responses = self.responses.write().await;
-            let key = (consumer_id.clone(), topic_owned.clone());
+            let key = (consumer_id, topic_owned);
             let queue = responses
                 .entry(key.clone())
                 .or_insert_with(VecDeque::new);
             let before_len = queue.len();
-            log::info!("store_response push: key={:?}, topic_addr={:p}, topic_str={:?}, before_len={:?}", key, &key.1, key.1.as_str(), before_len);
+            log::debug!("store_response push: key={:?}, topic_str={:?}, before_len={:?}", key, key.1.as_str(), before_len);
             queue.push_back(event);
             if let Some(max_size) = self.max_log_size {
                 while queue.len() > max_size {
@@ -130,7 +146,7 @@ impl TopicSubscriptionRegistry {
                 }
             }
             let after_len = queue.len();
-            log::info!("store_response push: key={:?}, topic_addr={:p}, after_len={:?}", key, &key.1, after_len);
+            log::debug!("store_response push: key={:?}, after_len={:?}", key, after_len);
         }
         Ok(())
     }
@@ -141,13 +157,13 @@ impl TopicSubscriptionRegistry {
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
         let mut responses = self.responses.write().await;
-        let key = (consumer_id.clone(), topic.clone());
-        log::info!("pull_response called: key={:?}, topic_addr={:p}, topic_str={:?}", key, &key.1, key.1.as_str());
+        let key = (consumer_id, topic);
+        log::debug!("pull_response called: key={:?}, topic_str={:?}", key, key.1.as_str());
 
         let queue = responses.get_mut(&key)?;
         
         let before_len = queue.len();
-        log::info!("called pull_response: key={:?}, topic_addr={:p}, topic_str={:?}, before_len={:?}", key, &key.1, key.1.as_str(), before_len);
+        log::debug!("called pull_response: key={:?}, topic_str={:?}, before_len={:?}", key, key.1.as_str(), before_len);
         
         let result = queue.pop_front();
         // 空になったキューを削除
@@ -155,8 +171,8 @@ impl TopicSubscriptionRegistry {
             responses.remove(&key);
         }
         match &result {
-            Some(_) => log::info!("pull_response: key={:?}, topic_addr={:p}, pulled_ok", key, &key.1),
-            None => log::info!("pull_response: key={:?}, topic_addr={:p}, no_data", key, &key.1),
+            Some(_) => log::debug!("pull_response: key={:?}, pulled_ok", key),
+            None => log::debug!("pull_response: key={:?}, no_data", key),
         }
         result
     }

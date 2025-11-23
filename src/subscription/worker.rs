@@ -230,7 +230,7 @@ impl SubscriptionWorker {
                             }
                         }
                         Some(ConsumerEvent::ConsumerRequesting { consumer_id, topic: requested_topic }) => {
-                            log::info!("worker: pull_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            log::debug!("worker: pull_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
                             
@@ -249,7 +249,7 @@ impl SubscriptionWorker {
                             
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
-                                    topic: requested_topic.clone(),
+                                    topic: requested_topic,
                                     data,
                                     from_subscription_id: subscription_id.clone(),
                                 };
@@ -262,6 +262,8 @@ impl SubscriptionWorker {
                                         e
                                     );
                                 } else {
+                                    // 状態を更新（idle_countの更新も含む）
+                                    // 注: get_mutはO(1)なので、重複呼び出しのオーバーヘッドは小さい
                                     consumer_registry.set_consumer_processing_with_from_consumer_id(
                                         &consumer_id,
                                         from_consumer_id,
@@ -276,7 +278,7 @@ impl SubscriptionWorker {
                             }
                         }
                         Some(ConsumerEvent::ConsumerResultRequesting { consumer_id, topic: requested_topic }) => {
-                            log::info!("worker: pull_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            log::debug!("worker: pull_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
                             
@@ -295,7 +297,7 @@ impl SubscriptionWorker {
                             
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
-                                    topic: requested_topic.clone(),
+                                    topic: requested_topic,
                                     data,
                                     from_subscription_id: subscription_id.clone(),
                                 };
@@ -308,6 +310,8 @@ impl SubscriptionWorker {
                                         e
                                     );
                                 } else {
+                                    // 状態を更新（idle_countの更新も含む）
+                                    // 注: get_mutはO(1)なので、重複呼び出しのオーバーヘッドは小さい
                                     consumer_registry.set_consumer_processing_with_from_consumer_id(
                                         &consumer_id,
                                         from_consumer_id,

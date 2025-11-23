@@ -102,7 +102,7 @@ impl ConsumerSpawner {
 
                                     match &event {
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
-                                            log::info!(
+                                            log::debug!(
                                                 "Message event for consumer {} on topic '{}': '{}'",
                                                 consumer_id,
                                                 topic,
@@ -124,7 +124,8 @@ impl ConsumerSpawner {
                                                 );
                                             }
 
-                                            if topic.as_str().to_lowercase() == "system.pull" {
+                                            // アロケーションを避けるため、eq_ignore_ascii_caseを使用
+                                            if topic.as_str().eq_ignore_ascii_case("system.pull") {
                                                 let requested_topic = crate::topic::Topic::from(data.trim());
                                                 if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
                                                     consumer_id: consumer_id.clone(),
@@ -136,7 +137,7 @@ impl ConsumerSpawner {
                                                         e
                                                     );
                                                 }
-                                            } else if topic.as_str().to_lowercase() == "system.result" {
+                                            } else if topic.as_str().eq_ignore_ascii_case("system.result") {
                                                 let requested_topic = crate::topic::Topic::from(data.trim());
                                                 if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerResultRequesting {
                                                     consumer_id: consumer_id.clone(),
