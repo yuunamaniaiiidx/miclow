@@ -233,82 +233,49 @@ impl SubscriptionWorker {
                             );
                             
                             // 要求されたトピックから1件取得
-                            if let Some(topic_event) = topic_manager.pull_message(
+                            let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pull_message(
                                 subscription_id.clone(),
                                 requested_topic.clone(),
                             ).await {
-                                // データをConsumerに送信
-                                if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
-                                    let subscription_message = SubscriptionTopicMessage {
-                                        topic: requested_topic.clone(),
-                                        data: topic_event.data().map(|s| s.into()),
-                                        from_subscription_id: subscription_id.clone(),
-                                    };
-
-                                    if let Err(e) = consumer.topic_sender.send(subscription_message) {
-                                        log::warn!(
-                                            "Subscription {} failed to send pulled data to consumer {}: {}",
-                                            subscription_id,
-                                            consumer_id,
-                                            e
-                                        );
-                                    } else {
-                                        // Topicを送信したときに、ExecutorOutputEvent::Topicのconsumer_idを取得
-                                        // これが元の呼び出し元のconsumer_id
-                                        let from_consumer_id = match &topic_event {
-                                            ExecutorOutputEvent::Topic { consumer_id, .. } => Some(consumer_id.clone()),
-                                            _ => None,
-                                        };
-                                        
-                                        // Processing状態に遷移し、from_consumer_idを設定
-                                        consumer_registry.set_consumer_processing_with_from_consumer_id(
-                                            &consumer_id,
-                                            from_consumer_id,
-                                        );
-                                        log::info!(
-                                            "Subscription {} sent pulled data from topic '{}' to consumer {}",
-                                            subscription_id,
-                                            requested_topic,
-                                            consumer_id
-                                        );
-                                    }
-                                }
+                                // Topicを送信したときに、ExecutorOutputEvent::Topicのconsumer_idを取得
+                                // これが元の呼び出し元のconsumer_id
+                                let from_consumer_id = match &topic_event {
+                                    ExecutorOutputEvent::Topic { consumer_id, .. } => Some(consumer_id.clone()),
+                                    _ => None,
+                                };
+                                (topic_event.data().map(|s| s.into()), from_consumer_id)
                             } else {
-                                // データがない場合、Noneを送信
-                                if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
-                                    let subscription_message = SubscriptionTopicMessage {
-                                        topic: requested_topic.clone(),
-                                        data: None, // データなしを表現
-                                        from_subscription_id: subscription_id.clone(),
-                                    };
-                                    
-                                    if let Err(e) = consumer.topic_sender.send(subscription_message) {
-                                        log::warn!(
-                                            "Subscription {} failed to send 'no data' response to consumer {}: {}",
-                                            subscription_id,
-                                            consumer_id,
-                                            e
-                                        );
-                                    } else {
-                                        // Processing状態に遷移（データなしでも処理完了として扱う）
-                                        consumer_registry.set_consumer_processing_with_from_consumer_id(
-                                            &consumer_id,
-                                            None,
-                                        );
-                                        log::debug!(
-                                            "Subscription {} sent 'no data' response (line count 0) for topic '{}' to consumer {}",
-                                            subscription_id,
-                                            requested_topic,
-                                            consumer_id
-                                        );
-                                    }
-                                } else {
+                                (None, None)
+                            };
+                            
+                            // Consumerに送信（データあり/なし共通処理）
+                            if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                let subscription_message = SubscriptionTopicMessage {
+                                    topic: requested_topic.clone(),
+                                    data,
+                                    from_subscription_id: subscription_id.clone(),
+                                };
+                                
+                                if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
-                                        "Subscription {} consumer {} not found when sending 'no data' response",
+                                        "Subscription {} failed to send pulled data to consumer {}: {}",
                                         subscription_id,
-                                        consumer_id
+                                        consumer_id,
+                                        e
+                                    );
+                                } else {
+                                    // Processing状態に遷移し、from_consumer_idを設定
+                                    consumer_registry.set_consumer_processing_with_from_consumer_id(
+                                        &consumer_id,
+                                        from_consumer_id,
                                     );
                                 }
+                            } else {
+                                log::warn!(
+                                    "Subscription {} consumer {} not found when sending pull response",
+                                    subscription_id,
+                                    consumer_id
+                                );
                             }
                         }
                         None => {
