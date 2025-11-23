@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::channels::ReplicaSetTopicSender;
-use crate::pod::{ConsumerId, ConsumerSpawnHandler, ConsumerState};
+use crate::consumer::{ConsumerId, ConsumerSpawnHandler, ConsumerState};
 
 pub struct ManagedConsumer {
     pub handler: ConsumerSpawnHandler,

@@ -8,11 +8,11 @@ use crate::channels::{
     ReplicaSetTopicChannel, ReplicaSetTopicMessage,
 };
 use crate::messages::{ExecutorOutputEvent, PodEvent};
-use crate::pod::{ConsumerId, ConsumerSpawner};
-use crate::replicaset::context::ConsumerStartContext;
-use crate::replicaset::pod_registry::{ManagedConsumer, ConsumerRegistry};
-use crate::replicaset::route_status::RouteStatus;
-use crate::replicaset::SubscriptionId;
+use crate::consumer::{ConsumerId, ConsumerSpawner};
+use crate::subscription::context::ConsumerStartContext;
+use crate::subscription::pod_registry::{ManagedConsumer, ConsumerRegistry};
+use crate::subscription::route_status::RouteStatus;
+use crate::subscription::SubscriptionId;
 use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -353,7 +353,7 @@ impl SubscriptionWorker {
         Ok(ManagedConsumer {
             handler,
             topic_sender: topic_channel.sender,
-            state: crate::pod::ConsumerState::Busy,
+            state: crate::consumer::ConsumerState::Busy,
         })
     }
 
@@ -443,7 +443,7 @@ impl SubscriptionWorker {
             };
 
             if let Some(consumer) = consumer_registry.get_consumer_mut(&target_consumer_id) {
-                if !matches!(consumer.state, crate::pod::ConsumerState::Idle) {
+                if !matches!(consumer.state, crate::consumer::ConsumerState::Idle) {
                     continue;
                 }
 

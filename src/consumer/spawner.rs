@@ -6,7 +6,7 @@ use crate::channels::{
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, PodEvent};
-use crate::replicaset::SubscriptionId;
+use crate::subscription::SubscriptionId;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -189,7 +189,7 @@ impl ConsumerSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    let ReplicaSetTopicMessage { topic, data, from_replicaset_id } = topic_data;
+                                    let ReplicaSetTopicMessage { topic, data, from_subscription_id } = topic_data;
                                     // topic.is_result()でレスポンストピックかどうかを判定可能
                                     // すべてのトピックメッセージをTopicとして扱う
                                     let input_event = ExecutorInputEvent::Topic {
@@ -197,7 +197,7 @@ impl ConsumerSpawner {
                                         pod_id: consumer_id.clone(),
                                         topic: topic.clone(),
                                         data: data.clone(),
-                                        from_replicaset_id: from_replicaset_id.clone(),
+                                        from_subscription_id: from_subscription_id.clone(),
                                     };
 
                                     if let Err(e) = backend_handle.input_sender.send(input_event) {

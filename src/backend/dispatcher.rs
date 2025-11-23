@@ -1,14 +1,14 @@
 use crate::backend::handle::TaskBackendHandle;
 use crate::backend::interactive::{spawn_interactive_protocol, InteractiveConfig};
 use crate::backend::miclowstdio::{spawn_miclow_stdio_protocol, MiclowStdIOConfig};
-use crate::pod::PodId;
-use crate::replicaset::ReplicaSetId;
+use crate::consumer::ConsumerId;
+use crate::subscription::SubscriptionId;
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 
 #[async_trait]
 pub trait TaskBackend: Send + Sync {
-    async fn spawn(&self, pod_id: PodId, replicaset_id: ReplicaSetId) -> Result<TaskBackendHandle, Error>;
+    async fn spawn(&self, consumer_id: ConsumerId, subscription_id: SubscriptionId) -> Result<TaskBackendHandle, Error>;
 }
 
 #[derive(Debug, Clone)]
@@ -19,13 +19,13 @@ pub enum ProtocolBackend {
 
 #[async_trait]
 impl TaskBackend for ProtocolBackend {
-    async fn spawn(&self, pod_id: PodId, replicaset_id: ReplicaSetId) -> Result<TaskBackendHandle, Error> {
+    async fn spawn(&self, consumer_id: ConsumerId, subscription_id: SubscriptionId) -> Result<TaskBackendHandle, Error> {
         match self {
             ProtocolBackend::MiclowStdIO(config) => {
-                spawn_miclow_stdio_protocol(config, pod_id, replicaset_id).await
+                spawn_miclow_stdio_protocol(config, consumer_id, subscription_id).await
             }
             ProtocolBackend::Interactive(config) => {
-                spawn_interactive_protocol(config, pod_id, replicaset_id).await
+                spawn_interactive_protocol(config, consumer_id, subscription_id).await
             }
         }
     }

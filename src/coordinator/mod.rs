@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
-use crate::replicaset::{ConsumerStartContext, SubscriptionController, SubscriptionId, SubscriptionSpec};
+use crate::subscription::{ConsumerStartContext, SubscriptionController, SubscriptionId, SubscriptionSpec};
 use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 

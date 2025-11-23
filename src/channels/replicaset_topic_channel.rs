@@ -1,4 +1,4 @@
-use crate::replicaset::ReplicaSetId;
+use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 pub struct ReplicaSetTopicMessage {
     pub topic: Topic,
     pub data: Arc<str>,
-    pub from_replicaset_id: ReplicaSetId,
+    pub from_subscription_id: SubscriptionId,
 }
 
 #[derive(Clone)]

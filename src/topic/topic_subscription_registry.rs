@@ -1,8 +1,8 @@
 use crate::channels::ExecutorOutputEventSender;
 use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
-use crate::pod::PodId;
-use crate::replicaset::ReplicaSetId;
+use crate::consumer::ConsumerId;
+use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -10,8 +10,8 @@ use tokio::sync::RwLock;
 
 #[derive(Clone)]
 pub struct TopicSubscriptionRegistry {
-    topic_destination: Arc<RwLock<HashMap<Topic, HashSet<ReplicaSetId>>>>,
-    senders: Arc<RwLock<HashMap<ReplicaSetId, ExecutorOutputEventSender>>>,
+    topic_destination: Arc<RwLock<HashMap<Topic, HashSet<SubscriptionId>>>>,
+    senders: Arc<RwLock<HashMap<SubscriptionId, ExecutorOutputEventSender>>>,
     latest_messages: Arc<RwLock<HashMap<Topic, ExecutorOutputEvent>>>,
 }
 
@@ -27,21 +27,21 @@ impl TopicSubscriptionRegistry {
     pub async fn add_subscriber(
         &self,
         topic: impl Into<Topic>,
-        replicaset_id: ReplicaSetId,
+        subscription_id: SubscriptionId,
         sender: ExecutorOutputEventSender,
     ) {
         let topic = topic.into();
         
-        // ReplicaSetIdとSenderのマッピングを登録
+        // SubscriptionIdとSenderのマッピングを登録
         {
             let mut senders = self.senders.write().await;
-            senders.insert(replicaset_id.clone(), sender);
+            senders.insert(subscription_id.clone(), sender);
         }
         
-        // トピックとReplicaSetIdのマッピングを登録（HashSetなので重複は自動的に防がれる）
+        // トピックとSubscriptionIdのマッピングを登録（HashSetなので重複は自動的に防がれる）
         let subscriber_count = {
             let mut topic_dest = self.topic_destination.write().await;
-            topic_dest.entry(topic.clone()).or_insert_with(HashSet::new).insert(replicaset_id);
+            topic_dest.entry(topic.clone()).or_insert_with(HashSet::new).insert(subscription_id);
             topic_dest.get(&topic).map(|s| s.len()).unwrap_or(0)
         };
         
@@ -70,13 +70,13 @@ impl TopicSubscriptionRegistry {
             latest_messages.insert(topic_owned.clone(), event.clone());
         }
 
-        // トピックからReplicaSetIdのリストを取得
-        let replicaset_ids = {
+        // トピックからSubscriptionIdのリストを取得
+        let subscription_ids = {
             let topic_dest = self.topic_destination.read().await;
             topic_dest.get(&topic_owned).cloned()
         };
 
-        let Some(replicaset_ids) = replicaset_ids else {
+        let Some(subscription_ids) = subscription_ids else {
             log::info!(
                 "No subscriber found for topic '{}', skipping broadcast",
                 topic_owned
@@ -84,12 +84,12 @@ impl TopicSubscriptionRegistry {
             return Ok(());
         };
 
-        // 各ReplicaSetIdからSenderを取得して送信
+        // 各SubscriptionIdからSenderを取得して送信
         let mut success_count = 0;
         let mut error_count = 0;
         let senders = self.senders.read().await;
-        for replicaset_id in replicaset_ids.iter() {
-            if let Some(sender) = senders.get(replicaset_id) {
+        for subscription_id in subscription_ids.iter() {
+            if let Some(sender) = senders.get(subscription_id) {
                 match sender.send(event.clone()) {
                     Ok(_) => {
                         success_count += 1;
@@ -97,9 +97,9 @@ impl TopicSubscriptionRegistry {
                     Err(e) => {
                         error_count += 1;
                         log::warn!(
-                            "Failed to send message on topic '{}' to ReplicaSet {}: {}",
+                            "Failed to send message on topic '{}' to Subscription {}: {}",
                             topic_owned,
-                            replicaset_id,
+                            subscription_id,
                             e
                         );
                     }
@@ -107,8 +107,8 @@ impl TopicSubscriptionRegistry {
             } else {
                 error_count += 1;
                 log::warn!(
-                    "Sender not found for ReplicaSet {} on topic '{}'",
-                    replicaset_id,
+                    "Sender not found for Subscription {} on topic '{}'",
+                    subscription_id,
                     topic_owned
                 );
             }
@@ -150,15 +150,15 @@ impl TopicSubscriptionRegistry {
         topic: &Topic,
         event: ExecutorOutputEvent,
     ) -> Result<(), String> {
-        let from_replicaset_id = event.from_replicaset_id().cloned();
+        let from_subscription_id = event.from_subscription_id().cloned();
 
         // レスポンスを送信（topic.resultトピックで）
         let response_topic = topic.result();
         let response_event = ExecutorOutputEvent::Topic {
             message_id: MessageId::new(),
-            pod_id: PodId::new(),
-            from_replicaset_id: ReplicaSetId::new(),
-            to_replicaset_id: from_replicaset_id,
+            pod_id: ConsumerId::new(),
+            from_subscription_id: SubscriptionId::new(),
+            to_subscription_id: from_subscription_id,
             topic: response_topic.clone(),
             data: Arc::from("Unknown Command".to_string()),
         };
@@ -179,7 +179,7 @@ impl TopicSubscriptionRegistry {
             .ok_or_else(|| "Event does not contain data".to_string())?
             .trim();
         let target_topic = Topic::from(target_topic_str);
-        let from_replicaset_id = event.from_replicaset_id().cloned();
+        let from_subscription_id = event.from_subscription_id().cloned();
 
         // 最新メッセージを取得
         let latest_event = self.get_latest_message(target_topic.clone()).await;
@@ -199,9 +199,9 @@ impl TopicSubscriptionRegistry {
         let response_topic = Topic::from("system.pull");
         let response_event = ExecutorOutputEvent::Topic {
             message_id: MessageId::new(),
-            pod_id: PodId::new(),
-            from_replicaset_id: ReplicaSetId::new(),
-            to_replicaset_id: from_replicaset_id,
+            pod_id: ConsumerId::new(),
+            from_subscription_id: SubscriptionId::new(),
+            to_subscription_id: from_subscription_id,
             topic: response_topic.clone(),
             data: Arc::from(response_data),
         };
@@ -218,21 +218,21 @@ impl TopicSubscriptionRegistry {
         topic: &Topic,
         event: ExecutorOutputEvent,
     ) {
-        // トピックからReplicaSetIdのリストを取得
-        let replicaset_ids = {
+        // トピックからSubscriptionIdのリストを取得
+        let subscription_ids = {
             let topic_dest = self.topic_destination.read().await;
             topic_dest.get(topic).cloned()
         };
 
-        if let Some(replicaset_ids) = replicaset_ids {
+        if let Some(subscription_ids) = subscription_ids {
             let senders = self.senders.read().await;
-            for replicaset_id in replicaset_ids.iter() {
-                if let Some(sender) = senders.get(replicaset_id) {
+            for subscription_id in subscription_ids.iter() {
+                if let Some(sender) = senders.get(subscription_id) {
                     if let Err(e) = sender.send(event.clone()) {
                         log::warn!(
-                            "Failed to send message on topic '{}' to ReplicaSet {}: {}",
+                            "Failed to send message on topic '{}' to Subscription {}: {}",
                             topic,
-                            replicaset_id,
+                            subscription_id,
                             e
                         );
                     }
