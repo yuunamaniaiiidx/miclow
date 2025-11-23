@@ -14,6 +14,7 @@ use crate::subscription::context::ConsumerStartContext;
 use crate::subscription::consumer_registry::{ManagedConsumer, ConsumerRegistry};
 use crate::subscription::SubscriptionId;
 use tokio_util::sync::CancellationToken;
+use futures::future;
 
 pub struct SubscriptionWorker {
     subscription_id: SubscriptionId,
@@ -65,51 +66,19 @@ impl SubscriptionWorker {
         let mut consumer_registry = ConsumerRegistry::new();
         let target_instances = desired_instances;
 
+        // 初期起動: 不足分を並列で起動
+        Self::ensure_consumers(
+            &subscription_id,
+            &task_name,
+            &start_context,
+            &consumer_event_sender,
+            &shutdown_token,
+            &task_handle,
+            &mut consumer_registry,
+            target_instances as usize,
+        ).await;
+
         loop {
-            while consumer_registry.len() < target_instances as usize {
-                if shutdown_token.is_cancelled() {
-                    log::info!(
-                        "Subscription {} received shutdown signal before spawning all consumers",
-                        subscription_id
-                    );
-                    return Self::shutdown_consumers(consumer_registry.drain()).await;
-                }
-
-                match Self::spawn_consumer(
-                    subscription_id.clone(),
-                    task_name.as_ref(),
-                    &start_context,
-                    consumer_event_sender.clone(),
-                    shutdown_token.clone(),
-                    &task_handle,
-                )
-                .await
-                {
-                    Ok(handle) => {
-                        let handle_id = consumer_registry.add_consumer(handle);
-                        log::info!("Subscription {} spawned consumer {}", subscription_id, handle_id);
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "Subscription {} failed to spawn consumer for task '{}': {}",
-                            subscription_id,
-                            task_name.as_ref(),
-                            err
-                        );
-
-                        tokio::select! {
-                            _ = shutdown_token.cancelled() => {
-                                log::info!(
-                                    "Subscription {} shutting down while retrying consumer spawn",
-                                    subscription_id
-                                );
-                                return Self::shutdown_consumers(consumer_registry.drain()).await;
-                            }
-                            _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                        }
-                    }
-                }
-            }
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -128,6 +97,17 @@ impl SubscriptionWorker {
                                     subscription_id,
                                     consumer_id
                                 );
+                                // 即座に不足チェックして並列で再起動
+                                Self::ensure_consumers(
+                                    &subscription_id,
+                                    &task_name,
+                                    &start_context,
+                                    &consumer_event_sender,
+                                    &shutdown_token,
+                                    &task_handle,
+                                    &mut consumer_registry,
+                                    target_instances as usize,
+                                ).await;
                             } else {
                                 log::warn!(
                                     "Subscription {} received exit notice for unknown consumer {}",
@@ -341,6 +321,76 @@ impl SubscriptionWorker {
     async fn shutdown_consumers(mut consumers: HashMap<ConsumerId, ManagedConsumer>) {
         for (_id, consumer) in consumers.drain() {
             consumer.handler.shutdown_sender.shutdown().ok();
+        }
+    }
+
+    /// 不足しているconsumerを並列で起動する
+    async fn ensure_consumers(
+        subscription_id: &SubscriptionId,
+        task_name: &Arc<str>,
+        start_context: &ConsumerStartContext,
+        consumer_event_sender: &ConsumerEventSender,
+        shutdown_token: &CancellationToken,
+        task_handle: &TaskHandle,
+        consumer_registry: &mut ConsumerRegistry,
+        target_instances: usize,
+    ) {
+        let current_count = consumer_registry.len();
+        if current_count >= target_instances {
+            return;
+        }
+
+        let needed = target_instances - current_count;
+        log::info!(
+            "Subscription {} ensuring consumers: current={}, target={}, needed={}",
+            subscription_id,
+            current_count,
+            target_instances,
+            needed
+        );
+
+        // 不足分を並列で起動
+        let spawn_futures: Vec<_> = (0..needed)
+            .map(|_| {
+                Self::spawn_consumer(
+                    subscription_id.clone(),
+                    task_name.as_ref(),
+                    start_context,
+                    consumer_event_sender.clone(),
+                    shutdown_token.clone(),
+                    task_handle,
+                )
+            })
+            .collect();
+
+        let results = future::join_all(spawn_futures).await;
+
+        // 成功したconsumerを登録
+        for result in results {
+            if shutdown_token.is_cancelled() {
+                log::info!(
+                    "Subscription {} received shutdown signal during parallel consumer spawn",
+                    subscription_id
+                );
+                break;
+            }
+
+            match result {
+                Ok(handle) => {
+                    let handle_id = consumer_registry.add_consumer(handle);
+                    log::info!("Subscription {} spawned consumer {}", subscription_id, handle_id);
+                }
+                Err(err) => {
+                    log::error!(
+                        "Subscription {} failed to spawn consumer for task '{}': {}",
+                        subscription_id,
+                        task_name.as_ref(),
+                        err
+                    );
+                    // エラー時は1秒待機してから再試行（次のイベントループで再チェックされる）
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
         }
     }
 
