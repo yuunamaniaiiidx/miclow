@@ -31,9 +31,48 @@ impl BackendConfigMeta for MiclowStdIOConfig {
     }
 }
 
+// MiclowStdIOプロトコルで許可されているフィールド
+const ALLOWED_MICLOW_STDIO_FIELDS: &[&str] = &[
+    "command",
+    "args",
+    "working_directory",
+    "environment",
+    "stdout_topic",
+    "stderr_topic",
+];
+
+fn validate_protocol_fields(
+    config: &ExpandedTaskConfig,
+    allowed_fields: &[&str],
+    protocol_name: &str,
+) -> Result<(), anyhow::Error> {
+    let mut invalid_fields = Vec::new();
+    
+    for (key, _) in &config.protocol_config {
+        if !allowed_fields.contains(&key.as_str()) {
+            invalid_fields.push(key.clone());
+        }
+    }
+    
+    if !invalid_fields.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Task '{}' (protocol: {}) has invalid field(s): {}. Allowed fields: {}",
+            config.name,
+            protocol_name,
+            invalid_fields.join(", "),
+            allowed_fields.join(", ")
+        ));
+    }
+    
+    Ok(())
+}
+
 pub fn try_miclow_stdio_from_expanded_config(
     config: &ExpandedTaskConfig,
 ) -> Result<MiclowStdIOConfig, anyhow::Error> {
+    // 無効なフィールドをチェック
+    validate_protocol_fields(config, ALLOWED_MICLOW_STDIO_FIELDS, "MiclowStdIO")?;
+    
     let command_str: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
             "Command field is required for MiclowStdIO in task '{}'",

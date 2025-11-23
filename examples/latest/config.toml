@@ -11,14 +11,16 @@ view_stderr = true
 [[tasks.lifecycle]]
 desired_instances = 1
 
-# [[tasks]]
-# protocol = "MiclowStdIO"
-# task_name = "latest"
-# command = "python3"
-# args = ["latest.py"]
-# working_directory = "${MICLOW_CONFIG_DIR}"
-# view_stdout = true
-# view_stderr = true
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "latest"
+command = "python3"
+args = ["latest.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
+view_stdout = true
+view_stderr = true
 
-# [[tasks.lifecycle]]
-# desired_instances = 1
+[[tasks.lifecycle]]
+desired_instances = 1
+
