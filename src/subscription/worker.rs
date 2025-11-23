@@ -9,6 +9,7 @@ use crate::channels::{
 };
 use crate::messages::{ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::consumer::{ConsumerId, ConsumerSpawner};
+use crate::shutdown_registry::TaskHandle;
 use crate::subscription::context::ConsumerStartContext;
 use crate::subscription::consumer_registry::{ManagedConsumer, ConsumerRegistry};
 use crate::subscription::SubscriptionId;
@@ -20,6 +21,7 @@ pub struct SubscriptionWorker {
     desired_instances: u32,
     start_context: ConsumerStartContext,
     shutdown_token: CancellationToken,
+    task_handle: TaskHandle,
 }
 
 impl SubscriptionWorker {
@@ -29,6 +31,7 @@ impl SubscriptionWorker {
         desired_instances: u32,
         start_context: ConsumerStartContext,
         shutdown_token: CancellationToken,
+        task_handle: TaskHandle,
     ) -> Self {
         Self {
             subscription_id,
@@ -36,6 +39,7 @@ impl SubscriptionWorker {
             desired_instances,
             start_context,
             shutdown_token,
+            task_handle,
         }
     }
 
@@ -46,6 +50,7 @@ impl SubscriptionWorker {
             desired_instances,
             start_context,
             shutdown_token,
+            task_handle,
         } = self;
 
         let request_topic_to_from_subscription: HashMap<Topic, SubscriptionId> = HashMap::new();
@@ -76,6 +81,7 @@ impl SubscriptionWorker {
                     &start_context,
                     consumer_event_sender.clone(),
                     shutdown_token.clone(),
+                    &task_handle,
                 )
                 .await
                 {
@@ -116,13 +122,12 @@ impl SubscriptionWorker {
                 consumer_event = consumer_event_receiver.recv() => {
                     match consumer_event {
                         Some(ConsumerEvent::ConsumerExit { consumer_id }) => {
-                            if let Some(handle) = consumer_registry.remove_consumer(&consumer_id) {
+                            if let Some(_) = consumer_registry.remove_consumer(&consumer_id) {
                                 log::info!(
                                     "Subscription {} detected exit of consumer {}, awaiting completion",
                                     subscription_id,
                                     consumer_id
                                 );
-                                handle.handler.worker_handle.await.ok();
                             } else {
                                 log::warn!(
                                     "Subscription {} received exit notice for unknown consumer {}",
@@ -279,9 +284,8 @@ impl SubscriptionWorker {
     }
 
     async fn shutdown_consumers(mut consumers: HashMap<ConsumerId, ManagedConsumer>) {
-        for (_id, handle) in consumers.drain() {
-            handle.handler.shutdown_sender.shutdown().ok();
-            handle.handler.worker_handle.await.ok();
+        for (_id, consumer) in consumers.drain() {
+            consumer.handler.shutdown_sender.shutdown().ok();
         }
     }
 
@@ -291,6 +295,7 @@ impl SubscriptionWorker {
         start_context: &ConsumerStartContext,
         consumer_event_sender: ConsumerEventSender,
         shutdown_token: CancellationToken,
+        task_handle: &TaskHandle,
     ) -> Result<ManagedConsumer, String> {
         let consumer_id = ConsumerId::new();
         let instance_name = Arc::from(format!("{}-{}", task_name, short_consumer_suffix(&consumer_id)));
@@ -311,6 +316,7 @@ impl SubscriptionWorker {
                 start_context.protocol_backend.clone(),
                 shutdown_token,
                 topic_channel.receiver,
+                task_handle,
             )
             .await?;
 

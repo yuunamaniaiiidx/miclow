@@ -8,5 +8,6 @@ pub mod message_id;
 pub mod messages;
 pub mod miclow;
 pub mod consumer;
+pub mod shutdown_registry;
 pub mod subscription;
 pub mod topic;

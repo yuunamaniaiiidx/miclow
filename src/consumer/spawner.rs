@@ -6,15 +6,17 @@ use crate::channels::{
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
+use crate::shutdown_registry::TaskHandle;
 use crate::subscription::SubscriptionId;
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::ConsumerId;
 
 pub struct ConsumerSpawnHandler {
     pub consumer_id: ConsumerId,
-    pub worker_handle: tokio::task::JoinHandle<()>,
+    pub worker_handle: Arc<JoinHandle<()>>,
     pub input_sender: ExecutorInputEventSender,
     pub shutdown_sender: ShutdownSender,
 }
@@ -55,6 +57,7 @@ impl ConsumerSpawner {
         backend: ProtocolBackend,
         shutdown_token: CancellationToken,
         topic_data_receiver: SubscriptionTopicReceiver,
+        task_handle: &TaskHandle,
     ) -> Result<ConsumerSpawnHandler, String> {
         let consumer_id: ConsumerId = self.consumer_id.clone();
         let handler_consumer_id = consumer_id.clone();
@@ -73,7 +76,8 @@ impl ConsumerSpawner {
         let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
 
-        let worker_handle = tokio::task::spawn({
+        let consumer_task_name = format!("consumer_{}", consumer_id);
+        let worker_handle = task_handle.run(consumer_task_name, {
             let consumer_id = consumer_id.clone();
             let consumer_name = consumer_name.clone();
             let userlog_sender = userlog_sender.clone();
@@ -196,7 +200,7 @@ impl ConsumerSpawner {
 
                 log::info!("Consumer {} completed", consumer_id);
             }
-        });
+        }).map_err(|e| format!("Failed to spawn consumer task: {}", e))?;
 
         Ok(ConsumerSpawnHandler {
             consumer_id: handler_consumer_id,

@@ -1,4 +1,3 @@
-use crate::background_worker_registry::BackgroundWorkerRegistry;
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
 use crate::coordinator::CoordinatorManager;
@@ -6,6 +5,7 @@ use crate::logging::{
     level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
+use crate::shutdown_registry::ShutdownRegistry;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -15,7 +15,7 @@ pub struct MiclowSystem {
     coordinator_manager: CoordinatorManager,
     log_shutdown_token: CancellationToken,
     user_shutdown_token: CancellationToken,
-    background_tasks: BackgroundWorkerRegistry,
+    background_tasks: ShutdownRegistry,
 }
 
 impl MiclowSystem {
@@ -25,7 +25,7 @@ impl MiclowSystem {
         let topic_manager = crate::topic::TopicSubscriptionRegistry::new();
         let coordinator_manager =
             CoordinatorManager::new(topic_manager.clone(), user_shutdown_token.clone());
-        let background_tasks = BackgroundWorkerRegistry::new(log_shutdown_token.clone());
+        let background_tasks = ShutdownRegistry::with_shutdown_token(log_shutdown_token.clone());
         Self {
             config,
             coordinator_manager,
