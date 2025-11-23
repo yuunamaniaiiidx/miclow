@@ -1,11 +1,11 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, ConsumerEventSender, SubscriptionTopicMessage, SubscriptionTopicReceiver,
+    ExecutorInputEventSender, ConsumerEventSender, SubscriptionTopicReceiver,
     ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
-use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent};
+use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::subscription::SubscriptionId;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

@@ -13,7 +13,7 @@ pub use executor_output_channel::{
     ExecutorOutputEventChannel, ExecutorOutputEventReceiver, ExecutorOutputEventSender,
 };
 pub use subscription_topic_channel::{
-    SubscriptionTopicChannel, SubscriptionTopicMessage, SubscriptionTopicReceiver, SubscriptionTopicSender,
+    SubscriptionTopicChannel, SubscriptionTopicReceiver, SubscriptionTopicSender,
 };
 
 pub use consumer_event_channel::{ConsumerEventChannel, ConsumerEventReceiver, ConsumerEventSender};

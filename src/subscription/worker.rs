@@ -5,9 +5,9 @@ use crate::topic::Topic;
 
 use crate::channels::{
     ConsumerEventChannel, ConsumerEventSender,
-    SubscriptionTopicChannel, SubscriptionTopicMessage,
+    SubscriptionTopicChannel,
 };
-use crate::messages::{ExecutorOutputEvent, ConsumerEvent};
+use crate::messages::{ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::consumer::{ConsumerId, ConsumerSpawner};
 use crate::subscription::context::ConsumerStartContext;
 use crate::subscription::consumer_registry::{ManagedConsumer, ConsumerRegistry};

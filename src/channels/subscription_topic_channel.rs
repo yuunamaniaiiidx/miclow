@@ -1,14 +1,5 @@
-use crate::subscription::SubscriptionId;
-use crate::topic::Topic;
-use std::sync::Arc;
+use crate::messages::SubscriptionTopicMessage;
 use tokio::sync::mpsc;
-
-#[derive(Clone, Debug)]
-pub struct SubscriptionTopicMessage {
-    pub topic: Topic,
-    pub data: Option<Arc<str>>,
-    pub from_subscription_id: SubscriptionId,
-}
 
 #[derive(Clone)]
 pub struct SubscriptionTopicSender {

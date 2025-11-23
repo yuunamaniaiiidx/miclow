@@ -16,7 +16,7 @@ pub struct LogEvent {
     pub target: Arc<str>,
     pub msg: Arc<str>,
     pub pod_id: Option<Arc<str>>,
-    pub task_name: Option<Arc<str>>, // 追加
+    pub task_name: Option<Arc<str>>,
 }
 
 pub struct ChannelLogger {
@@ -43,14 +43,13 @@ impl Log for ChannelLogger {
             target: Arc::from(record.target()),
             msg: Arc::from(format!("{}", record.args())),
             pod_id: None,
-            task_name: None, // 追加
+            task_name: None,
         });
     }
 
     fn flush(&self) {}
 }
 
-/// Set ChannelLogger as global logger and max level
 pub fn set_channel_logger(
     tx: UnboundedSender<LogEvent>,
     level: LevelFilter,
