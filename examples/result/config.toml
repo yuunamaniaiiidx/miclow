@@ -8,7 +8,7 @@ view_stdout = true
 view_stderr = true
 
 [[tasks.lifecycle]]
-desired_instances = 1
+desired_instances = 5
 
 [[tasks]]
 protocol = "MiclowStdIO"
@@ -20,7 +20,7 @@ view_stdout = true
 view_stderr = true
 
 [[tasks.lifecycle]]
-desired_instances = 1
+desired_instances = 5
 
 [[tasks]]
 protocol = "MiclowStdIO"
@@ -32,4 +32,4 @@ view_stdout = true
 view_stderr = true
 
 [[tasks.lifecycle]]
-desired_instances = 1
+desired_instances = 5

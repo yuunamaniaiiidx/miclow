@@ -87,8 +87,6 @@ impl ConsumerSpawner {
             async move {
                 loop {
                     tokio::select! {
-                        biased;
-
                         _ = shutdown_token.cancelled() => {
                             log::info!("Consumer {} received shutdown signal", consumer_id);
                             let _ = backend_handle.shutdown_sender.shutdown();
