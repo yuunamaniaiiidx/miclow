@@ -1,5 +1,4 @@
 pub mod backend;
-pub mod background_worker_registry;
 pub mod channels;
 pub mod config;
 pub mod coordinator;

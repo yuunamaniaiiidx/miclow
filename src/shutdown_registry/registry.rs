@@ -1,4 +1,4 @@
-use crate::background_worker_registry::{
+use crate::shutdown_registry::worker::{
     BackgroundWorker, BackgroundWorkerContext, ReadyHandle, WorkerReadiness,
 };
 use crate::shutdown_registry::task_handle::{TaskHandle, TaskInfo};
