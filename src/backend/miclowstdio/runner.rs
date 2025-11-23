@@ -105,7 +105,7 @@ pub async fn spawn_miclow_stdio_protocol(
     let command = config.command.clone();
     let args = config.args.clone();
     let working_directory = config.working_directory.clone();
-    let environment_vars = config.environment_vars.clone();
+    let environment = config.environment.clone();
     let stdout_topic = config.stdout_topic.clone();
     let stderr_topic = config.stderr_topic.clone();
     let view_stdout = config.view_stdout;
@@ -129,7 +129,7 @@ pub async fn spawn_miclow_stdio_protocol(
             command_builder.current_dir(working_dir.as_ref());
         }
 
-        if let Some(env_vars) = &environment_vars {
+        if let Some(env_vars) = &environment {
             for (key, value) in env_vars {
                 command_builder.env(key, value);
             }

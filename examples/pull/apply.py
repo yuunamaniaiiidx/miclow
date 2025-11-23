@@ -1,4 +1,2 @@
-import time
-
-print('"apply": data')
-time.sleep(1)
+import uuid
+print('"apply":', str(uuid.uuid4()))

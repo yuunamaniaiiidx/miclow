@@ -63,7 +63,7 @@ task_name = "python-script"
 command = "python3"
 args = ["main.py"]
 working_directory = "./"
-environment_vars = { PYTHONUNBUFFERED = "1" }
+environment = { PYTHONUNBUFFERED = "1" }
 subscribe_topics = ["key1", "key2"]
 
 [[tasks]]
@@ -71,7 +71,7 @@ task_name = "stdout"
 command = "python3"
 args = ["stdout.py"]
 working_directory = "./"
-environment_vars = { PYTHONUNBUFFERED = "1" }
+environment = { PYTHONUNBUFFERED = "1" }
 subscribe_topics = ["stdout"]
 ```
 

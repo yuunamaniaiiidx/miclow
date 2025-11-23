@@ -43,47 +43,44 @@ impl TopicSubscriptionRegistry {
             }
         };
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {
-            let mut messages = self.messages.write().await;
-            // entry()は所有権を取るので、カーソル調整用にクローンを保存（必要な場合のみ）
-            let topic_for_cursor = if self.max_log_size.is_some() {
-                Some(topic_owned.clone())
-            } else {
-                None
-            };
-            let topic_str = topic_owned.as_str().to_string();
-            let queue = messages
-                .entry(topic_owned)
-                .or_insert_with(VecDeque::new);
-            let before_len = queue.len();
-            log::debug!("store_message push: topic_str={:?}, before_len={:?}", topic_str, before_len);
-            queue.push_back(event);
-            let mut removed_count = 0;
-            if let Some(max_size) = self.max_log_size {
-                while queue.len() > max_size {
-                    queue.pop_front();
-                    removed_count += 1;
+            let removed_count = {
+                let mut messages = self.messages.write().await;
+                let topic_str = topic_owned.as_str().to_string();
+                let queue = messages
+                    .entry(topic_owned.clone())
+                    .or_insert_with(VecDeque::new);
+                let before_len = queue.len();
+                log::debug!("store_message push: topic_str={:?}, before_len={:?}", topic_str, before_len);
+                queue.push_back(event);
+                let mut removed_count = 0;
+                if let Some(max_size) = self.max_log_size {
+                    while queue.len() > max_size {
+                        queue.pop_front();
+                        removed_count += 1;
+                    }
                 }
-            }
+                let after_len = queue.len();
+                log::debug!("store_message push: topic_str={:?}, after_len={:?}", topic_str, after_len);
+                // messagesのwriteロックをここで解放
+                removed_count
+            };
             // カーソル位置を調整（削除されたメッセージ数分だけ減らす）
             // 該当トピックのカーソルのみを更新
+            // messagesのロックを解放してからcursorsのロックを取得
             if removed_count > 0 {
-                if let Some(topic_for_cursor) = topic_for_cursor {
-                    let mut cursors = self.message_cursors.write().await;
-                    // 該当トピックのカーソルのみを効率的に更新
-                    // イテレータで直接更新することで、不要なクローンを避ける
-                    for (key, cursor) in cursors.iter_mut() {
-                        if key.1 == topic_for_cursor {
-                            if *cursor >= removed_count {
-                                *cursor -= removed_count;
-                            } else {
-                                *cursor = 0;
-                            }
+                let mut cursors = self.message_cursors.write().await;
+                // 該当トピックのカーソルのみを効率的に更新
+                // イテレータで直接更新することで、不要なクローンを避ける
+                for (key, cursor) in cursors.iter_mut() {
+                    if key.1 == topic_owned {
+                        if *cursor >= removed_count {
+                            *cursor -= removed_count;
+                        } else {
+                            *cursor = 0;
                         }
                     }
                 }
             }
-            let after_len = queue.len();
-            log::debug!("store_message push: topic_str={:?}, after_len={:?}", topic_str, after_len);
         }
         Ok(())
     }
@@ -93,28 +90,39 @@ impl TopicSubscriptionRegistry {
         subscription_id: SubscriptionId,
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
-        // まずreadロックでメッセージを読み取る
-        let messages = self.messages.read().await;
-        let queue = messages.get(&topic)?;
-        let queue_len = queue.len();
+        let key = (subscription_id, topic.clone());
         
-        // カーソル更新のためにwriteロックを取得
-        let mut cursors = self.message_cursors.write().await;
-        let key = (subscription_id, topic);
-        let cursor = cursors.entry(key.clone()).or_insert(0);
+        // カーソル位置を取得（readロックのみ）
+        let cursor = {
+            let cursors = self.message_cursors.read().await;
+            cursors.get(&key).copied().unwrap_or(0)
+        };
         
-        log::debug!("called pull_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
+        // メッセージを読み取ってクローン（readロックのみ、最小限の保持時間）
+        let result = {
+            let messages = self.messages.read().await;
+            let queue = messages.get(&topic)?;
+            let queue_len = queue.len();
+            
+            log::debug!("called pull_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
+            
+            if cursor < queue_len {
+                Some(queue[cursor].clone())
+            } else {
+                log::debug!("pull_message: key={:?}, no_data", key);
+                return None;
+            }
+        };
         
-        if *cursor < queue_len {
-            // readロックを保持したままクローン
-            let result = queue[*cursor].clone();
-            *cursor += 1;
-            log::debug!("pull_message: key={:?}, pulled_ok, new_cursor={:?}", key, cursor);
-            Some(result)
-        } else {
-            log::debug!("pull_message: key={:?}, no_data", key);
-            None
+        // カーソル更新のためにwriteロックを取得（メッセージのロックは既に解放済み）
+        if result.is_some() {
+            let mut cursors = self.message_cursors.write().await;
+            let cursor_entry = cursors.entry(key.clone()).or_insert(0);
+            *cursor_entry += 1;
+            log::debug!("pull_message: key={:?}, pulled_ok, new_cursor={:?}", key, cursor_entry);
         }
+        
+        result
     }
 
     pub async fn peek_message(
@@ -122,14 +130,18 @@ impl TopicSubscriptionRegistry {
         subscription_id: SubscriptionId,
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
-        // readロックでメッセージを読み取る（カーソルは更新しない）
+        let key = (subscription_id, topic.clone());
+        
+        // カーソル位置を取得（readロックのみ、最小限の保持時間）
+        let cursor = {
+            let cursors = self.message_cursors.read().await;
+            cursors.get(&key).copied().unwrap_or(0)
+        };
+        
+        // メッセージを読み取ってクローン（readロックのみ、最小限の保持時間）
         let messages = self.messages.read().await;
         let queue = messages.get(&topic)?;
         let queue_len = queue.len();
-        
-        let cursors = self.message_cursors.read().await;
-        let key = (subscription_id, topic);
-        let cursor = cursors.get(&key).copied().unwrap_or(0);
         
         log::debug!("called peek_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
         

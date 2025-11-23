@@ -10,7 +10,7 @@ pub struct MiclowStdIOConfig {
     pub command: Arc<str>,
     pub args: Vec<Arc<str>>,
     pub working_directory: Option<Arc<str>>,
-    pub environment_vars: Option<HashMap<String, String>>,
+    pub environment: Option<HashMap<String, String>>,
     pub stdout_topic: Arc<str>,
     pub stderr_topic: Arc<str>,
     pub view_stdout: bool,
@@ -54,7 +54,7 @@ pub fn try_miclow_stdio_from_expanded_config(
 
     let working_directory: Option<Arc<str>> = config.expand("working_directory").map(|s: String| Arc::from(s));
 
-    let environment_vars = config.get_protocol_value("environment_vars").and_then(|v| {
+    let environment = config.get_protocol_value("environment").and_then(|v| {
         if let TomlValue::Table(table) = v {
             let mut env_map = HashMap::new();
             for (key, value) in table {
@@ -112,7 +112,7 @@ pub fn try_miclow_stdio_from_expanded_config(
         command,
         args,
         working_directory,
-        environment_vars,
+        environment,
         stdout_topic,
         stderr_topic,
         view_stdout,
