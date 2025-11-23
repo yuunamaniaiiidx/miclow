@@ -7,6 +7,7 @@ use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, PodEvent};
 use crate::replicaset::ReplicaSetId;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::PodId;
@@ -22,7 +23,7 @@ pub struct PodSpawnHandler {
 pub struct PodSpawner {
     pub pod_id: PodId,
     pub replicaset_id: ReplicaSetId,
-    pub pod_name: String,
+    pub pod_name: Arc<str>,
     pub userlog_sender: UserLogSender,
     pub state: PodState,
     pub pod_event_sender: PodEventSender,
@@ -34,7 +35,7 @@ impl PodSpawner {
     pub fn new(
         pod_id: PodId,
         replicaset_id: ReplicaSetId,
-        pod_name: String,
+        pod_name: Arc<str>,
         userlog_sender: UserLogSender,
         pod_event_sender: PodEventSender,
         view_stdout: bool,
@@ -64,7 +65,7 @@ impl PodSpawner {
     ) -> Result<PodSpawnHandler, String> {
         let pod_id: PodId = self.pod_id.clone();
         let handler_pod_id = pod_id.clone();
-        let pod_name: String = self.pod_name.clone();
+        let pod_name: Arc<str> = self.pod_name.clone();
         let replicaset_id = self.replicaset_id.clone();
         let userlog_sender = self.userlog_sender.clone();
         let pod_event_sender = self.pod_event_sender.clone();
@@ -104,58 +105,60 @@ impl PodSpawner {
 
                                     match &event {
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
-                                            // トピックメッセージをPodEventとして上位に送信
-                                            log::info!(
-                                                "Message event for pod {} on topic '{}': '{}'",
-                                                pod_id,
-                                                topic,
-                                                data
-                                            );
-
-                                            // PodTopicを送信
-                                            let pod_topic_result = pod_event_sender.send(PodEvent::PodTopic {
-                                                pod_id: pod_id.clone(),
-                                                message_id: message_id.clone(),
-                                                topic: topic.clone(),
-                                                data: data.clone(),
-                                            });
-
-                                            // レスポンストピックの場合、PodTopicの送信が成功したらPodIdleも送信
-                                            if topic.is_result() {
-                                                if let Err(e) = pod_topic_result {
+                                            // system.Idleトピックの場合は、PodEvent::PodIdleを直接送信
+                                            if topic.as_str().to_lowercase() == "system.idle" {
+                                                log::info!(
+                                                    "Pod {} received system.Idle topic, sending PodIdle event",
+                                                    pod_id
+                                                );
+                                                
+                                                if let Err(e) = pod_event_sender.send(PodEvent::PodIdle {
+                                                    pod_id: pod_id.clone(),
+                                                }) {
                                                     log::warn!(
-                                                        "Failed to send PodTopic event for '{}', skipping PodIdle: {}",
+                                                        "Failed to send PodIdle event for pod {} via system.Idle: {}",
                                                         pod_id,
                                                         e
                                                     );
                                                 } else {
-                                                    // PodTopicの送信が成功したので、PodIdleも送信
-                                                    if let Err(e) = pod_event_sender.send(PodEvent::PodIdle {
-                                                        pod_id: pod_id.clone(),
-                                                    }) {
-                                                        log::warn!(
-                                                            "Failed to send PodIdle event for '{}': {}",
-                                                            pod_id,
-                                                            e
-                                                        );
-                                                    }
+                                                    log::info!(
+                                                        "Pod {} sent PodIdle event via system.Idle",
+                                                        pod_id
+                                                    );
                                                 }
-                                            } else if let Err(e) = pod_topic_result {
-                                                log::warn!(
-                                                    "Failed to send PodTopic event for '{}': {}",
+                                            } else {
+                                                log::info!(
+                                                    "Message event for pod {} on topic '{}': '{}'",
                                                     pod_id,
-                                                    e
+                                                    topic,
+                                                    data
                                                 );
+
+                                                // PodTopicを送信
+                                                let pod_topic_result = pod_event_sender.send(PodEvent::PodTopic {
+                                                    pod_id: pod_id.clone(),
+                                                    message_id: message_id.clone(),
+                                                    topic: topic.clone(),
+                                                    data: data.clone(),
+                                                });
+
+                                                if let Err(e) = pod_topic_result {
+                                                    log::warn!(
+                                                        "Failed to send PodTopic event for '{}': {}",
+                                                        pod_id,
+                                                        e
+                                                    );
+                                                }
                                             }
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {
                                             if view_stdout {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.as_ref().to_string() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
                                             }
                                         },
                                         ExecutorOutputEvent::Stderr { data, .. } => {
                                             if view_stderr {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.as_ref().to_string() });
+                                                let _ = userlog_sender.send(UserLogEvent { pod_id: pod_id.to_string(), task_name: pod_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
                                             }
                                         },
                                         ExecutorOutputEvent::Error { error, .. } => {

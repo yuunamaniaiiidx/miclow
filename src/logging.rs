@@ -7,15 +7,16 @@ use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 #[derive(Clone, Debug)]
 pub struct LogEvent {
     pub level: Level,
-    pub target: String,
-    pub msg: String,
-    pub pod_id: Option<String>,
-    pub task_name: Option<String>, // 追加
+    pub target: Arc<str>,
+    pub msg: Arc<str>,
+    pub pod_id: Option<Arc<str>>,
+    pub task_name: Option<Arc<str>>, // 追加
 }
 
 pub struct ChannelLogger {
@@ -39,8 +40,8 @@ impl Log for ChannelLogger {
         }
         let _ = self.tx.send(LogEvent {
             level: record.level(),
-            target: record.target().to_string(),
-            msg: format!("{}", record.args()),
+            target: Arc::from(record.target()),
+            msg: Arc::from(format!("{}", record.args())),
             pod_id: None,
             task_name: None, // 追加
         });
@@ -81,9 +82,9 @@ pub enum UserLogKind {
 #[derive(Debug, Clone)]
 pub struct UserLogEvent {
     pub pod_id: String,
-    pub task_name: String,
+    pub task_name: Arc<str>,
     pub kind: UserLogKind,
-    pub msg: String,
+    pub msg: Arc<str>,
 }
 
 struct ColorBook {
@@ -229,13 +230,13 @@ impl BackgroundWorker for LogAggregatorWorker {
                             Level::Trace => style("TRACE").dim().to_string(),
                         };
                         let tag_content = if let Some(ref tname) = ev.task_name {
-                            format!("task={}", tname)
+                            format!("task={}", tname.as_ref())
                         } else {
-                            ev.target.clone()
+                            ev.target.as_ref().to_string()
                         };
                         let s = colors.style_for(&tag_content);
                         let tag = s.apply_to(format!("[{}]", tag_content)).to_string();
-                        let _ = term.write_line(&format!("{} {} {}", level_tag, tag, ev.msg));
+                        let _ = term.write_line(&format!("{} {} {}", level_tag, tag, ev.msg.as_ref()));
                     } else {
                         break;
                     }
@@ -277,13 +278,13 @@ impl BackgroundWorker for UserLogAggregatorWorker {
                 _ = shutdown.cancelled() => { break; }
                 maybe = rx.recv() => {
                     if let Some(ev) = maybe {
-                        let task_style = colors.style_for(&ev.task_name);
+                        let task_style = colors.style_for(ev.task_name.as_ref());
                         let (kind_str, msg_style) = match ev.kind {
                             UserLogKind::Stdout => ("stdout", Style::new().white()),
                             UserLogKind::Stderr => ("stderr", Style::new().red()),
                         };
                         let tag = task_style
-                            .apply_to(format!("[{} {}]", ev.task_name, kind_str))
+                            .apply_to(format!("[{} {}]", ev.task_name.as_ref(), kind_str))
                             .to_string();
                         let _ = term.write_line(&format!(
                             "{} {}",

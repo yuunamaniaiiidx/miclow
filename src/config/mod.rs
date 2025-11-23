@@ -13,6 +13,7 @@ use crate::backend::{BackendConfigMeta, InteractiveConfig, MiclowStdIOConfig, Pr
 use crate::config::expansion::{ExpandContext, Expandable};
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 use toml::Value as TomlValue;
 
 /// 展開前の生のタスク設定情報
@@ -33,9 +34,9 @@ pub(crate) struct RawTaskConfig {
 /// プロトコル非依存のタスク設定情報（展開後）
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
-    pub name: String,
-    pub subscribe_topics: Vec<String>,
-    pub private_response_topics: Vec<String>,
+    pub name: Arc<str>,
+    pub subscribe_topics: Vec<Arc<str>>,
+    pub private_response_topics: Vec<Arc<str>>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -52,9 +53,9 @@ pub struct TaskConfig {
 /// 環境変数展開後のタスク設定（ProtocolBackend作成前）
 #[derive(Debug, Clone)]
 pub struct ExpandedTaskConfig {
-    pub name: String,
-    pub subscribe_topics: Vec<String>,
-    pub private_response_topics: Vec<String>,
+    pub name: Arc<str>,
+    pub subscribe_topics: Vec<Arc<str>>,
+    pub private_response_topics: Vec<Arc<str>>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -245,7 +246,7 @@ impl RawSystemConfig {
 
 #[derive(Debug, Clone)]
 pub struct SystemConfig {
-    pub tasks: HashMap<String, TaskConfig>,
+    pub tasks: HashMap<Arc<str>, TaskConfig>,
     pub include_paths: Vec<String>,
 }
 
@@ -275,7 +276,7 @@ impl SystemConfig {
             let name = expanded.name.clone();
 
             if tasks.insert(name.clone(), expanded).is_some() {
-                return Err(anyhow::anyhow!("Duplicate task name: {}", name));
+                return Err(anyhow::anyhow!("Duplicate task name: {}", name.as_ref()));
             }
         }
 
@@ -403,9 +404,9 @@ args = ["main"]
             2,
             "Should have 2 tasks (1 from main file + 1 from include file)"
         );
-        assert_eq!(config.tasks.get("main_task").unwrap().name, "main_task");
+        assert_eq!(config.tasks.get(&Arc::from("main_task")).unwrap().name.as_ref(), "main_task");
         assert_eq!(
-            config.tasks.get("test_function").unwrap().name,
+            config.tasks.get(&Arc::from("test_function")).unwrap().name.as_ref(),
             "test_function"
         );
     }

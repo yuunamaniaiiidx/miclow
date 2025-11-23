@@ -203,10 +203,12 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
     Ok(LineParseResult::NotSpecial)
 }
 
+use std::sync::Arc;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamOutcome {
-    Emit { topic: String, data: String },
-    Plain(String),
+    Emit { topic: Arc<str>, data: Arc<str> },
+    Plain(Arc<str>),
     None,
 }
 
@@ -224,8 +226,8 @@ pub fn consume_stream_line(
             LineParseResult::MultilineEnd { topic } => {
                 if let Some((active_topic, data)) = buffer.try_finish(&topic) {
                     Ok(StreamOutcome::Emit {
-                        topic: active_topic,
-                        data,
+                        topic: Arc::from(active_topic),
+                        data: Arc::from(data),
                     })
                 } else {
                     // トピック名が一致しない場合は通常のデータとしてバッファに追加
@@ -242,16 +244,16 @@ pub fn consume_stream_line(
     } else {
         match parse_line(line)? {
             LineParseResult::SingleLine { topic, value } => {
-                Ok(StreamOutcome::Emit { topic, data: value })
+                Ok(StreamOutcome::Emit { topic: Arc::from(topic), data: Arc::from(value) })
             }
             LineParseResult::MultilineStart { topic } => {
                 buffer.start(topic);
                 Ok(StreamOutcome::None)
             }
             LineParseResult::MultilineEnd { .. } => {
-                Ok(StreamOutcome::Plain(strip_crlf(line).to_string()))
+                Ok(StreamOutcome::Plain(Arc::from(strip_crlf(line))))
             }
-            LineParseResult::NotSpecial => Ok(StreamOutcome::Plain(strip_crlf(line).to_string())),
+            LineParseResult::NotSpecial => Ok(StreamOutcome::Plain(Arc::from(strip_crlf(line)))),
         }
     }
 }
@@ -446,8 +448,8 @@ mod tests {
         let res = consume_stream_line(&mut buf, "\"k\": v").unwrap();
         match res {
             StreamOutcome::Emit { topic, data } => {
-                assert_eq!(topic, "k");
-                assert_eq!(data, "v");
+                assert_eq!(topic.as_ref(), "k");
+                assert_eq!(data.as_ref(), "v");
             }
             other => panic!("unexpected outcome: {:?}", other),
         }
@@ -459,7 +461,7 @@ mod tests {
         let mut buf = TopicInputBuffer::new();
         let res = consume_stream_line(&mut buf, "hello\n").unwrap();
         match res {
-            StreamOutcome::Plain(s) => assert_eq!(s, "hello"),
+            StreamOutcome::Plain(s) => assert_eq!(s.as_ref(), "hello"),
             other => panic!("unexpected outcome: {:?}", other),
         }
         assert!(!buf.is_active());
@@ -478,8 +480,8 @@ mod tests {
         let o4 = consume_stream_line(&mut buf, "::\"note\"").unwrap();
         match o4 {
             StreamOutcome::Emit { topic, data } => {
-                assert_eq!(topic, "note");
-                assert_eq!(data, "line1\nline2");
+                assert_eq!(topic.as_ref(), "note");
+                assert_eq!(data.as_ref(), "line1\nline2");
             }
             other => panic!("unexpected outcome: {:?}", other),
         }
@@ -496,8 +498,8 @@ mod tests {
         let out2 = consume_stream_line(&mut buf, "::\"a\"").unwrap();
         match out2 {
             StreamOutcome::Emit { topic, data } => {
-                assert_eq!(topic, "a");
-                assert_eq!(data, "::\"b\"");
+                assert_eq!(topic.as_ref(), "a");
+                assert_eq!(data.as_ref(), "::\"b\"");
             }
             other => panic!("unexpected outcome: {:?}", other),
         }
@@ -509,7 +511,7 @@ mod tests {
         let mut buf = TopicInputBuffer::new();
         let out = consume_stream_line(&mut buf, "::\"k\"\n").unwrap();
         match out {
-            StreamOutcome::Plain(s) => assert_eq!(s, "::\"k\""),
+            StreamOutcome::Plain(s) => assert_eq!(s.as_ref(), "::\"k\""),
             other => panic!("unexpected outcome: {:?}", other),
         }
         assert!(!buf.is_active());
@@ -545,8 +547,8 @@ mod tests {
         let result = manager.consume_stream_line("task1", "::\"msg\"").unwrap();
         match result {
             StreamOutcome::Emit { topic, data } => {
-                assert_eq!(topic, "msg");
-                assert_eq!(data, "line1\nline2");
+                assert_eq!(topic.as_ref(), "msg");
+                assert_eq!(data.as_ref(), "line1\nline2");
             }
             other => panic!("unexpected outcome: {:?}", other),
         }
@@ -574,8 +576,8 @@ mod tests {
             .unwrap();
         match result1 {
             StreamOutcome::Emit { topic, data } => {
-                assert_eq!(topic, "stdout");
-                assert_eq!(data, "task1_data");
+                assert_eq!(topic.as_ref(), "stdout");
+                assert_eq!(data.as_ref(), "task1_data");
             }
             other => panic!("unexpected outcome: {:?}", other),
         }
@@ -586,8 +588,8 @@ mod tests {
             .unwrap();
         match result2 {
             StreamOutcome::Emit { topic, data } => {
-                assert_eq!(topic, "stdout");
-                assert_eq!(data, "task2_data");
+                assert_eq!(topic.as_ref(), "stdout");
+                assert_eq!(data.as_ref(), "task2_data");
             }
             other => panic!("unexpected outcome: {:?}", other),
         }

@@ -6,6 +6,6 @@ pub enum PodState {
 
 impl Default for PodState {
     fn default() -> Self {
-        Self::Idle
+        Self::Busy
     }
 }

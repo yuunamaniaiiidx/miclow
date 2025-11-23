@@ -1,0 +1,24 @@
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "apply"
+command = "uv"
+args = ["run", "apply.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+
+[[tasks.lifecycle]]
+desired_instances = 1
+
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "pull"
+command = "uv"
+args = ["run", "pull.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+private_response_topics = ["system.pull"]
+
+[[tasks.lifecycle]]
+desired_instances = 1
