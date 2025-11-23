@@ -4,15 +4,15 @@ use std::time::Duration;
 use crate::topic::Topic;
 
 use crate::channels::{
-    PodEventChannel, PodEventSender,
-    ReplicaSetTopicChannel, ReplicaSetTopicMessage,
+    ConsumerEventChannel, ConsumerEventSender,
+    SubscriptionTopicChannel, SubscriptionTopicMessage,
 };
-use crate::messages::{ExecutorOutputEvent, PodEvent};
-use crate::pod::{ConsumerId, ConsumerSpawner};
-use crate::replicaset::context::ConsumerStartContext;
-use crate::replicaset::pod_registry::{ManagedConsumer, ConsumerRegistry};
-use crate::replicaset::route_status::RouteStatus;
-use crate::replicaset::SubscriptionId;
+use crate::messages::{ExecutorOutputEvent, ConsumerEvent};
+use crate::consumer::{ConsumerId, ConsumerSpawner};
+use crate::subscription::context::ConsumerStartContext;
+use crate::subscription::consumer_registry::{ManagedConsumer, ConsumerRegistry};
+use crate::subscription::route_status::RouteStatus;
+use crate::subscription::SubscriptionId;
 use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -74,10 +74,10 @@ impl SubscriptionWorker {
         )
         .await;
 
-        let PodEventChannel {
-            sender: pod_event_sender,
-            receiver: mut pod_event_receiver,
-        } = PodEventChannel::new();
+        let ConsumerEventChannel {
+            sender: consumer_event_sender,
+            receiver: mut consumer_event_receiver,
+        } = ConsumerEventChannel::new();
 
         let mut consumer_registry = ConsumerRegistry::new();
         let mut pending_events: VecDeque<ExecutorOutputEvent> = VecDeque::new();
@@ -97,7 +97,7 @@ impl SubscriptionWorker {
                     subscription_id.clone(),
                     task_name.as_ref(),
                     &start_context,
-                    pod_event_sender.clone(),
+                    consumer_event_sender.clone(),
                     shutdown_token.clone(),
                 )
                 .await
@@ -243,26 +243,26 @@ impl SubscriptionWorker {
                         }
                     }
                 }
-                pod_event = pod_event_receiver.recv() => {
-                    match pod_event {
-                        Some(PodEvent::PodExit { pod_id }) => {
-                            if let Some(handle) = consumer_registry.remove_consumer(&pod_id) {
+                consumer_event = consumer_event_receiver.recv() => {
+                    match consumer_event {
+                        Some(ConsumerEvent::ConsumerExit { consumer_id }) => {
+                            if let Some(handle) = consumer_registry.remove_consumer(&consumer_id) {
                                 log::info!(
                                     "Subscription {} detected exit of consumer {}, awaiting completion",
                                     subscription_id,
-                                    pod_id
+                                    consumer_id
                                 );
                                 handle.handler.worker_handle.await.ok();
                             } else {
                                 log::warn!(
                                     "Subscription {} received exit notice for unknown consumer {}",
                                     subscription_id,
-                                    pod_id
+                                    consumer_id
                                 );
                             }
                         }
-                        Some(PodEvent::PodTopic {
-                            pod_id,
+                        Some(ConsumerEvent::ConsumerTopic {
+                            consumer_id,
                             message_id,
                             topic,
                             data,
@@ -271,7 +271,7 @@ impl SubscriptionWorker {
                             log::info!(
                                 "Subscription {} received Topic message from consumer {} on topic '{}': '{}'",
                                 subscription_id,
-                                pod_id,
+                                consumer_id,
                                 topic,
                                 data
                             );
@@ -291,7 +291,7 @@ impl SubscriptionWorker {
                             // ExecutorOutputEventに変換してbroadcast
                             let executor_event = ExecutorOutputEvent::Topic {
                                 message_id,
-                                pod_id: pod_id.clone(),
+                                pod_id: consumer_id.clone(),
                                 from_subscription_id: subscription_id.clone(),
                                 to_subscription_id,
                                 topic: topic.clone(),
@@ -303,7 +303,7 @@ impl SubscriptionWorker {
                                     log::info!(
                                         "Subscription {} stored message from consumer {} on topic '{}'",
                                         subscription_id,
-                                        pod_id,
+                                        consumer_id,
                                         topic
                                     );
                                 }
@@ -311,22 +311,22 @@ impl SubscriptionWorker {
                                     log::error!(
                                         "Subscription {} failed to store message from consumer {} on topic '{}': {}",
                                         subscription_id,
-                                        pod_id,
+                                        consumer_id,
                                         topic,
                                         e
                                     );
                                 }
                             }
                         }
-                        Some(PodEvent::PodIdle { pod_id }) => {
+                        Some(ConsumerEvent::ConsumerIdle { consumer_id }) => {
                             // 状態管理：BusyからIdleに戻す
                             log::info!(
-                                "Subscription {} received PodIdle from consumer {}",
+                                "Subscription {} received ConsumerIdle from consumer {}",
                                 subscription_id,
-                                pod_id
+                                consumer_id
                             );
 
-                            consumer_registry.set_consumer_idle(&pod_id);
+                            consumer_registry.set_consumer_idle(&consumer_id);
                             Self::drain_pending_events(
                                 &subscription_id,
                                 &mut consumer_registry,
@@ -358,19 +358,19 @@ impl SubscriptionWorker {
         subscription_id: SubscriptionId,
         task_name: &str,
         start_context: &ConsumerStartContext,
-        pod_event_sender: PodEventSender,
+        consumer_event_sender: ConsumerEventSender,
         shutdown_token: CancellationToken,
     ) -> Result<ManagedConsumer, String> {
         let consumer_id = ConsumerId::new();
         let instance_name = Arc::from(format!("{}-{}", task_name, short_consumer_suffix(&consumer_id)));
-        let topic_channel = ReplicaSetTopicChannel::new();
+        let topic_channel = SubscriptionTopicChannel::new();
 
         let spawner = ConsumerSpawner::new(
             consumer_id.clone(),
             subscription_id.clone(),
             instance_name,
             start_context.userlog_sender.clone(),
-            pod_event_sender,
+            consumer_event_sender,
             start_context.view_stdout,
             start_context.view_stderr,
         );
@@ -386,7 +386,7 @@ impl SubscriptionWorker {
         Ok(ManagedConsumer {
             handler,
             topic_sender: topic_channel.sender,
-            state: crate::pod::ConsumerState::Busy,
+            state: crate::consumer::ConsumerState::Busy,
         })
     }
 
@@ -475,7 +475,7 @@ impl SubscriptionWorker {
             };
 
             if let Some(consumer) = consumer_registry.get_consumer_mut(&target_consumer_id) {
-                if !matches!(consumer.state, crate::pod::ConsumerState::Idle) {
+                if !matches!(consumer.state, crate::consumer::ConsumerState::Idle) {
                     continue;
                 }
 
@@ -515,13 +515,13 @@ impl SubscriptionWorker {
     fn convert_to_subscription_message(
         _subscription_id: &SubscriptionId,
         event: &ExecutorOutputEvent,
-    ) -> Option<ReplicaSetTopicMessage> {
+    ) -> Option<SubscriptionTopicMessage> {
         match event {
             ExecutorOutputEvent::Topic { topic, data, from_subscription_id, .. } => {
                 // リクエスト送信時は、このSubscriptionのIDをfrom_subscription_idとして設定
                 // ただし、既にfrom_subscription_idが設定されている場合はそれを使用（他のSubscriptionからの転送の場合）
                 let from_id = from_subscription_id.clone();
-                Some(ReplicaSetTopicMessage {
+                Some(SubscriptionTopicMessage {
                     topic: topic.clone(),
                     data: data.clone(),
                     from_subscription_id: from_id,

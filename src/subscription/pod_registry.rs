@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use crate::channels::ReplicaSetTopicSender;
+use crate::channels::SubscriptionTopicSender;
 use crate::consumer::{ConsumerId, ConsumerSpawnHandler, ConsumerState};
 
 pub struct ManagedConsumer {
     pub handler: ConsumerSpawnHandler,
-    pub topic_sender: ReplicaSetTopicSender,
+    pub topic_sender: SubscriptionTopicSender,
     pub state: ConsumerState,
 }
 

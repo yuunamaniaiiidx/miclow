@@ -1,7 +1,7 @@
 use std::collections::HashMap;
-use crate::replicaset::context::SubscriptionSpec;
-use crate::replicaset::SubscriptionId;
-use crate::replicaset::worker::SubscriptionWorker;
+use crate::subscription::context::SubscriptionSpec;
+use crate::subscription::SubscriptionId;
+use crate::subscription::worker::SubscriptionWorker;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 

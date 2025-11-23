@@ -1,12 +1,12 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, PodEventSender, ReplicaSetTopicMessage, ReplicaSetTopicReceiver,
+    ExecutorInputEventSender, ConsumerEventSender, SubscriptionTopicMessage, SubscriptionTopicReceiver,
     ShutdownSender, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::message_id::MessageId;
-use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, PodEvent};
-use crate::replicaset::SubscriptionId;
+use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent};
+use crate::subscription::SubscriptionId;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +26,7 @@ pub struct ConsumerSpawner {
     pub consumer_name: Arc<str>,
     pub userlog_sender: UserLogSender,
     pub state: ConsumerState,
-    pub pod_event_sender: PodEventSender,
+    pub consumer_event_sender: ConsumerEventSender,
     pub view_stdout: bool,
     pub view_stderr: bool,
 }
@@ -37,7 +37,7 @@ impl ConsumerSpawner {
         subscription_id: SubscriptionId,
         consumer_name: Arc<str>,
         userlog_sender: UserLogSender,
-        pod_event_sender: PodEventSender,
+        consumer_event_sender: ConsumerEventSender,
         view_stdout: bool,
         view_stderr: bool,
     ) -> Self {
@@ -47,7 +47,7 @@ impl ConsumerSpawner {
             consumer_name,
             userlog_sender,
             state: ConsumerState::default(),
-            pod_event_sender,
+            consumer_event_sender,
             view_stdout,
             view_stderr,
         }
@@ -61,14 +61,14 @@ impl ConsumerSpawner {
         self,
         backend: ProtocolBackend,
         shutdown_token: CancellationToken,
-        topic_data_receiver: ReplicaSetTopicReceiver,
+        topic_data_receiver: SubscriptionTopicReceiver,
     ) -> Result<ConsumerSpawnHandler, String> {
         let consumer_id: ConsumerId = self.consumer_id.clone();
         let handler_consumer_id = consumer_id.clone();
         let consumer_name: Arc<str> = self.consumer_name.clone();
         let subscription_id = self.subscription_id.clone();
         let userlog_sender = self.userlog_sender.clone();
-        let pod_event_sender = self.pod_event_sender.clone();
+        let consumer_event_sender = self.consumer_event_sender.clone();
         let view_stdout = self.view_stdout;
         let view_stderr = self.view_stderr;
 
@@ -84,7 +84,7 @@ impl ConsumerSpawner {
             let consumer_id = consumer_id.clone();
             let consumer_name = consumer_name.clone();
             let userlog_sender = userlog_sender.clone();
-            let pod_event_sender = pod_event_sender.clone();
+            let consumer_event_sender = consumer_event_sender.clone();
             let mut topic_data_receiver = topic_data_receiver;
 
             async move {
@@ -105,24 +105,24 @@ impl ConsumerSpawner {
 
                                     match &event {
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
-                                            // system.Idleトピックの場合は、PodEvent::PodIdleを直接送信
+                                            // system.Idleトピックの場合は、ConsumerEvent::ConsumerIdleを直接送信
                                             if topic.as_str().to_lowercase() == "system.idle" {
                                                 log::info!(
-                                                    "Consumer {} received system.Idle topic, sending PodIdle event",
+                                                    "Consumer {} received system.Idle topic, sending ConsumerIdle event",
                                                     consumer_id
                                                 );
                                                 
-                                                if let Err(e) = pod_event_sender.send(PodEvent::PodIdle {
-                                                    pod_id: consumer_id.clone(),
+                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerIdle {
+                                                    consumer_id: consumer_id.clone(),
                                                 }) {
                                                     log::warn!(
-                                                        "Failed to send PodIdle event for consumer {} via system.Idle: {}",
+                                                        "Failed to send ConsumerIdle event for consumer {} via system.Idle: {}",
                                                         consumer_id,
                                                         e
                                                     );
                                                 } else {
                                                     log::info!(
-                                                        "Consumer {} sent PodIdle event via system.Idle",
+                                                        "Consumer {} sent ConsumerIdle event via system.Idle",
                                                         consumer_id
                                                     );
                                                 }
@@ -134,17 +134,17 @@ impl ConsumerSpawner {
                                                     data
                                                 );
 
-                                                // PodTopicを送信
-                                                let pod_topic_result = pod_event_sender.send(PodEvent::PodTopic {
-                                                    pod_id: consumer_id.clone(),
+                                                // ConsumerTopicを送信
+                                                let consumer_topic_result = consumer_event_sender.send(ConsumerEvent::ConsumerTopic {
+                                                    consumer_id: consumer_id.clone(),
                                                     message_id: message_id.clone(),
                                                     topic: topic.clone(),
                                                     data: data.clone(),
                                                 });
 
-                                                if let Err(e) = pod_topic_result {
+                                                if let Err(e) = consumer_topic_result {
                                                     log::warn!(
-                                                        "Failed to send PodTopic event for '{}': {}",
+                                                        "Failed to send ConsumerTopic event for '{}': {}",
                                                         consumer_id,
                                                         e
                                                     );
@@ -166,8 +166,8 @@ impl ConsumerSpawner {
                                         },
                                         ExecutorOutputEvent::Exit { exit_code, .. } => {
                                             log::info!("Exit event for consumer {} with exit code: {}", consumer_id, exit_code);
-                                            if let Err(e) = pod_event_sender.send(PodEvent::PodExit {
-                                                pod_id: consumer_id.clone(),
+                                            if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerExit {
+                                                consumer_id: consumer_id.clone(),
                                             }) {
                                                 log::warn!(
                                                     "Failed to notify consumer exit for '{}': {}",
@@ -189,15 +189,15 @@ impl ConsumerSpawner {
                         topic_data = topic_data_receiver.recv() => {
                             match topic_data {
                                 Some(topic_data) => {
-                                    let ReplicaSetTopicMessage { topic, data, from_replicaset_id } = topic_data;
+                                    let SubscriptionTopicMessage { topic, data, from_subscription_id } = topic_data;
                                     // topic.is_result()でレスポンストピックかどうかを判定可能
                                     // すべてのトピックメッセージをTopicとして扱う
                                     let input_event = ExecutorInputEvent::Topic {
                                         message_id: MessageId::new(),
-                                        pod_id: consumer_id.clone(),
+                                        consumer_id: consumer_id.clone(),
                                         topic: topic.clone(),
                                         data: data.clone(),
-                                        from_replicaset_id: from_replicaset_id.clone(),
+                                        from_subscription_id: from_subscription_id.clone(),
                                     };
 
                                     if let Err(e) = backend_handle.input_sender.send(input_event) {
