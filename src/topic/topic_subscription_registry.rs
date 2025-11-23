@@ -117,6 +117,52 @@ impl TopicSubscriptionRegistry {
         }
     }
 
+    pub async fn peek_message(
+        &self,
+        subscription_id: SubscriptionId,
+        topic: Topic,
+    ) -> Option<ExecutorOutputEvent> {
+        // readロックでメッセージを読み取る（カーソルは更新しない）
+        let messages = self.messages.read().await;
+        let queue = messages.get(&topic)?;
+        let queue_len = queue.len();
+        
+        let cursors = self.message_cursors.read().await;
+        let key = (subscription_id, topic);
+        let cursor = cursors.get(&key).copied().unwrap_or(0);
+        
+        log::debug!("called peek_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
+        
+        if cursor < queue_len {
+            let result = queue[cursor].clone();
+            log::debug!("peek_message: key={:?}, peeked_ok", key);
+            Some(result)
+        } else {
+            log::debug!("peek_message: key={:?}, no_data", key);
+            None
+        }
+    }
+
+    pub async fn latest_message(
+        &self,
+        topic: Topic,
+    ) -> Option<ExecutorOutputEvent> {
+        // readロックでメッセージを読み取る（最新のメッセージを取得）
+        let messages = self.messages.read().await;
+        let queue = messages.get(&topic)?;
+        
+        log::debug!("called latest_message: topic_str={:?}, queue_len={:?}", topic.as_str(), queue.len());
+        
+        if let Some(latest) = queue.back() {
+            let result = latest.clone();
+            log::debug!("latest_message: topic_str={:?}, latest_ok", topic.as_str());
+            Some(result)
+        } else {
+            log::debug!("latest_message: topic_str={:?}, no_data", topic.as_str());
+            None
+        }
+    }
+
     pub async fn store_response(
         &self,
         consumer_id: ConsumerId,

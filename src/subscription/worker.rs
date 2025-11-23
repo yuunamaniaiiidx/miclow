@@ -305,6 +305,79 @@ impl SubscriptionWorker {
                                 );
                             }
                         }
+                        Some(ConsumerEvent::ConsumerPeekRequesting { consumer_id, topic: requested_topic }) => {
+                            log::debug!("worker: peek_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            // 状態は変更しない（peekは読み取りのみ）
+                            
+                            let data = if let Some(topic_event) = topic_manager.peek_message(
+                                subscription_id.clone(),
+                                requested_topic.clone(),
+                            ).await {
+                                topic_event.data().map(|s| s.into())
+                            } else {
+                                None
+                            };
+                            
+                            if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                let subscription_message = SubscriptionTopicMessage {
+                                    topic: requested_topic,
+                                    data,
+                                    from_subscription_id: subscription_id.clone(),
+                                };
+                                
+                                if let Err(e) = consumer.topic_sender.send(subscription_message) {
+                                    log::warn!(
+                                        "Subscription {} failed to send peeked data to consumer {}: {}",
+                                        subscription_id,
+                                        consumer_id,
+                                        e
+                                    );
+                                }
+                                // peekは状態を変更しない（カーソルを進めない）
+                            } else {
+                                log::warn!(
+                                    "Subscription {} consumer {} not found when sending peek response",
+                                    subscription_id,
+                                    consumer_id
+                                );
+                            }
+                        }
+                        Some(ConsumerEvent::ConsumerLatestRequesting { consumer_id, topic: requested_topic }) => {
+                            log::debug!("worker: latest_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            // 状態は変更しない（latestは読み取りのみ）
+                            
+                            let data = if let Some(topic_event) = topic_manager.latest_message(
+                                requested_topic.clone(),
+                            ).await {
+                                topic_event.data().map(|s| s.into())
+                            } else {
+                                None
+                            };
+                            
+                            if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                let subscription_message = SubscriptionTopicMessage {
+                                    topic: requested_topic,
+                                    data,
+                                    from_subscription_id: subscription_id.clone(),
+                                };
+                                
+                                if let Err(e) = consumer.topic_sender.send(subscription_message) {
+                                    log::warn!(
+                                        "Subscription {} failed to send latest data to consumer {}: {}",
+                                        subscription_id,
+                                        consumer_id,
+                                        e
+                                    );
+                                }
+                                // latestは状態を変更しない
+                            } else {
+                                log::warn!(
+                                    "Subscription {} consumer {} not found when sending latest response",
+                                    subscription_id,
+                                    consumer_id
+                                );
+                            }
+                        }
                         None => {
                             log::warn!(
                                 "Subscription {} consumer event receiver closed unexpectedly",

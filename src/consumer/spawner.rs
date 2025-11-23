@@ -122,27 +122,15 @@ impl ConsumerSpawner {
                                                 );
                                             }
 
-                                            // アロケーションを避けるため、eq_ignore_ascii_caseを使用
-                                            if topic.as_str().eq_ignore_ascii_case("system.pull") {
-                                                let requested_topic = crate::topic::Topic::from(data.trim());
-                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
-                                                    consumer_id: consumer_id.clone(),
-                                                    topic: requested_topic,
-                                                }) {
+                                            // システムコマンドの処理（pull, peek, latest, result）
+                                            if let Some(event) = ConsumerEvent::from_system_command(
+                                                consumer_id.clone(),
+                                                topic.as_str(),
+                                                &data,
+                                            ) {
+                                                if let Err(e) = consumer_event_sender.send(event) {
                                                     log::warn!(
-                                                        "Failed to send ConsumerRequesting event for '{}': {}",
-                                                        consumer_id,
-                                                        e
-                                                    );
-                                                }
-                                            } else if topic.as_str().eq_ignore_ascii_case("system.result") {
-                                                let requested_topic = crate::topic::Topic::from(data.trim());
-                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerResultRequesting {
-                                                    consumer_id: consumer_id.clone(),
-                                                    topic: requested_topic,
-                                                }) {
-                                                    log::warn!(
-                                                        "Failed to send ConsumerResultRequesting event for '{}': {}",
+                                                        "Failed to send system command event for '{}': {}",
                                                         consumer_id,
                                                         e
                                                     );
