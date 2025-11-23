@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::topic::Topic;
 
 use crate::channels::{
-    ExecutorOutputEventChannel, ExecutorOutputEventSender, PodEventChannel, PodEventSender,
+    PodEventChannel, PodEventSender,
     ReplicaSetTopicChannel, ReplicaSetTopicMessage,
 };
 use crate::messages::{ExecutorOutputEvent, PodEvent};
@@ -57,16 +57,11 @@ impl SubscriptionWorker {
         let private_response_topics: Vec<Topic> = start_context.private_response_topics.iter().map(|s| Topic::from(s.as_ref())).collect();
         let topic_manager = start_context.topic_manager.clone();
 
-        let ExecutorOutputEventChannel {
-            sender: replicaset_subscription_sender,
-            receiver: mut topic_receiver,
-        } = ExecutorOutputEventChannel::new();
-
+        // トピック購読を登録（Sender不要）
         Self::register_topic_subscriptions(
             &subscription_id,
             &subscribe_topics,
             &topic_manager,
-            replicaset_subscription_sender.clone(),
         )
         .await;
 
@@ -76,7 +71,6 @@ impl SubscriptionWorker {
             &subscription_id,
             &private_response_topics_strings,
             &topic_manager,
-            replicaset_subscription_sender.clone(),
         )
         .await;
 
@@ -148,9 +142,17 @@ impl SubscriptionWorker {
                     );
                     return Self::shutdown_consumers(consumer_registry.drain()).await;
                 }
-                topic_event = topic_receiver.recv() => {
-                    match topic_event {
-                        Some(event) => {
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    // Pull型ポーリング: 購読しているトピックからメッセージを取得
+                    for topic_str in &subscribe_topics {
+                        let topic = Topic::from(topic_str.as_ref());
+                        let messages = topic_manager.pull_messages(
+                            subscription_id.clone(),
+                            topic.clone(),
+                            10, // バッチサイズ
+                        ).await;
+
+                        for event in messages {
                             // 送信元が自分自身の場合はスキップ
                             if let Some(from_id) = event.from_subscription_id() {
                                 if from_id == &subscription_id {
@@ -163,8 +165,8 @@ impl SubscriptionWorker {
                             }
 
                             // private_response_topicsに含まれるトピックの場合、to_subscription_idをチェック
-                            let should_accept = if let Some(topic) = event.topic() {
-                                if private_response_topics.contains(topic) {
+                            let should_accept = if let Some(event_topic) = event.topic() {
+                                if private_response_topics.contains(event_topic) {
                                     // private_response_topicsに含まれるトピックの場合、to_subscription_idが自分のIDと一致するかチェック
                                     if let Some(to_id) = event.to_subscription_id() {
                                         to_id == &subscription_id
@@ -202,11 +204,42 @@ impl SubscriptionWorker {
                                 pending_events.push_back(event);
                             }
                         }
-                        None => {
-                            log::warn!(
-                                "Subscription {} topic subscription receiver closed",
-                                subscription_id
-                            );
+                    }
+
+                    // private_response_topicsもポーリング
+                    for topic_str in &private_response_topics_strings {
+                        let topic = Topic::from(topic_str.as_ref());
+                        let messages = topic_manager.pull_messages(
+                            subscription_id.clone(),
+                            topic.clone(),
+                            10, // バッチサイズ
+                        ).await;
+
+                        for event in messages {
+                            // private_response_topicsの場合はto_subscription_idをチェック
+                            let should_accept = if let Some(to_id) = event.to_subscription_id() {
+                                to_id == &subscription_id
+                            } else {
+                                false
+                            };
+
+                            if !should_accept {
+                                continue;
+                            }
+
+                            if consumer_registry.idle_count() > 0 {
+                                match Self::route_topic_event(
+                                    &subscription_id,
+                                    &mut consumer_registry,
+                                    &mut request_topic_to_from_subscription,
+                                    event,
+                                ).await {
+                                    RouteStatus::Pending(event) => pending_events.push_back(event),
+                                    RouteStatus::Delivered | RouteStatus::Dropped => {}
+                                }
+                            } else {
+                                pending_events.push_back(event);
+                            }
                         }
                     }
                 }
@@ -265,10 +298,10 @@ impl SubscriptionWorker {
                                 data,
                             };
 
-                            match topic_manager.broadcast_message(executor_event.clone()).await {
+                            match topic_manager.store_message(executor_event.clone()).await {
                                 Ok(_) => {
                                     log::info!(
-                                        "Subscription {} broadcasted message from consumer {} on topic '{}'",
+                                        "Subscription {} stored message from consumer {} on topic '{}'",
                                         subscription_id,
                                         pod_id,
                                         topic
@@ -276,7 +309,7 @@ impl SubscriptionWorker {
                                 }
                                 Err(e) => {
                                     log::error!(
-                                        "Subscription {} failed to broadcast message from consumer {} on topic '{}': {}",
+                                        "Subscription {} failed to store message from consumer {} on topic '{}': {}",
                                         subscription_id,
                                         pod_id,
                                         topic,
@@ -361,7 +394,6 @@ impl SubscriptionWorker {
         subscription_id: &SubscriptionId,
         topics: &[Arc<str>],
         topic_manager: &TopicSubscriptionRegistry,
-        sender: ExecutorOutputEventSender,
     ) {
         if topics.is_empty() {
             log::info!(
@@ -373,7 +405,7 @@ impl SubscriptionWorker {
 
         for topic in topics {
             topic_manager
-                .add_subscriber(topic.as_ref(), subscription_id.clone(), sender.clone())
+                .add_subscriber(topic.as_ref(), subscription_id.clone())
                 .await;
             log::info!(
                 "Subscription {} subscribed to topic '{}'",

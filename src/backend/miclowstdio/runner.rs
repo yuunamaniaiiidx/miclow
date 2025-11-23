@@ -362,7 +362,6 @@ pub async fn spawn_miclow_stdio_protocol(
 
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
-        event_sender: event_channel.sender,
         input_sender: input_channel.sender,
         shutdown_sender: shutdown_channel.sender,
     })
