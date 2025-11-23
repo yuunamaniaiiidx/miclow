@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::channels::SubscriptionTopicSender;
 use crate::consumer::{ConsumerId, ConsumerSpawnHandler, ConsumerState};
+use crate::topic::Topic;
 
 pub struct ManagedConsumer {
     pub handler: ConsumerSpawnHandler,
@@ -73,7 +74,7 @@ impl ConsumerRegistry {
 
     pub fn remove_consumer(&mut self, consumer_id: &ConsumerId) -> Option<ManagedConsumer> {
         if let Some(consumer) = self.consumers.remove(consumer_id) {
-            if matches!(consumer.state, ConsumerState::Idle) {
+            if matches!(consumer.state, ConsumerState::Requesting { .. }) {
                 self.idle_count = self.idle_count.saturating_sub(1);
             }
             self.router.remove(consumer_id);
@@ -83,20 +84,23 @@ impl ConsumerRegistry {
         }
     }
 
-    pub fn set_consumer_busy(&mut self, consumer_id: &ConsumerId) {
+    pub fn set_consumer_processing(&mut self, consumer_id: &ConsumerId) {
         if let Some(consumer) = self.consumers.get_mut(consumer_id) {
-            if matches!(consumer.state, ConsumerState::Idle) {
-                consumer.state = ConsumerState::Busy;
+            if matches!(consumer.state, ConsumerState::Requesting { .. }) {
+                consumer.state = ConsumerState::Processing;
                 self.idle_count = self.idle_count.saturating_sub(1);
             }
         }
     }
 
-    pub fn set_consumer_idle(&mut self, consumer_id: &ConsumerId) {
+    pub fn set_consumer_requesting(&mut self, consumer_id: &ConsumerId, topic: Option<Topic>) {
         if let Some(consumer) = self.consumers.get_mut(consumer_id) {
-            if !matches!(consumer.state, ConsumerState::Idle) {
-                consumer.state = ConsumerState::Idle;
+            if !matches!(consumer.state, ConsumerState::Requesting { .. }) {
+                consumer.state = ConsumerState::Requesting { topic };
                 self.idle_count += 1;
+            } else {
+                // 既にRequestingの場合は、トピック情報を更新
+                consumer.state = ConsumerState::Requesting { topic };
             }
         }
     }

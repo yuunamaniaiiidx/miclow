@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use super::pod_id::ConsumerId;
-use super::state::ConsumerState;
 
 pub struct ConsumerSpawnHandler {
     pub consumer_id: ConsumerId,
@@ -25,7 +24,6 @@ pub struct ConsumerSpawner {
     pub subscription_id: SubscriptionId,
     pub consumer_name: Arc<str>,
     pub userlog_sender: UserLogSender,
-    pub state: ConsumerState,
     pub consumer_event_sender: ConsumerEventSender,
     pub view_stdout: bool,
     pub view_stderr: bool,
@@ -46,15 +44,10 @@ impl ConsumerSpawner {
             subscription_id,
             consumer_name,
             userlog_sender,
-            state: ConsumerState::default(),
             consumer_event_sender,
             view_stdout,
             view_stderr,
         }
-    }
-
-    pub fn update_state(&mut self, next_state: ConsumerState) {
-        self.state = next_state;
     }
 
     pub async fn spawn(
@@ -105,46 +98,39 @@ impl ConsumerSpawner {
 
                                     match &event {
                                         ExecutorOutputEvent::Topic { message_id, topic, data, .. } => {
-                                            // system.Idleトピックの場合は、ConsumerEvent::ConsumerIdleを直接送信
-                                            if topic.as_str().to_lowercase() == "system.idle" {
-                                                log::info!(
-                                                    "Consumer {} received system.Idle topic, sending ConsumerIdle event",
-                                                    consumer_id
+                                            log::info!(
+                                                "Message event for consumer {} on topic '{}': '{}'",
+                                                consumer_id,
+                                                topic,
+                                                data
+                                            );
+
+                                            // ConsumerTopicを送信
+                                            let consumer_topic_result = consumer_event_sender.send(ConsumerEvent::ConsumerTopic {
+                                                consumer_id: consumer_id.clone(),
+                                                message_id: message_id.clone(),
+                                                topic: topic.clone(),
+                                                data: data.clone(),
+                                            });
+
+                                            if let Err(e) = consumer_topic_result {
+                                                log::warn!(
+                                                    "Failed to send ConsumerTopic event for '{}': {}",
+                                                    consumer_id,
+                                                    e
                                                 );
-                                                
-                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerIdle {
+                                            }
+
+                                            // system.pullトピックの場合はRequesting状態に遷移（要求されたトピックを設定）
+                                            // 通常のトピックメッセージの状態遷移判断はsubscription/worker.rsで行う
+                                            if topic.as_str().to_lowercase() == "system.pull" {
+                                                let requested_topic = crate::topic::Topic::from(data.trim());
+                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerStateRequesting {
                                                     consumer_id: consumer_id.clone(),
+                                                    topic: Some(requested_topic),
                                                 }) {
                                                     log::warn!(
-                                                        "Failed to send ConsumerIdle event for consumer {} via system.Idle: {}",
-                                                        consumer_id,
-                                                        e
-                                                    );
-                                                } else {
-                                                    log::info!(
-                                                        "Consumer {} sent ConsumerIdle event via system.Idle",
-                                                        consumer_id
-                                                    );
-                                                }
-                                            } else {
-                                                log::info!(
-                                                    "Message event for consumer {} on topic '{}': '{}'",
-                                                    consumer_id,
-                                                    topic,
-                                                    data
-                                                );
-
-                                                // ConsumerTopicを送信
-                                                let consumer_topic_result = consumer_event_sender.send(ConsumerEvent::ConsumerTopic {
-                                                    consumer_id: consumer_id.clone(),
-                                                    message_id: message_id.clone(),
-                                                    topic: topic.clone(),
-                                                    data: data.clone(),
-                                                });
-
-                                                if let Err(e) = consumer_topic_result {
-                                                    log::warn!(
-                                                        "Failed to send ConsumerTopic event for '{}': {}",
+                                                        "Failed to send ConsumerStateRequesting event for '{}': {}",
                                                         consumer_id,
                                                         e
                                                     );

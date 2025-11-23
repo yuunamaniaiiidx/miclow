@@ -18,24 +18,6 @@ impl RawTaskConfig {
             .ok_or_else(|| anyhow::anyhow!("task_name must be a string"))?;
         let name = Arc::from(name_str);
 
-        let subscribe_topics = if let Some(raw_value) = self.subscribe_topics {
-            let expanded_value = expand_toml_value(&raw_value, context)?;
-            let topics_vec: Vec<String> = Vec::<String>::from_toml_value(&expanded_value)
-                .ok_or_else(|| anyhow::anyhow!("subscribe_topics must be an array of strings"))?;
-            topics_vec.into_iter().map(|s| Arc::from(s)).collect()
-        } else {
-            Vec::new()
-        };
-
-        let private_response_topics = if let Some(raw_value) = self.private_response_topics {
-            let expanded_value = expand_toml_value(&raw_value, context)?;
-            let topics_vec: Vec<String> = Vec::<String>::from_toml_value(&expanded_value)
-                .ok_or_else(|| anyhow::anyhow!("private_response_topics must be an array of strings"))?;
-            topics_vec.into_iter().map(|s| Arc::from(s)).collect()
-        } else {
-            Vec::new()
-        };
-
         let view_stdout = expand_bool_field(self.view_stdout, context, "view_stdout")?
             .expect("view_stdout should be set by normalize_defaults()");
 
@@ -59,8 +41,6 @@ impl RawTaskConfig {
         // 展開された値を返す（TaskConfigは統合層で構築される）
         Ok(ExpandedTaskConfig {
             name,
-            subscribe_topics,
-            private_response_topics,
             view_stdout,
             view_stderr,
             lifecycle,
@@ -83,8 +63,6 @@ impl RawTaskConfig {
         // TaskConfigを構築
         Ok(TaskConfig {
             name: expanded.name,
-            subscribe_topics: expanded.subscribe_topics,
-            private_response_topics: expanded.private_response_topics,
             view_stdout: expanded.view_stdout,
             view_stderr: expanded.view_stderr,
             lifecycle: expanded.lifecycle,

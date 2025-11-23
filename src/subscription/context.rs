@@ -8,8 +8,6 @@ pub struct ConsumerStartContext {
     pub protocol_backend: ProtocolBackend,
     pub topic_manager: TopicSubscriptionRegistry,
     pub userlog_sender: UserLogSender,
-    pub subscribe_topics: Vec<Arc<str>>,
-    pub private_response_topics: Vec<Arc<str>>,
     pub view_stdout: bool,
     pub view_stderr: bool,
 }

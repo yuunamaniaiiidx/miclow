@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use crate::topic::Topic;
@@ -11,9 +11,7 @@ use crate::messages::{ExecutorOutputEvent, ConsumerEvent};
 use crate::consumer::{ConsumerId, ConsumerSpawner};
 use crate::subscription::context::ConsumerStartContext;
 use crate::subscription::consumer_registry::{ManagedConsumer, ConsumerRegistry};
-use crate::subscription::route_status::RouteStatus;
 use crate::subscription::SubscriptionId;
-use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
 pub struct SubscriptionWorker {
@@ -51,28 +49,9 @@ impl SubscriptionWorker {
         } = self;
 
         // リクエストトピックとfrom_subscription_idのマッピング（レスポンス時に使用）
-        let mut request_topic_to_from_subscription: HashMap<Topic, SubscriptionId> = HashMap::new();
+        let request_topic_to_from_subscription: HashMap<Topic, SubscriptionId> = HashMap::new();
 
-        let subscribe_topics = start_context.subscribe_topics.clone();
-        let private_response_topics: Vec<Topic> = start_context.private_response_topics.iter().map(|s| Topic::from(s.as_ref())).collect();
         let topic_manager = start_context.topic_manager.clone();
-
-        // トピック購読を登録（Sender不要）
-        Self::register_topic_subscriptions(
-            &subscription_id,
-            &subscribe_topics,
-            &topic_manager,
-        )
-        .await;
-
-        // private_response_topicsもtopic registryに登録
-        let private_response_topics_strings: Vec<Arc<str>> = start_context.private_response_topics.clone();
-        Self::register_topic_subscriptions(
-            &subscription_id,
-            &private_response_topics_strings,
-            &topic_manager,
-        )
-        .await;
 
         let ConsumerEventChannel {
             sender: consumer_event_sender,
@@ -80,7 +59,6 @@ impl SubscriptionWorker {
         } = ConsumerEventChannel::new();
 
         let mut consumer_registry = ConsumerRegistry::new();
-        let mut pending_events: VecDeque<ExecutorOutputEvent> = VecDeque::new();
         let target_instances = desired_instances;
 
         loop {
@@ -105,12 +83,6 @@ impl SubscriptionWorker {
                     Ok(handle) => {
                         let handle_id = consumer_registry.add_consumer(handle);
                         log::info!("Subscription {} spawned consumer {}", subscription_id, handle_id);
-                        Self::drain_pending_events(
-                            &subscription_id,
-                            &mut consumer_registry,
-                            &mut request_topic_to_from_subscription,
-                            &mut pending_events,
-                        ).await;
                     }
                     Err(err) => {
                         log::error!(
@@ -142,107 +114,6 @@ impl SubscriptionWorker {
                     );
                     return Self::shutdown_consumers(consumer_registry.drain()).await;
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    // Pull型ポーリング: 購読しているトピックからメッセージを取得
-                    for topic_str in &subscribe_topics {
-                        let topic = Topic::from(topic_str.as_ref());
-                        let messages = topic_manager.pull_messages(
-                            subscription_id.clone(),
-                            topic.clone(),
-                            10, // バッチサイズ
-                        ).await;
-
-                        for event in messages {
-                            // 送信元が自分自身の場合はスキップ
-                            if let Some(from_id) = event.from_subscription_id() {
-                                if from_id == &subscription_id {
-                                    log::debug!(
-                                        "Subscription {} filtered message from itself",
-                                        subscription_id
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            // private_response_topicsに含まれるトピックの場合、to_subscription_idをチェック
-                            let should_accept = if let Some(event_topic) = event.topic() {
-                                if private_response_topics.contains(event_topic) {
-                                    // private_response_topicsに含まれるトピックの場合、to_subscription_idが自分のIDと一致するかチェック
-                                    if let Some(to_id) = event.to_subscription_id() {
-                                        to_id == &subscription_id
-                                    } else {
-                                        // to_subscription_idが設定されていない場合は拒否
-                                        false
-                                    }
-                                } else {
-                                    // private_response_topicsに含まれないトピックは常に受け入れる
-                                    true
-                                }
-                            } else {
-                                true
-                            };
-
-                            if !should_accept {
-                                log::debug!(
-                                    "Subscription {} filtered message on private_response_topic (to_subscription_id mismatch)",
-                                    subscription_id
-                                );
-                                continue;
-                            }
-
-                            if consumer_registry.idle_count() > 0 {
-                                match Self::route_topic_event(
-                                    &subscription_id,
-                                    &mut consumer_registry,
-                                    &mut request_topic_to_from_subscription,
-                                    event,
-                                ).await {
-                                    RouteStatus::Pending(event) => pending_events.push_back(event),
-                                    RouteStatus::Delivered | RouteStatus::Dropped => {}
-                                }
-                            } else {
-                                pending_events.push_back(event);
-                            }
-                        }
-                    }
-
-                    // private_response_topicsもポーリング
-                    for topic_str in &private_response_topics_strings {
-                        let topic = Topic::from(topic_str.as_ref());
-                        let messages = topic_manager.pull_messages(
-                            subscription_id.clone(),
-                            topic.clone(),
-                            10, // バッチサイズ
-                        ).await;
-
-                        for event in messages {
-                            // private_response_topicsの場合はto_subscription_idをチェック
-                            let should_accept = if let Some(to_id) = event.to_subscription_id() {
-                                to_id == &subscription_id
-                            } else {
-                                false
-                            };
-
-                            if !should_accept {
-                                continue;
-                            }
-
-                            if consumer_registry.idle_count() > 0 {
-                                match Self::route_topic_event(
-                                    &subscription_id,
-                                    &mut consumer_registry,
-                                    &mut request_topic_to_from_subscription,
-                                    event,
-                                ).await {
-                                    RouteStatus::Pending(event) => pending_events.push_back(event),
-                                    RouteStatus::Delivered | RouteStatus::Dropped => {}
-                                }
-                            } else {
-                                pending_events.push_back(event);
-                            }
-                        }
-                    }
-                }
                 consumer_event = consumer_event_receiver.recv() => {
                     match consumer_event {
                         Some(ConsumerEvent::ConsumerExit { consumer_id }) => {
@@ -267,7 +138,7 @@ impl SubscriptionWorker {
                             topic,
                             data,
                         }) => {
-                            // すべてのトピックメッセージを同じように処理
+                            // トピックメッセージを通常通り処理
                             log::info!(
                                 "Subscription {} received Topic message from consumer {} on topic '{}': '{}'",
                                 subscription_id,
@@ -318,21 +189,64 @@ impl SubscriptionWorker {
                                 }
                             }
                         }
-                        Some(ConsumerEvent::ConsumerIdle { consumer_id }) => {
-                            // 状態管理：BusyからIdleに戻す
-                            log::info!(
-                                "Subscription {} received ConsumerIdle from consumer {}",
-                                subscription_id,
-                                consumer_id
-                            );
+                        Some(ConsumerEvent::ConsumerStateRequesting { consumer_id, topic }) => {
+                            // 要求されたトピックがある場合、Pull処理を実行
+                            if let Some(requested_topic) = topic {
+                                log::info!(
+                                    "Subscription {} processing Pull request from consumer {} for topic '{}'",
+                                    subscription_id,
+                                    consumer_id,
+                                    requested_topic
+                                );
+                                
+                                // 要求されたトピックから1件取得
+                                let topic_messages = topic_manager.pull_messages(
+                                    subscription_id.clone(),
+                                    requested_topic.clone(),
+                                    1, // 1件のみ取得
+                                ).await;
 
-                            consumer_registry.set_consumer_idle(&consumer_id);
-                            Self::drain_pending_events(
-                                &subscription_id,
-                                &mut consumer_registry,
-                                &mut request_topic_to_from_subscription,
-                                &mut pending_events,
-                            ).await;
+                                if let Some(topic_event) = topic_messages.first() {
+                                    // データをConsumerに送信
+                                    if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                        let subscription_message = SubscriptionTopicMessage {
+                                            topic: requested_topic.clone(),
+                                            data: topic_event.data().unwrap_or_default().into(),
+                                            from_subscription_id: subscription_id.clone(),
+                                        };
+
+                                        if let Err(e) = consumer.topic_sender.send(subscription_message) {
+                                            log::warn!(
+                                                "Subscription {} failed to send pulled data to consumer {}: {}",
+                                                subscription_id,
+                                                consumer_id,
+                                                e
+                                            );
+                                        } else {
+                                            // データを送信したらProcessingに設定
+                                            consumer_registry.set_consumer_processing(&consumer_id);
+                                            log::info!(
+                                                "Subscription {} sent pulled data from topic '{}' to consumer {}",
+                                                subscription_id,
+                                                requested_topic,
+                                                consumer_id
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    // データがない場合、そのままRequestingのまま
+                                    log::debug!(
+                                        "Subscription {} no data available for topic '{}' requested by consumer {}",
+                                        subscription_id,
+                                        requested_topic,
+                                        consumer_id
+                                    );
+                                }
+                            }
+                        }
+                        Some(ConsumerEvent::ConsumerStateProcessing { consumer_id }) => {
+                            // ConsumerがProcessing状態に遷移
+                            consumer_registry.set_consumer_processing(&consumer_id);
                         }
                         None => {
                             log::warn!(
@@ -386,150 +300,10 @@ impl SubscriptionWorker {
         Ok(ManagedConsumer {
             handler,
             topic_sender: topic_channel.sender,
-            state: crate::consumer::ConsumerState::Busy,
+            state: crate::consumer::ConsumerState::Processing,
         })
     }
 
-    async fn register_topic_subscriptions(
-        subscription_id: &SubscriptionId,
-        topics: &[Arc<str>],
-        topic_manager: &TopicSubscriptionRegistry,
-    ) {
-        if topics.is_empty() {
-            log::info!(
-                "Subscription {} has no topic subscriptions configured",
-                subscription_id
-            );
-            return;
-        }
-
-        for topic in topics {
-            topic_manager
-                .add_subscriber(topic.as_ref(), subscription_id.clone())
-                .await;
-            log::info!(
-                "Subscription {} subscribed to topic '{}'",
-                subscription_id,
-                topic.as_ref()
-            );
-        }
-    }
-
-    async fn drain_pending_events(
-        subscription_id: &SubscriptionId,
-        consumer_registry: &mut ConsumerRegistry,
-        request_topic_to_from_subscription: &mut HashMap<Topic, SubscriptionId>,
-        pending_events: &mut VecDeque<ExecutorOutputEvent>,
-    ) {
-        while consumer_registry.idle_count() > 0 {
-            let Some(event) = pending_events.pop_front() else {
-                break;
-            };
-
-            match Self::route_topic_event(subscription_id, consumer_registry, request_topic_to_from_subscription, event).await {
-                RouteStatus::Delivered | RouteStatus::Dropped => continue,
-                RouteStatus::Pending(event) => {
-                    pending_events.push_front(event);
-                    break;
-                }
-            }
-        }
-    }
-
-    async fn route_topic_event(
-        subscription_id: &SubscriptionId,
-        consumer_registry: &mut ConsumerRegistry,
-        request_topic_to_from_subscription: &mut HashMap<Topic, SubscriptionId>,
-        event: ExecutorOutputEvent,
-    ) -> RouteStatus {
-        let Some(message) = Self::convert_to_subscription_message(subscription_id, &event) else {
-            log::warn!(
-                "Subscription {} received topic event without topic/data, dropping",
-                subscription_id
-            );
-            return RouteStatus::Dropped;
-        };
-        // レスポンストピックでない場合（通常のトピック）はレスポンスを要求
-        let requires_response = !message.topic.is_result();
-
-        // リクエスト送信時（レスポンスを要求する場合）にマッピングを保存
-        if requires_response {
-            request_topic_to_from_subscription.insert(message.topic.clone(), message.from_subscription_id.clone());
-        }
-
-        if consumer_registry.idle_count() == 0 || consumer_registry.is_empty() {
-            log::debug!(
-                "Subscription {} has no consumers available; queuing topic '{}'",
-                subscription_id,
-                message.topic
-            );
-            return RouteStatus::Pending(event);
-        }
-
-        let topic_name = message.topic.clone();
-        let max_attempts = consumer_registry.len();
-
-        for _ in 0..max_attempts {
-            let Some(target_consumer_id) = consumer_registry.next_consumer_id() else {
-                break;
-            };
-
-            if let Some(consumer) = consumer_registry.get_consumer_mut(&target_consumer_id) {
-                if !matches!(consumer.state, crate::consumer::ConsumerState::Idle) {
-                    continue;
-                }
-
-                if let Err(e) = consumer.topic_sender.send(message.clone()) {
-                    log::warn!(
-                        "Subscription {} failed to send topic '{}' to consumer {}: {}",
-                        subscription_id,
-                        topic_name,
-                        target_consumer_id,
-                        e
-                    );
-                    return RouteStatus::Dropped;
-                } else {
-                    // メッセージをconsumerに送信したら、.resultトピックかどうかに関わらず常にBusyに遷移
-                    consumer_registry.set_consumer_busy(&target_consumer_id);
-                    log::debug!(
-                        "Subscription {} routed topic '{}' to consumer {}",
-                        subscription_id,
-                        topic_name,
-                        target_consumer_id
-                    );
-                    return RouteStatus::Delivered;
-                }
-            } else {
-                consumer_registry.remove_consumer(&target_consumer_id);
-            }
-        }
-
-        log::info!(
-            "Subscription {} could not route topic '{}' because no idle consumers were reachable",
-            subscription_id,
-            topic_name
-        );
-        RouteStatus::Pending(event)
-    }
-
-    fn convert_to_subscription_message(
-        _subscription_id: &SubscriptionId,
-        event: &ExecutorOutputEvent,
-    ) -> Option<SubscriptionTopicMessage> {
-        match event {
-            ExecutorOutputEvent::Topic { topic, data, from_subscription_id, .. } => {
-                // リクエスト送信時は、このSubscriptionのIDをfrom_subscription_idとして設定
-                // ただし、既にfrom_subscription_idが設定されている場合はそれを使用（他のSubscriptionからの転送の場合）
-                let from_id = from_subscription_id.clone();
-                Some(SubscriptionTopicMessage {
-                    topic: topic.clone(),
-                    data: data.clone(),
-                    from_subscription_id: from_id,
-                })
-            }
-            _ => None,
-        }
-    }
 }
 
 fn short_consumer_suffix(consumer_id: &ConsumerId) -> String {

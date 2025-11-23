@@ -2,7 +2,6 @@ mod context;
 mod controller;
 mod id;
 mod consumer_registry;
-mod route_status;
 mod worker;
 
 pub use context::{ConsumerStartContext, SubscriptionSpec};

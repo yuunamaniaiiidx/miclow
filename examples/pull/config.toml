@@ -18,7 +18,6 @@ args = ["run", "pull.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 view_stdout = true
 view_stderr = true
-private_response_topics = ["system.pull"]
 
 [[tasks.lifecycle]]
 desired_instances = 1

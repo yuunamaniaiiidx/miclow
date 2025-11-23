@@ -378,7 +378,7 @@ class MiclowClient:
         return_topic = response_topic(topic)
         return self.receive(return_topic)
 
-    def pull(self, topic: str) -> SystemResponse:
+    def pull(self, topic: str) -> TopicMessage:
         """
         Pull the latest message for a topic.
 
@@ -386,7 +386,7 @@ class MiclowClient:
             topic: The topic name to pull the latest message for
 
         Returns:
-            SystemResponse with the latest message data (if available) or error
+            TopicMessage with the latest message data (if available)
         """
         print('"system.pull"::')
         print(topic)
@@ -394,10 +394,11 @@ class MiclowClient:
         sys.stdout.flush()
 
         # receive() will automatically send idle() when waiting for messages
-        response = self.receive("system.pull")
-        if isinstance(response, SystemResponse):
+        # 要求されたトピックでデータを待つ
+        response = self.receive(topic)
+        if isinstance(response, TopicMessage):
             return response
-        raise RuntimeError(f"Expected SystemResponse but got {type(response)}")
+        raise RuntimeError(f"Expected TopicMessage but got {type(response)}")
 
     def idle(self) -> None:
         """
@@ -502,7 +503,7 @@ def get_status() -> SystemResponse:
     return get_client().get_status()
 
 
-def pull(topic: str) -> SystemResponse:
+def pull(topic: str) -> TopicMessage:
     """
     Pull the latest message for a topic.
 
@@ -510,7 +511,7 @@ def pull(topic: str) -> SystemResponse:
         topic: The topic name to pull the latest message for
 
     Returns:
-        SystemResponse with the latest message data (if available) or error
+        TopicMessage with the latest message data (if available)
     """
     return get_client().pull(topic)
 

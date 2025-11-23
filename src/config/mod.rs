@@ -21,8 +21,6 @@ use toml::Value as TomlValue;
 pub(crate) struct RawTaskConfig {
     pub name: TomlValue,
     pub protocol: TomlValue, // セクション名から設定される
-    pub subscribe_topics: Option<TomlValue>,
-    pub private_response_topics: Option<TomlValue>,
     pub view_stdout: Option<TomlValue>,
     pub view_stderr: Option<TomlValue>,
     pub lifecycle: Option<RawLifecycleConfig>,
@@ -35,8 +33,6 @@ pub(crate) struct RawTaskConfig {
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
     pub name: Arc<str>,
-    pub subscribe_topics: Vec<Arc<str>>,
-    pub private_response_topics: Vec<Arc<str>>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -54,8 +50,6 @@ pub struct TaskConfig {
 #[derive(Debug, Clone)]
 pub struct ExpandedTaskConfig {
     pub name: Arc<str>,
-    pub subscribe_topics: Vec<Arc<str>>,
-    pub private_response_topics: Vec<Arc<str>>,
     pub view_stdout: bool,
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
@@ -120,10 +114,6 @@ pub(crate) fn expand_toml_value(value: &TomlValue, context: &ExpandContext) -> R
 struct RawTaskEntry {
     task_name: String,
     protocol: String,
-    #[serde(default)]
-    subscribe_topics: Vec<String>,
-    #[serde(default)]
-    private_response_topics: Vec<String>,
     view_stdout: Option<bool>,
     view_stderr: Option<bool>,
     #[serde(default)]
@@ -202,35 +192,9 @@ impl RawSystemConfig {
         };
 
         // RawTaskConfigを作成
-        let subscribe_topics_value = if entry.subscribe_topics.is_empty() {
-            None
-        } else {
-            Some(TomlValue::Array(
-                entry
-                    .subscribe_topics
-                    .into_iter()
-                    .map(TomlValue::String)
-                    .collect(),
-            ))
-        };
-
-        let private_response_topics_value = if entry.private_response_topics.is_empty() {
-            None
-        } else {
-            Some(TomlValue::Array(
-                entry
-                    .private_response_topics
-                    .into_iter()
-                    .map(TomlValue::String)
-                    .collect(),
-            ))
-        };
-
         let mut task_config = RawTaskConfig {
             name: TomlValue::String(entry.task_name.clone()),
             protocol: TomlValue::String(protocol_name),
-            subscribe_topics: subscribe_topics_value,
-            private_response_topics: private_response_topics_value,
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
             view_stderr: entry.view_stderr.map(|v| TomlValue::Boolean(v)),
             lifecycle,

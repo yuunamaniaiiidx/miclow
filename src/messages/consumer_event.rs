@@ -14,7 +14,11 @@ pub enum ConsumerEvent {
         topic: Topic,
         data: Arc<str>,
     },
-    ConsumerIdle {
+    ConsumerStateRequesting {
+        consumer_id: ConsumerId,
+        topic: Option<Topic>,
+    },
+    ConsumerStateProcessing {
         consumer_id: ConsumerId,
     },
 }

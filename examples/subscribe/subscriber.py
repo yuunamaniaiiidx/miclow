@@ -1,3 +1,0 @@
-import miclow
-
-miclow.receive()
