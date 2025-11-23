@@ -189,61 +189,55 @@ impl SubscriptionWorker {
                                 }
                             }
                         }
-                        Some(ConsumerEvent::ConsumerStateRequesting { consumer_id, topic }) => {
-                            // 要求されたトピックがある場合、Pull処理を実行
-                            if let Some(requested_topic) = topic {
-                                log::info!(
-                                    "Subscription {} processing Pull request from consumer {} for topic '{}'",
-                                    subscription_id,
-                                    consumer_id,
-                                    requested_topic
-                                );
-                                
-                                // 要求されたトピックから1件取得
-                                if let Some(topic_event) = topic_manager.pull_message(
-                                    subscription_id.clone(),
-                                    requested_topic.clone(),
-                                ).await {
-                                    // データをConsumerに送信
-                                    if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
-                                        let subscription_message = SubscriptionTopicMessage {
-                                            topic: requested_topic.clone(),
-                                            data: topic_event.data().unwrap_or_default().into(),
-                                            from_subscription_id: subscription_id.clone(),
-                                        };
+                        Some(ConsumerEvent::ConsumerRequesting { consumer_id, topic: requested_topic }) => {
+                            // Pull処理を実行
+                            log::info!(
+                                "Subscription {} processing Pull request from consumer {} for topic '{}'",
+                                subscription_id,
+                                consumer_id,
+                                requested_topic
+                            );
+                            
+                            // 要求されたトピックから1件取得
+                            if let Some(topic_event) = topic_manager.pull_message(
+                                subscription_id.clone(),
+                                requested_topic.clone(),
+                            ).await {
+                                // データをConsumerに送信
+                                if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                    let subscription_message = SubscriptionTopicMessage {
+                                        topic: requested_topic.clone(),
+                                        data: topic_event.data().unwrap_or_default().into(),
+                                        from_subscription_id: subscription_id.clone(),
+                                    };
 
-                                        if let Err(e) = consumer.topic_sender.send(subscription_message) {
-                                            log::warn!(
-                                                "Subscription {} failed to send pulled data to consumer {}: {}",
-                                                subscription_id,
-                                                consumer_id,
-                                                e
-                                            );
-                                        } else {
-                                            // データを送信したらProcessingに設定
-                                            consumer_registry.set_consumer_processing(&consumer_id);
-                                            log::info!(
-                                                "Subscription {} sent pulled data from topic '{}' to consumer {}",
-                                                subscription_id,
-                                                requested_topic,
-                                                consumer_id
-                                            );
-                                        }
+                                    if let Err(e) = consumer.topic_sender.send(subscription_message) {
+                                        log::warn!(
+                                            "Subscription {} failed to send pulled data to consumer {}: {}",
+                                            subscription_id,
+                                            consumer_id,
+                                            e
+                                        );
+                                    } else {
+                                        // データを送信したらProcessingに設定
+                                        consumer_registry.set_consumer_processing(&consumer_id);
+                                        log::info!(
+                                            "Subscription {} sent pulled data from topic '{}' to consumer {}",
+                                            subscription_id,
+                                            requested_topic,
+                                            consumer_id
+                                        );
                                     }
-                                } else {
-                                    // データがない場合、そのままRequestingのまま
-                                    log::debug!(
-                                        "Subscription {} no data available for topic '{}' requested by consumer {}",
-                                        subscription_id,
-                                        requested_topic,
-                                        consumer_id
-                                    );
                                 }
+                            } else {
+                                // データがない場合、そのままRequestingのまま
+                                log::debug!(
+                                    "Subscription {} no data available for topic '{}' requested by consumer {}",
+                                    subscription_id,
+                                    requested_topic,
+                                    consumer_id
+                                );
                             }
-                        }
-                        Some(ConsumerEvent::ConsumerStateProcessing { consumer_id }) => {
-                            // ConsumerがProcessing状態に遷移
-                            consumer_registry.set_consumer_processing(&consumer_id);
                         }
                         None => {
                             log::warn!(

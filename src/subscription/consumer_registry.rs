@@ -93,7 +93,7 @@ impl ConsumerRegistry {
         }
     }
 
-    pub fn set_consumer_requesting(&mut self, consumer_id: &ConsumerId, topic: Option<Topic>) {
+    pub fn set_consumer_requesting(&mut self, consumer_id: &ConsumerId, topic: Topic) {
         if let Some(consumer) = self.consumers.get_mut(consumer_id) {
             if !matches!(consumer.state, ConsumerState::Requesting { .. }) {
                 consumer.state = ConsumerState::Requesting { topic };

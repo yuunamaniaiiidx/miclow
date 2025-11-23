@@ -125,12 +125,12 @@ impl ConsumerSpawner {
                                             // 通常のトピックメッセージの状態遷移判断はsubscription/worker.rsで行う
                                             if topic.as_str().to_lowercase() == "system.pull" {
                                                 let requested_topic = crate::topic::Topic::from(data.trim());
-                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerStateRequesting {
+                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
                                                     consumer_id: consumer_id.clone(),
-                                                    topic: Some(requested_topic),
+                                                    topic: requested_topic,
                                                 }) {
                                                     log::warn!(
-                                                        "Failed to send ConsumerStateRequesting event for '{}': {}",
+                                                        "Failed to send ConsumerRequesting event for '{}': {}",
                                                         consumer_id,
                                                         e
                                                     );
