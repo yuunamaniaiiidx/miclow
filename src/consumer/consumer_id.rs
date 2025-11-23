@@ -7,6 +7,10 @@ impl ConsumerId {
     pub fn new() -> Self {
         Self(Uuid::now_v7())
     }
+
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
 }
 
 impl std::fmt::Display for ConsumerId {

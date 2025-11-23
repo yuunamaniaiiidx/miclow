@@ -136,6 +136,18 @@ impl ConsumerSpawner {
                                                         e
                                                     );
                                                 }
+                                            } else if topic.as_str().to_lowercase() == "system.result" {
+                                                let requested_topic = crate::topic::Topic::from(data.trim());
+                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerResultRequesting {
+                                                    consumer_id: consumer_id.clone(),
+                                                    topic: requested_topic,
+                                                }) {
+                                                    log::warn!(
+                                                        "Failed to send ConsumerResultRequesting event for '{}': {}",
+                                                        consumer_id,
+                                                        e
+                                                    );
+                                                }
                                             }
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {

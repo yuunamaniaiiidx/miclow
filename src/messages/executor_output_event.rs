@@ -119,4 +119,14 @@ impl ExecutorOutputEvent {
     pub fn subscription_id(&self) -> Option<&SubscriptionId> {
         self.from_subscription_id()
     }
+
+    pub fn consumer_id(&self) -> &ConsumerId {
+        match self {
+            Self::Topic { consumer_id, .. }
+            | Self::Stdout { consumer_id, .. }
+            | Self::Stderr { consumer_id, .. }
+            | Self::Error { consumer_id, .. }
+            | Self::Exit { consumer_id, .. } => consumer_id,
+        }
+    }
 }

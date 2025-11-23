@@ -190,44 +190,49 @@ impl SubscriptionWorker {
                             }
 
                             if topic.is_result() {
-                                let response_consumer_id = if let Some(consumer) = consumer_registry.get_consumer(&consumer_id) {
+                                if let Some(response_consumer_id) = if let Some(consumer) = consumer_registry.get_consumer(&consumer_id) {
                                     match &consumer.state {
                                         crate::consumer::ConsumerState::Processing { from_consumer_id } => {
-                                            from_consumer_id.clone().unwrap_or(consumer_id.clone())
+                                            from_consumer_id.clone()
                                         }
-                                        _ => consumer_id.clone(),
+                                        _ => None,
                                     }
                                 } else {
-                                    consumer_id.clone()
-                                };
-                                match topic_manager.store_response(response_consumer_id.clone(), executor_event.clone()).await {
-                                    Ok(_) => {
-                                        log::info!(
-                                            "Subscription {} stored response for consumer {} on topic '{}'",
-                                            subscription_id,
-                                            response_consumer_id,
-                                            topic
-                                        );
+                                    None
+                                } {
+                                    match topic_manager.store_response(response_consumer_id.clone(), executor_event.clone()).await {
+                                        Ok(_) => {
+                                            log::info!(
+                                                "Subscription {} stored response for consumer {} on topic '{}'",
+                                                subscription_id,
+                                                response_consumer_id,
+                                                topic
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::error!(
+                                                "Subscription {} failed to store response for consumer {} on topic '{}': {}",
+                                                subscription_id,
+                                                response_consumer_id,
+                                                topic,
+                                                e
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        log::error!(
-                                            "Subscription {} failed to store response for consumer {} on topic '{}': {}",
-                                            subscription_id,
-                                            response_consumer_id,
-                                            topic,
-                                            e
-                                        );
-                                    }
+                                } else {
+                                    log::warn!(
+                                        "Subscription {} received result topic '{}' from consumer {} but no from_consumer_id in state",
+                                        subscription_id,
+                                        topic,
+                                        consumer_id
+                                    );
                                 }
                             }
                         }
                         Some(ConsumerEvent::ConsumerRequesting { consumer_id, topic: requested_topic }) => {
-                            log::info!(
-                                "Subscription {} processing Pull request from consumer {} for topic '{}'",
-                                subscription_id,
-                                consumer_id,
-                                requested_topic
-                            );
+                            log::info!("worker: pull_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            // 状態をRequestingに設定
+                            consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
                             
                             let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pull_message(
                                 subscription_id.clone(),
@@ -265,6 +270,52 @@ impl SubscriptionWorker {
                             } else {
                                 log::warn!(
                                     "Subscription {} consumer {} not found when sending pull response",
+                                    subscription_id,
+                                    consumer_id
+                                );
+                            }
+                        }
+                        Some(ConsumerEvent::ConsumerResultRequesting { consumer_id, topic: requested_topic }) => {
+                            log::info!("worker: pull_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            // 状態をRequestingに設定
+                            consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
+                            
+                            let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pull_response(
+                                consumer_id.clone(),
+                                requested_topic.clone(),
+                            ).await {
+                                let from_consumer_id = match &topic_event {
+                                    ExecutorOutputEvent::Topic { consumer_id, .. } => Some(consumer_id.clone()),
+                                    _ => None,
+                                };
+                                (topic_event.data().map(|s| s.into()), from_consumer_id)
+                            } else {
+                                (None, None)
+                            };
+                            
+                            if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                let subscription_message = SubscriptionTopicMessage {
+                                    topic: requested_topic.clone(),
+                                    data,
+                                    from_subscription_id: subscription_id.clone(),
+                                };
+                                
+                                if let Err(e) = consumer.topic_sender.send(subscription_message) {
+                                    log::warn!(
+                                        "Subscription {} failed to send pulled result to consumer {}: {}",
+                                        subscription_id,
+                                        consumer_id,
+                                        e
+                                    );
+                                } else {
+                                    consumer_registry.set_consumer_processing_with_from_consumer_id(
+                                        &consumer_id,
+                                        from_consumer_id,
+                                    );
+                                }
+                            } else {
+                                log::warn!(
+                                    "Subscription {} consumer {} not found when sending result response",
                                     subscription_id,
                                     consumer_id
                                 );

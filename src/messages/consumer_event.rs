@@ -18,4 +18,8 @@ pub enum ConsumerEvent {
         consumer_id: ConsumerId,
         topic: Topic,
     },
+    ConsumerResultRequesting {
+        consumer_id: ConsumerId,
+        topic: Topic,
+    },
 }
