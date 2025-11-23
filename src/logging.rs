@@ -59,7 +59,6 @@ pub fn set_channel_logger(
     log::set_boxed_logger(Box::new(ChannelLogger::new(tx)))
 }
 
-/// Determine LevelFilter from RUST_LOG env var (simple parser)
 pub fn level_from_env() -> LevelFilter {
     match std::env::var("RUST_LOG").ok().as_deref() {
         Some("trace") => LevelFilter::Trace,
@@ -110,11 +109,8 @@ impl ColorBook {
     }
 }
 
-// --- Color utilities ---
-
 fn task_name_to_rgb_256(name: &str) -> (u8, u8, u8) {
-    let hue = simhash_hue(name) as f32; // 0..360
-                                        // Fix saturation/lightness for readability
+    let hue = simhash_hue(name) as f32;
     let (r, g, b) = hsl_to_rgb(hue, 0.65, 0.55);
     (r, g, b)
 }
@@ -182,7 +178,6 @@ fn hsl_to_rgb(h_deg: f32, s: f32, l: f32) -> (u8, u8, u8) {
 }
 
 fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
-    // Map 0..255 to 0..5
     let to_6 = |v: u8| -> u8 { ((v as f32 / 255.0) * 5.0).round().clamp(0.0, 5.0) as u8 };
     let r6 = to_6(r);
     let g6 = to_6(g);

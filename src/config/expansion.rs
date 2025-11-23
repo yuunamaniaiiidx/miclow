@@ -2,23 +2,18 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::env;
 
-/// 変数展開のコンテキスト
-/// 仮想的な環境変数（MICLOW_CONFIG_DIRなど）を保持
 #[derive(Debug, Clone)]
 pub struct ExpandContext {
     virtual_env: HashMap<String, String>,
 }
 
 impl ExpandContext {
-    /// 新しいExpandContextを作成
     pub fn new() -> Self {
         Self {
             virtual_env: HashMap::new(),
         }
     }
 
-    /// 設定ファイルパスからExpandContextを作成
-    /// MICLOW_CONFIG_DIRを仮想環境変数として設定
     pub fn from_config_path(config_path: &str) -> Self {
         let mut context = Self::new();
 
@@ -31,18 +26,14 @@ impl ExpandContext {
         context
     }
 
-    /// 仮想環境変数を設定
     pub fn set_virtual_env(&mut self, key: &str, value: &str) {
         self.virtual_env.insert(key.to_string(), value.to_string());
     }
 
-    /// 環境変数または仮想環境変数の値を取得
     fn get_var(&self, var_name: &str) -> Option<String> {
-        // まず仮想環境変数をチェック
         if let Some(value) = self.virtual_env.get(var_name) {
             return Some(value.clone());
         }
-        // 次に実際の環境変数をチェック
         env::var(var_name).ok()
     }
 }
@@ -53,9 +44,7 @@ impl Default for ExpandContext {
     }
 }
 
-/// 環境変数展開可能な型を表すトレイト
 pub trait Expandable {
-    /// 環境変数展開を実行して新しい値を返す
     fn expand(&self, context: &ExpandContext) -> Result<Self>
     where
         Self: Sized;
@@ -91,62 +80,39 @@ impl Expandable for HashMap<String, String> {
     }
 }
 
-/// Docker Compose形式の変数展開を実行
-///
-/// サポートする形式:
-/// - `${VAR}`: 環境変数または仮想環境変数を展開（未定義はエラー）
-/// - `${VAR:-default}`: 変数が未定義または空文字列の場合、デフォルト値を使用
-/// - `${VAR-default}`: 変数が未定義の場合のみ、デフォルト値を使用（空文字列は有効な値として扱う）
-///
-/// # エラー
-/// 未定義の変数（デフォルト値なし）が見つかった場合、エラーを返す
 pub fn expand_variables(value: &str, context: &ExpandContext) -> Result<String> {
     use regex::Regex;
 
-    // ${VAR} または ${VAR:-default} または ${VAR-default} のパターンにマッチ
-    // ネストした${}は考慮しない（Docker Composeと同じ動作）
     let re = Regex::new(r"\$\{([^}]+)\}").context("Failed to compile regex pattern")?;
 
     let mut result = value.to_string();
     let mut replacements = Vec::new();
 
-    // すべてのマッチを収集
     for cap in re.captures_iter(value) {
         let full_match = cap.get(0).unwrap();
         let var_expr = cap.get(1).unwrap().as_str();
 
-        // デフォルト値の有無と形式をチェック
         let (var_name, default_value, treat_empty_as_unset) =
             if let Some(colon_dash_pos) = var_expr.find(":-") {
-                // ${VAR:-default} 形式（未定義または空文字列の場合にデフォルト値を使用）
                 let name = &var_expr[..colon_dash_pos];
                 let default = &var_expr[colon_dash_pos + 2..];
                 (name, Some(default), true)
             } else if let Some(dash_pos) = var_expr.find('-') {
-                // ${VAR-default} 形式（未定義の場合のみデフォルト値を使用）
-                // ただし、変数名に - が含まれる可能性があるため、最初の - がデフォルト値の区切りかどうかを確認
-                // 変数名は通常英数字とアンダースコアのみだが、Docker Composeでは変数名に - を含められる
-                // ここでは、最初の - を区切りとして扱う（Docker Composeの仕様に合わせる）
                 let name = &var_expr[..dash_pos];
                 let default = &var_expr[dash_pos + 1..];
                 (name, Some(default), false)
             } else {
-                // ${VAR} 形式
                 (var_expr, None, false)
             };
 
-        // 変数の値を取得
         let var_value = context.get_var(var_name);
 
         let replacement = match var_value {
             Some(value) if !value.is_empty() => {
-                // 変数が定義されていて空文字列でない場合、その値を使用
                 value
             }
             Some(value) => {
-                // 変数が空文字列の場合
                 if treat_empty_as_unset {
-                    // ${VAR:-default} 形式: 空文字列を未定義として扱い、デフォルト値を使用
                     if let Some(default) = default_value {
                         default.to_string()
                     } else {
@@ -156,12 +122,10 @@ pub fn expand_variables(value: &str, context: &ExpandContext) -> Result<String> 
                         ));
                     }
                 } else {
-                    // ${VAR-default} 形式: 空文字列を有効な値として扱う
                     value
                 }
             }
             None => {
-                // 変数が未定義の場合
                 if let Some(default) = default_value {
                     default.to_string()
                 } else {
@@ -176,7 +140,6 @@ pub fn expand_variables(value: &str, context: &ExpandContext) -> Result<String> 
         replacements.push((full_match.start(), full_match.end(), replacement));
     }
 
-    // 後ろから前に置換（インデックスがずれないように）
     for (start, end, replacement) in replacements.into_iter().rev() {
         result.replace_range(start..end, &replacement);
     }

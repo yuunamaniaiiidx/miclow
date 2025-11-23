@@ -59,7 +59,6 @@ impl MiclowSystem {
                 log::error!("Ctrl+C signal error: {}", e);
             } else {
                 log::info!("Received Ctrl+C. Requesting graceful shutdown...");
-                // まずログタスクの終了を開始
                 log_shutdown_token.cancel();
             }
         };
@@ -73,12 +72,10 @@ impl MiclowSystem {
         }
 
         log::info!("Received shutdown signal, stopping log workers first...");
-        // ログタスクの終了を待つ（タイムアウト付き）
         self.background_tasks.shutdown_all(std::time::Duration::from_secs(5)).await;
         log::info!("All log workers stopped");
 
         log::info!("Stopping user tasks...");
-        // ログタスク終了後、ユーザータスクを終了
         user_shutdown_token.cancel();
         log::info!("Waiting for running pods to finish...");
         self.coordinator_manager.shutdown().await;

@@ -113,9 +113,7 @@ fn parse_quoted_topic(input: &str) -> Result<(String, usize), String> {
     let mut escaped = false;
     let mut topic = String::new();
 
-    // 文字境界を追跡しながら処理
     for (i, c) in input.char_indices().skip(1) {
-        // 最初の"をスキップ
         if escaped {
             topic.push(c);
             escaped = false;
@@ -129,7 +127,7 @@ fn parse_quoted_topic(input: &str) -> Result<(String, usize), String> {
             if topic.is_empty() {
                 return Err("empty topic is not allowed".to_string());
             }
-            return Ok((topic, i + c.len_utf8())); // バイトインデックスを返す
+            return Ok((topic, i + c.len_utf8()));
         }
         topic.push(c);
     }
@@ -152,15 +150,12 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
         }
     }
     if input.starts_with('"') {
-        // parse_quoted_topicが失敗した場合はNotSpecialを返す（エラーにしない）
         match parse_quoted_topic(input) {
             Ok((topic, idx_after_topic)) => {
                 let rest = &input[idx_after_topic..];
-                // 複数行開始の判定: "key":: の完全一致のみ
                 if rest == "::" {
                     return Ok(LineParseResult::MultilineStart { topic });
                 }
-                // 1行形式の判定: "key": data 形式
                 let rest_trim_left = rest.trim_start();
                 if rest_trim_left.starts_with(':') {
                     let after_colon = &rest_trim_left[1..];
@@ -172,14 +167,12 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
                 }
             }
             Err(_) => {
-                // parse_quoted_topicが失敗した場合はNotSpecialとして扱う
                 return Ok(LineParseResult::NotSpecial);
             }
         }
         return Ok(LineParseResult::NotSpecial);
     }
 
-    // アクティブ状態中の終了判定: ::"key" の完全一致のみ
     if input.starts_with("::\"") {
         let after = &input["::".len()..];
         match parse_quoted_topic(after) {
@@ -189,7 +182,6 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
                 }
             }
             Err(_) => {
-                // パース失敗はNotSpecial
             }
         }
     }
@@ -221,7 +213,6 @@ pub fn consume_stream_line(
     line: &str,
 ) -> Result<StreamOutcome, String> {
     if buffer.is_active() {
-        // アクティブ状態中は終了文字（::"key"）以外は通常のデータとしてバッファに追加
         match parse_line(line)? {
             LineParseResult::MultilineEnd { topic } => {
                 if let Some((active_topic, data)) = buffer.try_finish(&topic) {
@@ -230,13 +221,11 @@ pub fn consume_stream_line(
                         data: Arc::from(data),
                     })
                 } else {
-                    // トピック名が一致しない場合は通常のデータとしてバッファに追加
                     buffer.push_line(line.to_string());
                     Ok(StreamOutcome::None)
                 }
             }
             _ => {
-                // 終了文字以外は全て通常のデータとしてバッファに追加
                 buffer.push_line(line.to_string());
                 Ok(StreamOutcome::None)
             }
@@ -520,7 +509,6 @@ mod tests {
     #[test]
     fn consume_stream_line_error_on_unterminated_topic() {
         let mut buf = TopicInputBuffer::new();
-        // 未終了のトピックはエラーではなくNotSpecialとして扱われる
         let result = consume_stream_line(&mut buf, "\"unterminated").unwrap();
         assert!(matches!(result, StreamOutcome::Plain(_)));
         assert!(!buf.is_active());
@@ -530,11 +518,9 @@ mod tests {
     fn input_buffer_manager_basic_operations() {
         let mut manager = InputBufferManager::new();
 
-        // 新しいタスクのバッファを作成
         let buffer = manager.get_or_create_buffer("task1");
         assert!(!buffer.is_active());
 
-        // 複数行の処理
         let result = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
         assert!(matches!(result, StreamOutcome::None));
 
@@ -558,19 +544,16 @@ mod tests {
     fn input_buffer_manager_multiple_tasks() {
         let mut manager = InputBufferManager::new();
 
-        // タスク1の複数行処理
         let _ = manager
             .consume_stream_line("task1", "\"stdout\"::")
             .unwrap();
         let _ = manager.consume_stream_line("task1", "task1_data").unwrap();
 
-        // タスク2の複数行処理（同時実行）
         let _ = manager
             .consume_stream_line("task2", "\"stdout\"::")
             .unwrap();
         let _ = manager.consume_stream_line("task2", "task2_data").unwrap();
 
-        // タスク1を完了
         let result1 = manager
             .consume_stream_line("task1", "::\"stdout\"")
             .unwrap();
@@ -582,7 +565,6 @@ mod tests {
             other => panic!("unexpected outcome: {:?}", other),
         }
 
-        // タスク2を完了
         let result2 = manager
             .consume_stream_line("task2", "::\"stdout\"")
             .unwrap();
@@ -599,13 +581,11 @@ mod tests {
     fn input_buffer_manager_flush_unfinished() {
         let mut manager = InputBufferManager::new();
 
-        // 未完了のバッファを作成
         let _ = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
         let _ = manager
             .consume_stream_line("task1", "unfinished_data")
             .unwrap();
 
-        // フラッシュ
         let unfinished = manager.flush_all_unfinished();
         assert_eq!(unfinished.len(), 1);
         assert_eq!(unfinished[0].0, "task1");
@@ -617,15 +597,12 @@ mod tests {
     fn input_buffer_manager_remove_task() {
         let mut manager = InputBufferManager::new();
 
-        // タスクを作成
         let _ = manager.consume_stream_line("task1", "\"msg\"::").unwrap();
         let _ = manager.consume_stream_line("task1", "data").unwrap();
 
-        // タスクを削除
         let removed = manager.remove_task("task1");
         assert!(removed.is_some());
 
-        // 削除されたタスクのバッファは存在しない
         let buffer = manager.get_or_create_buffer("task1");
         assert!(!buffer.is_active());
     }

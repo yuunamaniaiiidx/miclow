@@ -31,7 +31,6 @@ impl<'a> ExecutorInputEventStdio<'a> {
     pub fn to_input_lines(&self) -> Vec<String> {
         let lines = self.to_input_lines_raw();
 
-        // 行数0の場合を許可（データなしを表現）
         if lines.is_empty() {
             panic!(
                 "StdIOProtocol validation failed: must have at least 1 line (line count), got 0"
@@ -45,7 +44,6 @@ impl<'a> ExecutorInputEventStdio<'a> {
             );
         });
 
-        // 行数0の場合は、行数行のみでOK
         if line_count == 0 {
             if lines.len() != 1 {
                 panic!(
@@ -56,7 +54,6 @@ impl<'a> ExecutorInputEventStdio<'a> {
             return lines;
         }
 
-        // 行数が1以上の場合は、従来通り検証
         if lines.len() < 2 {
             panic!(
                 "StdIOProtocol validation failed: must have at least 2 lines when line count > 0, got {}",
@@ -80,7 +77,7 @@ impl<'a> ExecutorInputEventStdio<'a> {
             ExecutorInputEvent::Topic { data, .. } => {
                 match data {
                     Some(data) => Self::lines_from(data.as_ref()),
-                    None => vec!["0".to_string()], // データなしの場合は行数0を返す
+                    None => vec!["0".to_string()],
                 }
             }
         }
@@ -350,17 +347,12 @@ pub async fn spawn_miclow_stdio_protocol(
                 }
                 status = child.wait() => {
                     notify(status.map_err(anyhow::Error::from));
-                    // プロセスが自然に終了した場合、stdout/stderrの読み取りが完了するまで
-                    // cancel_tokenをキャンセルしない（EOFで自然に終了するため）
-                    // これにより、バッファに残っているエラーメッセージが確実に読み取られる
                 }
             }
         });
 
         let _ = status_worker.await;
 
-        // プロセス終了後、stdout/stderrのストリームがEOFになるまで待機
-        // タイムアウトを設けて、無限に待たないようにする
         let stream_read_timeout = tokio::time::Duration::from_millis(500);
         tokio::select! {
             _ = stdout_worker => {

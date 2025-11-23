@@ -48,7 +48,6 @@ impl SubscriptionWorker {
             shutdown_token,
         } = self;
 
-        // リクエストトピックとfrom_subscription_idのマッピング（レスポンス時に使用）
         let request_topic_to_from_subscription: HashMap<Topic, SubscriptionId> = HashMap::new();
 
         let topic_manager = start_context.topic_manager.clone();
@@ -138,7 +137,6 @@ impl SubscriptionWorker {
                             topic,
                             data,
                         }) => {
-                            // トピックメッセージを通常通り処理
                             log::info!(
                                 "Subscription {} received Topic message from consumer {} on topic '{}': '{}'",
                                 subscription_id,
@@ -147,9 +145,7 @@ impl SubscriptionWorker {
                                 data
                             );
 
-                            // レスポンストピックの場合、to_subscription_idを設定
                             let to_subscription_id = if topic.is_result() {
-                                // レスポンストピックの場合、元のリクエストのfrom_subscription_idをto_subscription_idとして設定
                                 if let Some(original_topic) = topic.original() {
                                     request_topic_to_from_subscription.get(&original_topic).cloned()
                                 } else {
@@ -159,7 +155,6 @@ impl SubscriptionWorker {
                                 None
                             };
 
-                            // ExecutorOutputEventに変換してbroadcast
                             let executor_event = ExecutorOutputEvent::Topic {
                                 message_id,
                                 consumer_id: consumer_id.clone(),
@@ -189,9 +184,7 @@ impl SubscriptionWorker {
                                 }
                             }
 
-                            // レスポンストピックの場合、consumer_idごとにレスポンスを保存
                             if topic.is_result() {
-                                // ConsumerStateからfrom_consumer_idを取得
                                 let response_consumer_id = if let Some(consumer) = consumer_registry.get_consumer(&consumer_id) {
                                     match &consumer.state {
                                         crate::consumer::ConsumerState::Processing { from_consumer_id } => {
@@ -224,7 +217,6 @@ impl SubscriptionWorker {
                             }
                         }
                         Some(ConsumerEvent::ConsumerRequesting { consumer_id, topic: requested_topic }) => {
-                            // Pull処理を実行
                             log::info!(
                                 "Subscription {} processing Pull request from consumer {} for topic '{}'",
                                 subscription_id,
@@ -232,13 +224,10 @@ impl SubscriptionWorker {
                                 requested_topic
                             );
                             
-                            // 要求されたトピックから1件取得
                             let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pull_message(
                                 subscription_id.clone(),
                                 requested_topic.clone(),
                             ).await {
-                                // Topicを送信したときに、ExecutorOutputEvent::Topicのconsumer_idを取得
-                                // これが元の呼び出し元のconsumer_id
                                 let from_consumer_id = match &topic_event {
                                     ExecutorOutputEvent::Topic { consumer_id, .. } => Some(consumer_id.clone()),
                                     _ => None,
@@ -248,7 +237,6 @@ impl SubscriptionWorker {
                                 (None, None)
                             };
                             
-                            // Consumerに送信（データあり/なし共通処理）
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
                                     topic: requested_topic.clone(),
@@ -264,7 +252,6 @@ impl SubscriptionWorker {
                                         e
                                     );
                                 } else {
-                                    // Processing状態に遷移し、from_consumer_idを設定
                                     consumer_registry.set_consumer_processing_with_from_consumer_id(
                                         &consumer_id,
                                         from_consumer_id,

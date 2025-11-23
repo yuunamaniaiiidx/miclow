@@ -34,7 +34,6 @@ impl BackendConfigMeta for MiclowStdIOConfig {
 pub fn try_miclow_stdio_from_expanded_config(
     config: &ExpandedTaskConfig,
 ) -> Result<MiclowStdIOConfig, anyhow::Error> {
-    // プロトコル固有のフィールドを抽出・バリデーション
     let command_str: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
             "Command field is required for MiclowStdIO in task '{}'",
@@ -71,7 +70,6 @@ pub fn try_miclow_stdio_from_expanded_config(
         }
     });
 
-    // デフォルト値の生成ロジック: stdout_topic/stderr_topicが未設定の場合は"{name}.stdout"/"{name}.stderr"を使用
     let stdout_topic: Arc<str> = config
         .expand("stdout_topic")
         .map(|s: String| Arc::from(s))
@@ -82,11 +80,9 @@ pub fn try_miclow_stdio_from_expanded_config(
         .map(|s: String| Arc::from(s))
         .unwrap_or_else(|| Arc::from(format!("{}.stderr", config.name)));
 
-    // view_stdoutとview_stderrはTaskConfigの共通フィールドとして扱う
     let view_stdout: bool = config.view_stdout;
     let view_stderr: bool = config.view_stderr;
 
-    // バリデーション
     if stdout_topic.contains(' ') {
         return Err(anyhow::anyhow!(
             "Task '{}' stdout_topic '{}' contains spaces (not allowed)",

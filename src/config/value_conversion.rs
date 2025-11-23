@@ -1,6 +1,5 @@
 use toml::Value as TomlValue;
 
-/// TOML値から型への変換トレイト
 pub trait FromTomlValue: Sized {
     fn from_toml_value(value: &TomlValue) -> Option<Self>;
 }
@@ -47,8 +46,6 @@ impl FromTomlValue for u32 {
     }
 }
 
-/// 文字列をboolに変換
-/// "true", "1", "yes", "on" などは true、それ以外は false
 fn parse_bool(s: &str) -> bool {
     let s_lower = s.to_lowercase();
     let s_trimmed = s_lower.trim();

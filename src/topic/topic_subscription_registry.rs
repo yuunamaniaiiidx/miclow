@@ -10,11 +10,8 @@ type SubscriptionKey = (SubscriptionId, Topic);
 
 #[derive(Clone)]
 pub struct TopicSubscriptionRegistry {
-    // Topicごとのメッセージログ（各ログは複数のSubscriptionカーソルを持つ）
     message_logs: Arc<RwLock<HashMap<Topic, MessageLog<SubscriptionKey, ExecutorOutputEvent>>>>,
-    // ConsumerIdごとのレスポンスログ
     response_logs: Arc<RwLock<HashMap<ConsumerId, MessageLog<ConsumerId, ExecutorOutputEvent>>>>,
-    // ログの最大サイズ（Noneの場合は無制限）
     max_log_size: Option<usize>,
 }
 
@@ -23,17 +20,15 @@ impl TopicSubscriptionRegistry {
         Self {
             message_logs: Arc::new(RwLock::new(HashMap::new())),
             response_logs: Arc::new(RwLock::new(HashMap::new())),
-            max_log_size: Some(10000), // デフォルトで最大10000件
+            max_log_size: Some(10000),
         }
     }
 
-    /// 最大ログサイズを設定
     pub fn with_max_log_size(mut self, max_size: Option<usize>) -> Self {
         self.max_log_size = max_size;
         self
     }
 
-    /// メッセージを履歴に保存
     pub async fn store_message(&self, event: ExecutorOutputEvent) -> Result<(), String> {
         let topic_owned = match event.topic() {
             Some(topic) => topic.clone(),
@@ -42,7 +37,6 @@ impl TopicSubscriptionRegistry {
             }
         };
 
-        // メッセージを履歴に保存（Topicイベントのみ）
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {
             let mut message_logs = self.message_logs.write().await;
             let log = message_logs
@@ -54,7 +48,6 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
-    /// SubscriptionがCursor位置から1件のメッセージを取得
     pub async fn pull_message(
         &self,
         subscription_id: SubscriptionId,
@@ -66,7 +59,6 @@ impl TopicSubscriptionRegistry {
         log.pull(key).await
     }
 
-    /// レスポンストピックのメッセージをconsumer_idごとに保存
     pub async fn store_response(
         &self,
         consumer_id: ConsumerId,
@@ -80,7 +72,6 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
-    /// consumer_idを指定してレスポンスメッセージを取得
     pub async fn pull_response(
         &self,
         consumer_id: ConsumerId,
@@ -90,7 +81,6 @@ impl TopicSubscriptionRegistry {
         log.pull(consumer_id).await
     }
 
-    /// すべてのログをクリーンアップ（すべてのカーソルより前のメッセージを削除）
     pub async fn cleanup(&self) {
         let mut message_logs = self.message_logs.write().await;
         for log in message_logs.values_mut() {

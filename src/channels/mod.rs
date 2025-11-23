@@ -5,7 +5,6 @@ pub mod subscription_topic_channel;
 pub mod shutdown_channel;
 pub mod user_log;
 
-// チャネルを再エクスポート
 pub use executor_input_channel::{
     ExecutorInputEventChannel, ExecutorInputEventReceiver, ExecutorInputEventSender,
 };

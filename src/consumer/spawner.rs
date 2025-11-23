@@ -105,7 +105,6 @@ impl ConsumerSpawner {
                                                 data
                                             );
 
-                                            // ConsumerTopicを送信
                                             let consumer_topic_result = consumer_event_sender.send(ConsumerEvent::ConsumerTopic {
                                                 consumer_id: consumer_id.clone(),
                                                 message_id: message_id.clone(),
@@ -121,8 +120,6 @@ impl ConsumerSpawner {
                                                 );
                                             }
 
-                                            // system.pullトピックの場合はRequesting状態に遷移（要求されたトピックを設定）
-                                            // 通常のトピックメッセージの状態遷移判断はsubscription/worker.rsで行う
                                             if topic.as_str().to_lowercase() == "system.pull" {
                                                 let requested_topic = crate::topic::Topic::from(data.trim());
                                                 if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
@@ -176,8 +173,6 @@ impl ConsumerSpawner {
                             match topic_data {
                                 Some(topic_data) => {
                                     let SubscriptionTopicMessage { topic, data, from_subscription_id } = topic_data;
-                                    // topic.is_result()でレスポンストピックかどうかを判定可能
-                                    // すべてのトピックメッセージをTopicとして扱う
                                     let input_event = ExecutorInputEvent::Topic {
                                         message_id: MessageId::new(),
                                         consumer_id: consumer_id.clone(),

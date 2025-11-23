@@ -117,7 +117,6 @@ impl ExecutorOutputEvent {
     }
 
     pub fn subscription_id(&self) -> Option<&SubscriptionId> {
-        // 後方互換性のため、from_subscription_idを返す
         self.from_subscription_id()
     }
 }

@@ -16,20 +16,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use toml::Value as TomlValue;
 
-/// 展開前の生のタスク設定情報
 #[derive(Debug, Clone)]
 pub(crate) struct RawTaskConfig {
     pub name: TomlValue,
-    pub protocol: TomlValue, // セクション名から設定される
+    pub protocol: TomlValue,
     pub view_stdout: Option<TomlValue>,
     pub view_stderr: Option<TomlValue>,
     pub lifecycle: Option<RawLifecycleConfig>,
 
-    /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
     pub protocol_config: HashMap<String, TomlValue>,
 }
 
-/// プロトコル非依存のタスク設定情報（展開後）
 #[derive(Debug, Clone)]
 pub struct TaskConfig {
     pub name: Arc<str>,
@@ -37,16 +34,11 @@ pub struct TaskConfig {
     pub view_stderr: bool,
     pub lifecycle: LifecycleConfig,
 
-    /// プロトコル固有の設定（プロトコル非依存のフィールド以外のすべて）
     pub protocol_config: HashMap<String, TomlValue>,
 
-    /// プロトコルバックエンド（セクション名から直接作成）
     pub protocol_backend: ProtocolBackend,
 }
 
-// RawTaskConfigの実装はtask_conversion.rsとnormalize.rsに分離
-
-/// 環境変数展開後のタスク設定（ProtocolBackend作成前）
 #[derive(Debug, Clone)]
 pub struct ExpandedTaskConfig {
     pub name: Arc<str>,
@@ -57,12 +49,10 @@ pub struct ExpandedTaskConfig {
 }
 
 impl ExpandedTaskConfig {
-    /// プロトコル固有設定から値を取得（展開済み）
     pub fn get_protocol_value(&self, key: &str) -> Option<&TomlValue> {
         self.protocol_config.get(key)
     }
 
-    /// プロトコル固有設定から型指定で値を取得
     pub fn expand<T: FromTomlValue>(&self, key: &str) -> Option<T> {
         self.get_protocol_value(key)
             .and_then(|v| T::from_toml_value(v))
@@ -70,20 +60,16 @@ impl ExpandedTaskConfig {
 }
 
 impl TaskConfig {
-    /// プロトコル固有設定から値を取得（展開済み）
     pub fn get_protocol_value(&self, key: &str) -> Option<&TomlValue> {
         self.protocol_config.get(key)
     }
 
-    /// プロトコル固有設定から型指定で値を取得
-    /// 型推論により、`let value: bool = config.expand("key")`のように使用可能
     pub fn expand<T: FromTomlValue>(&self, key: &str) -> Option<T> {
         self.get_protocol_value(key)
             .and_then(|v| T::from_toml_value(v))
     }
 }
 
-/// TOML値に対して環境変数展開を実行
 pub(crate) fn expand_toml_value(value: &TomlValue, context: &ExpandContext) -> Result<TomlValue> {
     match value {
         TomlValue::String(s) => {
@@ -109,7 +95,6 @@ pub(crate) fn expand_toml_value(value: &TomlValue, context: &ExpandContext) -> R
     }
 }
 
-/// TOMLから直接デシリアライズされるタスクエントリ
 #[derive(Debug, Clone, serde::Deserialize)]
 struct RawTaskEntry {
     task_name: String,
@@ -118,42 +103,35 @@ struct RawTaskEntry {
     view_stderr: Option<bool>,
     #[serde(default)]
     lifecycle: Vec<LifecycleEntry>,
-    /// その他のプロトコル固有設定（flattenで展開される）
     #[serde(flatten)]
     protocol_config: HashMap<String, TomlValue>,
 }
 
-/// TOMLから直接デシリアライズされるシステム設定
 #[derive(Debug, Clone, serde::Deserialize)]
 struct RawSystemConfig {
     include_paths: Option<Vec<String>>,
     tasks: Option<Vec<RawTaskEntry>>,
-    /// 未知のフィールドを許可（後でバリデーション）
     #[serde(flatten)]
     _unknown: HashMap<String, TomlValue>,
 }
 
 impl RawSystemConfig {
-    /// RawSystemConfigを検証し、RawTaskConfigのベクターに変換
     fn validate_and_convert(self) -> Result<Vec<RawTaskConfig>> {
         let mut tasks = Vec::new();
         let mut unknown_sections = Vec::new();
 
-        // tasksセクションを処理
         if let Some(entries) = self.tasks {
             for entry in entries {
                 tasks.push(Self::convert_entry(entry)?);
             }
         }
 
-        // 未知のセクションをチェック（include_paths、tasks、tasks.lifecycle以外）
         for (key, _) in &self._unknown {
             if key != "include_paths" && key != "tasks" && key != "tasks.lifecycle" {
                 unknown_sections.push(key.clone());
             }
         }
 
-        // バリデーション: 未知のセクションがある場合はエラー
         if !unknown_sections.is_empty() {
             return Err(anyhow::anyhow!(
                 "Unknown section(s): {}. Supported sections: [[tasks]], [[tasks.lifecycle]]",
@@ -165,7 +143,6 @@ impl RawSystemConfig {
     }
 
     fn convert_entry(entry: RawTaskEntry) -> Result<RawTaskConfig> {
-        // プロトコル名をバリデーション
         let protocol_name = match entry.protocol.as_str() {
             "Interactive" => InteractiveConfig::protocol_name().to_string(),
             "MiclowStdIO" => MiclowStdIOConfig::protocol_name().to_string(),
@@ -191,7 +168,6 @@ impl RawSystemConfig {
             ));
         };
 
-        // RawTaskConfigを作成
         let mut task_config = RawTaskConfig {
             name: TomlValue::String(entry.task_name.clone()),
             protocol: TomlValue::String(protocol_name),
@@ -201,7 +177,6 @@ impl RawSystemConfig {
             protocol_config: entry.protocol_config,
         };
 
-        // 強制値とデフォルト値を設定（バリデーションも含む）
         task_config.normalize_defaults(&entry.protocol)?;
 
         Ok(task_config)
@@ -226,13 +201,10 @@ impl SystemConfig {
     ) -> Result<Self> {
         let raw: RawSystemConfig = toml::from_str(toml_content)?;
 
-        // include_pathsを先に取得
         let include_paths_raw = raw.include_paths.clone();
 
-        // バリデーションと変換（normalize_defaultsも含まれる）
         let raw_tasks = raw.validate_and_convert()?;
 
-        // 変数展開とProtocolBackend作成を実行してTaskConfigに変換
         let mut tasks = HashMap::new();
 
         for task in raw_tasks {
@@ -245,7 +217,6 @@ impl SystemConfig {
         }
 
         let include_paths = if let Some(raw_value) = include_paths_raw {
-            // include_pathsは既にVec<String>としてデシリアライズされているので、環境変数展開のみ実行
             let mut expanded_paths = Vec::new();
             for path in raw_value {
                 let expanded_value = expand_toml_value(&TomlValue::String(path), expand_context)?;
@@ -279,10 +250,8 @@ impl SystemConfig {
     pub fn from_file(config_file: String) -> Result<Self> {
         let config_content: String = std::fs::read_to_string(&config_file)?;
 
-        // 展開コンテキストを作成
         let expand_context = ExpandContext::from_config_path(&config_file);
 
-        // パース後に展開処理を実行
         let mut config = Self::from_toml_internal(&config_content, true, &expand_context)?;
 
         log::debug!("Before load_includes: {} tasks", config.tasks.len());
@@ -301,7 +270,6 @@ impl SystemConfig {
     }
 
     pub fn get_autostart_tasks(&self) -> Vec<&TaskConfig> {
-        // すべてのタスクを返す（auto_startの概念を削除）
         self.tasks.values().collect()
     }
 
@@ -310,8 +278,6 @@ impl SystemConfig {
             return Err(anyhow::anyhow!("No tasks configured"));
         }
 
-        // プロトコル非依存のバリデーションのみ実行
-        // プロトコル固有のバリデーションはProtocolBackend作成時に実行される
         self.validate_tasks()?;
 
         Ok(())
@@ -329,7 +295,6 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_dir = temp_dir.path();
 
-        // Create include file with tasks
         let include_file = base_dir.join("include.toml");
         fs::write(
             &include_file,
@@ -343,7 +308,6 @@ args = ["test"]
         )
         .unwrap();
 
-        // Create main config file
         let main_file = base_dir.join("main.toml");
         fs::write(
             &main_file,

@@ -2,8 +2,6 @@ use async_trait::async_trait;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-/// Backend 系など独自にライフサイクルを管理するコンポーネントは登録対象外とし、
-/// ここでは Miclow 本体が管理するバックグラウンドワーカーのみ扱う。
 #[async_trait]
 pub trait BackgroundWorker: Send + 'static {
     fn name(&self) -> &str;

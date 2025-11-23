@@ -112,7 +112,6 @@ impl ConsumerRegistry {
                 consumer.state = ConsumerState::Requesting { topic };
                 self.idle_count += 1;
             } else {
-                // 既にRequestingの場合は、トピック情報を更新
                 consumer.state = ConsumerState::Requesting { topic };
             }
         }
