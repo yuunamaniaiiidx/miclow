@@ -180,7 +180,7 @@ impl ConsumerSpawner {
                                     // すべてのトピックメッセージをTopicとして扱う
                                     let input_event = ExecutorInputEvent::Topic {
                                         message_id: MessageId::new(),
-                                        pod_id: consumer_id.clone(),
+                                        consumer_id: consumer_id.clone(),
                                         topic: topic.clone(),
                                         data: data.clone(),
                                         from_subscription_id: from_subscription_id.clone(),

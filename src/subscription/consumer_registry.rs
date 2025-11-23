@@ -87,7 +87,20 @@ impl ConsumerRegistry {
     pub fn set_consumer_processing(&mut self, consumer_id: &ConsumerId) {
         if let Some(consumer) = self.consumers.get_mut(consumer_id) {
             if matches!(consumer.state, ConsumerState::Requesting { .. }) {
-                consumer.state = ConsumerState::Processing;
+                consumer.state = ConsumerState::Processing { from_consumer_id: None };
+                self.idle_count = self.idle_count.saturating_sub(1);
+            }
+        }
+    }
+
+    pub fn set_consumer_processing_with_from_consumer_id(
+        &mut self,
+        consumer_id: &ConsumerId,
+        from_consumer_id: Option<ConsumerId>,
+    ) {
+        if let Some(consumer) = self.consumers.get_mut(consumer_id) {
+            if matches!(consumer.state, ConsumerState::Requesting { .. }) {
+                consumer.state = ConsumerState::Processing { from_consumer_id };
                 self.idle_count = self.idle_count.saturating_sub(1);
             }
         }
@@ -111,6 +124,10 @@ impl ConsumerRegistry {
 
     pub fn get_consumer_mut(&mut self, consumer_id: &ConsumerId) -> Option<&mut ManagedConsumer> {
         self.consumers.get_mut(consumer_id)
+    }
+
+    pub fn get_consumer(&self, consumer_id: &ConsumerId) -> Option<&ManagedConsumer> {
+        self.consumers.get(consumer_id)
     }
 
     pub fn next_consumer_id(&mut self) -> Option<ConsumerId> {

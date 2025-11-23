@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 #[derive(Clone, Debug)]
 pub struct SubscriptionTopicMessage {
     pub topic: Topic,
-    pub data: Arc<str>,
+    /// データがない場合（system.pullでデータが見つからない場合など）はNone
+    pub data: Option<Arc<str>>,
     pub from_subscription_id: SubscriptionId,
 }
 

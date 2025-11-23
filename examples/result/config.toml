@@ -1,0 +1,23 @@
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "call"
+command = "uv"
+args = ["run", "call.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+
+[[tasks.lifecycle]]
+desired_instances = 1
+
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "result"
+command = "uv"
+args = ["run", "result.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+view_stdout = true
+view_stderr = true
+
+[[tasks.lifecycle]]
+desired_instances = 1

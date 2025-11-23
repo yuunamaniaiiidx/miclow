@@ -24,19 +24,19 @@ impl ExecutorOutputEventSender {
     pub fn send_error(
         &self,
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         error: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_error(message_id, pod_id, error))
+        self.send(ExecutorOutputEvent::new_error(message_id, consumer_id, error))
     }
 
     pub fn send_exit(
         &self,
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         code: i32,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_exit(message_id, pod_id, code))
+        self.send(ExecutorOutputEvent::new_exit(message_id, consumer_id, code))
     }
 }
 

@@ -2,6 +2,7 @@ use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
+use crate::consumer::ConsumerId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -16,6 +17,8 @@ struct TimestampedMessage {
 pub struct TopicSubscriptionRegistry {
     message_log: Arc<RwLock<HashMap<Topic, VecDeque<TimestampedMessage>>>>,
     subscription_cursors: Arc<RwLock<HashMap<(SubscriptionId, Topic), MessageId>>>,
+    response_log: Arc<RwLock<HashMap<ConsumerId, VecDeque<TimestampedMessage>>>>,
+    response_cursors: Arc<RwLock<HashMap<ConsumerId, MessageId>>>,
     retention_duration: Duration,
 }
 
@@ -24,6 +27,8 @@ impl TopicSubscriptionRegistry {
         Self {
             message_log: Arc::new(RwLock::new(HashMap::new())),
             subscription_cursors: Arc::new(RwLock::new(HashMap::new())),
+            response_log: Arc::new(RwLock::new(HashMap::new())),
+            response_cursors: Arc::new(RwLock::new(HashMap::new())),
             retention_duration: Duration::from_secs(60 * 60),
         }
     }
@@ -130,6 +135,92 @@ impl TopicSubscriptionRegistry {
                 // Cursorを更新
                 if let Some(msg_id) = msg_id_for_cursor {
                     self.update_cursor(subscription_id, topic, msg_id).await;
+                }
+                return Some(event);
+            }
+        }
+
+        None
+    }
+
+    /// レスポンストピックのメッセージをconsumer_idごとに保存
+    pub async fn store_response(
+        &self,
+        consumer_id: ConsumerId,
+        event: ExecutorOutputEvent,
+    ) -> Result<(), String> {
+        let timestamped = TimestampedMessage {
+            timestamp: SystemTime::now(),
+            event: event.clone(),
+        };
+
+        let mut response_log = self.response_log.write().await;
+        let log = response_log.entry(consumer_id.clone()).or_insert_with(VecDeque::new);
+        log.push_back(timestamped);
+
+        // 時間ベースのクリーンアップ
+        let cutoff_time = SystemTime::now() - self.retention_duration;
+        while let Some(front) = log.front() {
+            if front.timestamp < cutoff_time {
+                log.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// consumer_idを指定してレスポンスメッセージを取得
+    pub async fn pull_response(
+        &self,
+        consumer_id: ConsumerId,
+    ) -> Option<ExecutorOutputEvent> {
+        let response_log = self.response_log.read().await;
+        let log = response_log.get(&consumer_id)?;
+
+        // Cursor位置を取得
+        let cursor_id = {
+            let cursors = self.response_cursors.read().await;
+            cursors.get(&consumer_id).cloned()
+        };
+        let mut found_cursor = cursor_id.is_none();
+
+        for timestamped in log.iter() {
+            // MessageIdを取得（Topicイベントのみ）
+            let message_id = match &timestamped.event {
+                ExecutorOutputEvent::Topic { message_id, .. } => Some(message_id.clone()),
+                _ => None,
+            };
+
+            // Cursorが見つかるまでスキップ
+            if !found_cursor {
+                if let Some(cursor) = &cursor_id {
+                    if let Some(msg_id) = &message_id {
+                        if msg_id == cursor {
+                            found_cursor = true;
+                        } else {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                } else {
+                    found_cursor = true;
+                }
+            }
+
+            // Cursor以降の最初のメッセージを取得
+            if found_cursor {
+                // メッセージをクローンしてからロックを解放
+                let event = timestamped.event.clone();
+                let msg_id_for_cursor = message_id.clone();
+                drop(response_log); // ロックを解放
+                
+                // Cursorを更新
+                if let Some(msg_id) = msg_id_for_cursor {
+                    let mut cursors = self.response_cursors.write().await;
+                    cursors.insert(consumer_id, msg_id);
                 }
                 return Some(event);
             }

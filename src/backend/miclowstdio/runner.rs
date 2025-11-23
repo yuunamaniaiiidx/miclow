@@ -31,10 +31,10 @@ impl<'a> ExecutorInputEventStdio<'a> {
     pub fn to_input_lines(&self) -> Vec<String> {
         let lines = self.to_input_lines_raw();
 
-        if lines.len() < 2 {
+        // 行数0の場合を許可（データなしを表現）
+        if lines.is_empty() {
             panic!(
-                "StdIOProtocol validation failed: must have at least 2 lines, got {}",
-                lines.len()
+                "StdIOProtocol validation failed: must have at least 1 line (line count), got 0"
             );
         }
 
@@ -44,6 +44,25 @@ impl<'a> ExecutorInputEventStdio<'a> {
                 lines[0]
             );
         });
+
+        // 行数0の場合は、行数行のみでOK
+        if line_count == 0 {
+            if lines.len() != 1 {
+                panic!(
+                    "StdIOProtocol validation failed: when line count is 0, must have exactly 1 line, got {}",
+                    lines.len()
+                );
+            }
+            return lines;
+        }
+
+        // 行数が1以上の場合は、従来通り検証
+        if lines.len() < 2 {
+            panic!(
+                "StdIOProtocol validation failed: must have at least 2 lines when line count > 0, got {}",
+                lines.len()
+            );
+        }
 
         let data_line_count = lines.len() - 1;
         if data_line_count != line_count {
@@ -58,7 +77,12 @@ impl<'a> ExecutorInputEventStdio<'a> {
 
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
-            ExecutorInputEvent::Topic { data, .. } => Self::lines_from(data.as_ref()),
+            ExecutorInputEvent::Topic { data, .. } => {
+                match data {
+                    Some(data) => Self::lines_from(data.as_ref()),
+                    None => vec!["0".to_string()], // データなしの場合は行数0を返す
+                }
+            }
         }
     }
 

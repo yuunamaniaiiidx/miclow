@@ -162,7 +162,7 @@ impl SubscriptionWorker {
                             // ExecutorOutputEventに変換してbroadcast
                             let executor_event = ExecutorOutputEvent::Topic {
                                 message_id,
-                                pod_id: consumer_id.clone(),
+                                consumer_id: consumer_id.clone(),
                                 from_subscription_id: subscription_id.clone(),
                                 to_subscription_id,
                                 topic: topic.clone(),
@@ -188,6 +188,40 @@ impl SubscriptionWorker {
                                     );
                                 }
                             }
+
+                            // レスポンストピックの場合、consumer_idごとにレスポンスを保存
+                            if topic.is_result() {
+                                // ConsumerStateからfrom_consumer_idを取得
+                                let response_consumer_id = if let Some(consumer) = consumer_registry.get_consumer(&consumer_id) {
+                                    match &consumer.state {
+                                        crate::consumer::ConsumerState::Processing { from_consumer_id } => {
+                                            from_consumer_id.clone().unwrap_or(consumer_id.clone())
+                                        }
+                                        _ => consumer_id.clone(),
+                                    }
+                                } else {
+                                    consumer_id.clone()
+                                };
+                                match topic_manager.store_response(response_consumer_id.clone(), executor_event.clone()).await {
+                                    Ok(_) => {
+                                        log::info!(
+                                            "Subscription {} stored response for consumer {} on topic '{}'",
+                                            subscription_id,
+                                            response_consumer_id,
+                                            topic
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::error!(
+                                            "Subscription {} failed to store response for consumer {} on topic '{}': {}",
+                                            subscription_id,
+                                            response_consumer_id,
+                                            topic,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
                         }
                         Some(ConsumerEvent::ConsumerRequesting { consumer_id, topic: requested_topic }) => {
                             // Pull処理を実行
@@ -207,7 +241,7 @@ impl SubscriptionWorker {
                                 if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                     let subscription_message = SubscriptionTopicMessage {
                                         topic: requested_topic.clone(),
-                                        data: topic_event.data().unwrap_or_default().into(),
+                                        data: topic_event.data().map(|s| s.into()),
                                         from_subscription_id: subscription_id.clone(),
                                     };
 
@@ -219,8 +253,18 @@ impl SubscriptionWorker {
                                             e
                                         );
                                     } else {
-                                        // データを送信したらProcessingに設定
-                                        consumer_registry.set_consumer_processing(&consumer_id);
+                                        // Topicを送信したときに、ExecutorOutputEvent::Topicのconsumer_idを取得
+                                        // これが元の呼び出し元のconsumer_id
+                                        let from_consumer_id = match &topic_event {
+                                            ExecutorOutputEvent::Topic { consumer_id, .. } => Some(consumer_id.clone()),
+                                            _ => None,
+                                        };
+                                        
+                                        // Processing状態に遷移し、from_consumer_idを設定
+                                        consumer_registry.set_consumer_processing_with_from_consumer_id(
+                                            &consumer_id,
+                                            from_consumer_id,
+                                        );
                                         log::info!(
                                             "Subscription {} sent pulled data from topic '{}' to consumer {}",
                                             subscription_id,
@@ -230,13 +274,41 @@ impl SubscriptionWorker {
                                     }
                                 }
                             } else {
-                                // データがない場合、そのままRequestingのまま
-                                log::debug!(
-                                    "Subscription {} no data available for topic '{}' requested by consumer {}",
-                                    subscription_id,
-                                    requested_topic,
-                                    consumer_id
-                                );
+                                // データがない場合、Noneを送信
+                                if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
+                                    let subscription_message = SubscriptionTopicMessage {
+                                        topic: requested_topic.clone(),
+                                        data: None, // データなしを表現
+                                        from_subscription_id: subscription_id.clone(),
+                                    };
+                                    
+                                    if let Err(e) = consumer.topic_sender.send(subscription_message) {
+                                        log::warn!(
+                                            "Subscription {} failed to send 'no data' response to consumer {}: {}",
+                                            subscription_id,
+                                            consumer_id,
+                                            e
+                                        );
+                                    } else {
+                                        // Processing状態に遷移（データなしでも処理完了として扱う）
+                                        consumer_registry.set_consumer_processing_with_from_consumer_id(
+                                            &consumer_id,
+                                            None,
+                                        );
+                                        log::debug!(
+                                            "Subscription {} sent 'no data' response (line count 0) for topic '{}' to consumer {}",
+                                            subscription_id,
+                                            requested_topic,
+                                            consumer_id
+                                        );
+                                    }
+                                } else {
+                                    log::warn!(
+                                        "Subscription {} consumer {} not found when sending 'no data' response",
+                                        subscription_id,
+                                        consumer_id
+                                    );
+                                }
                             }
                         }
                         None => {
@@ -291,7 +363,7 @@ impl SubscriptionWorker {
         Ok(ManagedConsumer {
             handler,
             topic_sender: topic_channel.sender,
-            state: crate::consumer::ConsumerState::Processing,
+            state: crate::consumer::ConsumerState::Processing { from_consumer_id: None },
         })
     }
 

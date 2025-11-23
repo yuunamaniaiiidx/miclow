@@ -8,9 +8,10 @@ use std::sync::Arc;
 pub enum ExecutorInputEvent {
     Topic {
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         topic: Topic,
-        data: Arc<str>,
+        /// データがない場合（system.pullでデータが見つからない場合など）はNone
+        data: Option<Arc<str>>,
         from_subscription_id: SubscriptionId,
     },
 }

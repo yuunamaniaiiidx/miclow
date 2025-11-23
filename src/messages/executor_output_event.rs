@@ -8,7 +8,7 @@ use std::sync::Arc;
 pub enum ExecutorOutputEvent {
     Topic {
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         from_subscription_id: SubscriptionId,
         to_subscription_id: Option<SubscriptionId>,
         topic: Topic,
@@ -16,22 +16,22 @@ pub enum ExecutorOutputEvent {
     },
     Stdout {
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         data: Arc<str>,
     },
     Stderr {
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         data: Arc<str>,
     },
     Error {
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         error: String,
     },
     Exit {
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         exit_code: i32,
     },
 }
@@ -39,14 +39,14 @@ pub enum ExecutorOutputEvent {
 impl ExecutorOutputEvent {
     pub fn new_message(
         message_id: MessageId,
-        pod_id: ConsumerId,
+        consumer_id: ConsumerId,
         from_subscription_id: SubscriptionId,
         topic: impl Into<Topic>,
         data: impl Into<Arc<str>>,
     ) -> Self {
         Self::Topic {
             message_id,
-            pod_id,
+            consumer_id,
             from_subscription_id,
             to_subscription_id: None,
             topic: topic.into(),
@@ -54,34 +54,34 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_error(message_id: MessageId, pod_id: ConsumerId, error: String) -> Self {
+    pub fn new_error(message_id: MessageId, consumer_id: ConsumerId, error: String) -> Self {
         Self::Error {
             message_id,
-            pod_id,
+            consumer_id,
             error,
         }
     }
 
-    pub fn new_exit(message_id: MessageId, pod_id: ConsumerId, exit_code: i32) -> Self {
+    pub fn new_exit(message_id: MessageId, consumer_id: ConsumerId, exit_code: i32) -> Self {
         Self::Exit {
             message_id,
-            pod_id,
+            consumer_id,
             exit_code,
         }
     }
 
-    pub fn new_task_stdout(message_id: MessageId, pod_id: ConsumerId, data: impl Into<Arc<str>>) -> Self {
+    pub fn new_task_stdout(message_id: MessageId, consumer_id: ConsumerId, data: impl Into<Arc<str>>) -> Self {
         Self::Stdout {
             message_id,
-            pod_id,
+            consumer_id,
             data: data.into(),
         }
     }
 
-    pub fn new_task_stderr(message_id: MessageId, pod_id: ConsumerId, data: impl Into<Arc<str>>) -> Self {
+    pub fn new_task_stderr(message_id: MessageId, consumer_id: ConsumerId, data: impl Into<Arc<str>>) -> Self {
         Self::Stderr {
             message_id,
-            pod_id,
+            consumer_id,
             data: data.into(),
         }
     }
