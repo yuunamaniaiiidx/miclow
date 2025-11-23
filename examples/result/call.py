@@ -1,5 +1,5 @@
-print('"call": data')
-input()
+import uuid
+
+print('"call": ', str(uuid.uuid4()))
 print('"system.pull": call.result')
-for _ in range(int(input())):
-    print(input())
+print("".join(input() for _ in range(int(input()))))
