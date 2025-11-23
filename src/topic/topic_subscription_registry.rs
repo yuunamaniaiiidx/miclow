@@ -107,24 +107,18 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
-    /// SubscriptionがCursor位置から指定件数のメッセージを取得
-    pub async fn pull_messages(
+    /// SubscriptionがCursor位置から1件のメッセージを取得
+    pub async fn pull_message(
         &self,
         subscription_id: SubscriptionId,
         topic: Topic,
-        limit: usize,
-    ) -> Vec<ExecutorOutputEvent> {
+    ) -> Option<ExecutorOutputEvent> {
         let message_log = self.message_log.read().await;
-        let Some(log) = message_log.get(&topic) else {
-            return Vec::new();
-        };
+        let log = message_log.get(&topic)?;
 
         // Cursor位置を取得
         let cursor_id = self.get_cursor(&subscription_id, &topic).await;
-        
-        let mut result = Vec::new();
         let mut found_cursor = cursor_id.is_none();
-        let mut last_message_id: Option<MessageId> = None;
 
         for timestamped in log.iter() {
             // MessageIdを取得（Topicイベントのみ）
@@ -139,31 +133,32 @@ impl TopicSubscriptionRegistry {
                     if let Some(msg_id) = &message_id {
                         if msg_id == cursor {
                             found_cursor = true;
+                        } else {
+                            continue;
                         }
+                    } else {
+                        continue;
                     }
-                    continue;
                 } else {
                     found_cursor = true;
                 }
             }
 
-            // Cursor以降のメッセージを取得
+            // Cursor以降の最初のメッセージを取得
             if found_cursor {
-                result.push(timestamped.event.clone());
-                if let Some(msg_id) = message_id {
-                    last_message_id = Some(msg_id);
+                // メッセージをクローンしてからロックを解放
+                let event = timestamped.event.clone();
+                let msg_id_for_cursor = message_id.clone();
+                drop(message_log); // ロックを解放
+                
+                // Cursorを更新
+                if let Some(msg_id) = msg_id_for_cursor {
+                    self.update_cursor(subscription_id, topic, msg_id).await;
                 }
-                if result.len() >= limit {
-                    break;
-                }
+                return Some(event);
             }
         }
 
-        // Cursorを更新（最後に取得したメッセージのID）
-        if let Some(last_id) = last_message_id {
-            self.update_cursor(subscription_id, topic, last_id).await;
-        }
-
-        result
+        None
     }
 }

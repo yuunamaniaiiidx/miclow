@@ -200,13 +200,10 @@ impl SubscriptionWorker {
                                 );
                                 
                                 // 要求されたトピックから1件取得
-                                let topic_messages = topic_manager.pull_messages(
+                                if let Some(topic_event) = topic_manager.pull_message(
                                     subscription_id.clone(),
                                     requested_topic.clone(),
-                                    1, // 1件のみ取得
-                                ).await;
-
-                                if let Some(topic_event) = topic_messages.first() {
+                                ).await {
                                     // データをConsumerに送信
                                     if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                         let subscription_message = SubscriptionTopicMessage {

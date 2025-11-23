@@ -1,3 +1,1 @@
-import miclow
-
-miclow.publish("apply", "data")
+print('"apply": data')

@@ -38,17 +38,17 @@ impl<'a> ExecutorInputEventStdio<'a> {
             );
         }
 
-        let line_count: usize = lines[1].parse().unwrap_or_else(|_| {
+        let line_count: usize = lines[0].parse().unwrap_or_else(|_| {
             panic!(
-                "StdIOProtocol validation failed: line 2 must be a number, got '{}'",
-                lines[1]
+                "StdIOProtocol validation failed: line 1 must be a number, got '{}'",
+                lines[0]
             );
         });
 
-        let data_line_count = lines.len() - 2;
+        let data_line_count = lines.len() - 1;
         if data_line_count != line_count {
             panic!(
-                "StdIOProtocol validation failed: expected {} data lines (from line 2), but got {} (total lines: {})",
+                "StdIOProtocol validation failed: expected {} data lines (from line 1), but got {} (total lines: {})",
                 line_count, data_line_count, lines.len()
             );
         }
@@ -58,14 +58,13 @@ impl<'a> ExecutorInputEventStdio<'a> {
 
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
-            ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic.as_str(), data.as_ref()),
+            ExecutorInputEvent::Topic { data, .. } => Self::lines_from(data.as_ref()),
         }
     }
 
-    fn lines_from(topic: &str, data: &str) -> Vec<String> {
-        let mut lines = vec![topic.to_string()];
+    fn lines_from(data: &str) -> Vec<String> {
         let data_lines: Vec<&str> = data.lines().collect();
-        lines.push(data_lines.len().to_string());
+        let mut lines = vec![data_lines.len().to_string()];
         lines.extend(data_lines.iter().map(|s| s.to_string()));
         lines
     }
