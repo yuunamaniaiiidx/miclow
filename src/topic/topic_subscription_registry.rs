@@ -2,7 +2,7 @@ use crate::message_id::MessageId;
 use crate::messages::ExecutorOutputEvent;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
@@ -14,7 +14,6 @@ struct TimestampedMessage {
 
 #[derive(Clone)]
 pub struct TopicSubscriptionRegistry {
-    topic_destination: Arc<RwLock<HashMap<Topic, HashSet<SubscriptionId>>>>,
     message_log: Arc<RwLock<HashMap<Topic, VecDeque<TimestampedMessage>>>>,
     subscription_cursors: Arc<RwLock<HashMap<(SubscriptionId, Topic), MessageId>>>,
     retention_duration: Duration,
@@ -23,34 +22,11 @@ pub struct TopicSubscriptionRegistry {
 impl TopicSubscriptionRegistry {
     pub fn new() -> Self {
         Self {
-            topic_destination: Arc::new(RwLock::new(HashMap::new())),
             message_log: Arc::new(RwLock::new(HashMap::new())),
             subscription_cursors: Arc::new(RwLock::new(HashMap::new())),
-            retention_duration: Duration::from_secs(24 * 60 * 60), // 24時間
+            retention_duration: Duration::from_secs(60 * 60),
         }
     }
-
-    pub async fn add_subscriber(
-        &self,
-        topic: impl Into<Topic>,
-        subscription_id: SubscriptionId,
-    ) {
-        let topic = topic.into();
-        
-        // トピックとSubscriptionIdのマッピングを登録（HashSetなので重複は自動的に防がれる）
-        let subscriber_count = {
-            let mut topic_dest = self.topic_destination.write().await;
-            topic_dest.entry(topic.clone()).or_insert_with(HashSet::new).insert(subscription_id);
-            topic_dest.get(&topic).map(|s| s.len()).unwrap_or(0)
-        };
-        
-        log::info!(
-            "Registered subscriber for topic '{}' (total subscribers: {})",
-            topic,
-            subscriber_count
-        );
-    }
-
 
     /// Cursorを更新
     async fn update_cursor(
