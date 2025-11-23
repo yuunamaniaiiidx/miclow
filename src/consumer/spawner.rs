@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use super::pod_id::ConsumerId;
+use super::consumer_id::ConsumerId;
 
 pub struct ConsumerSpawnHandler {
     pub consumer_id: ConsumerId,
@@ -140,12 +140,12 @@ impl ConsumerSpawner {
                                         },
                                         ExecutorOutputEvent::Stdout { data, .. } => {
                                             if view_stdout {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: consumer_id.to_string(), task_name: consumer_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { consumer_id: consumer_id.to_string(), task_name: consumer_name.clone(), kind: UserLogKind::Stdout, msg: data.clone() });
                                             }
                                         },
                                         ExecutorOutputEvent::Stderr { data, .. } => {
                                             if view_stderr {
-                                                let _ = userlog_sender.send(UserLogEvent { pod_id: consumer_id.to_string(), task_name: consumer_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
+                                                let _ = userlog_sender.send(UserLogEvent { consumer_id: consumer_id.to_string(), task_name: consumer_name.clone(), kind: UserLogKind::Stderr, msg: data.clone() });
                                             }
                                         },
                                         ExecutorOutputEvent::Error { error, .. } => {

@@ -64,33 +64,33 @@ impl InputBufferManager {
         }
     }
 
-    pub fn get_or_create_buffer(&mut self, pod_id: &str) -> &mut TopicInputBuffer {
+    pub fn get_or_create_buffer(&mut self, consumer_id: &str) -> &mut TopicInputBuffer {
         self.buffers
-            .entry(pod_id.to_string())
+            .entry(consumer_id.to_string())
             .or_insert_with(TopicInputBuffer::new)
     }
 
     pub fn consume_stream_line(
         &mut self,
-        pod_id: &str,
+        consumer_id: &str,
         line: &str,
     ) -> Result<StreamOutcome, String> {
-        let buffer = self.get_or_create_buffer(pod_id);
+        let buffer = self.get_or_create_buffer(consumer_id);
         consume_stream_line(buffer, line)
     }
 
     pub fn flush_all_unfinished(&mut self) -> Vec<(String, String, String)> {
         let mut results = Vec::new();
-        for (pod_id, buffer) in self.buffers.iter_mut() {
+        for (consumer_id, buffer) in self.buffers.iter_mut() {
             if let Some((topic, data)) = buffer.flush_unfinished() {
-                results.push((pod_id.clone(), topic, data));
+                results.push((consumer_id.clone(), topic, data));
             }
         }
         results
     }
 
-    pub fn remove_task(&mut self, pod_id: &str) -> Option<TopicInputBuffer> {
-        self.buffers.remove(pod_id)
+    pub fn remove_task(&mut self, consumer_id: &str) -> Option<TopicInputBuffer> {
+        self.buffers.remove(consumer_id)
     }
 
     pub fn has_active_buffers(&self) -> bool {

@@ -15,7 +15,7 @@ pub struct LogEvent {
     pub level: Level,
     pub target: Arc<str>,
     pub msg: Arc<str>,
-    pub pod_id: Option<Arc<str>>,
+    pub consumer_id: Option<Arc<str>>,
     pub task_name: Option<Arc<str>>,
 }
 
@@ -42,7 +42,7 @@ impl Log for ChannelLogger {
             level: record.level(),
             target: Arc::from(record.target()),
             msg: Arc::from(format!("{}", record.args())),
-            pod_id: None,
+            consumer_id: None,
             task_name: None,
         });
     }
@@ -79,7 +79,7 @@ pub enum UserLogKind {
 
 #[derive(Debug, Clone)]
 pub struct UserLogEvent {
-    pub pod_id: String,
+    pub consumer_id: String,
     pub task_name: Arc<str>,
     pub kind: UserLogKind,
     pub msg: Arc<str>,
