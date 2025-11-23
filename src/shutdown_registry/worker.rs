@@ -39,5 +39,3 @@ pub struct BackgroundWorkerContext {
     pub shutdown: CancellationToken,
     pub ready: ReadyHandle,
 }
-
-// ※ registry部分の struct BackgroundWorkerRegistry は一旦未移動、後で重複吸収時に精査
