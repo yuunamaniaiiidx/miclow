@@ -3,10 +3,10 @@ use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
-use crate::message_id::MessageId;
+use crate::messages::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
-use crate::pod::PodId;
-use crate::replicaset::ReplicaSetId;
+use crate::consumer::ConsumerId;
+use crate::subscription::SubscriptionId;
 use anyhow::{Error, Result};
 #[cfg(unix)]
 use nix::sys::signal::{kill, Signal};
@@ -31,24 +31,40 @@ impl<'a> ExecutorInputEventStdio<'a> {
     pub fn to_input_lines(&self) -> Vec<String> {
         let lines = self.to_input_lines_raw();
 
+        if lines.is_empty() {
+            panic!(
+                "StdIOProtocol validation failed: must have at least 1 line (line count), got 0"
+            );
+        }
+
+        let line_count: usize = lines[0].parse().unwrap_or_else(|_| {
+            panic!(
+                "StdIOProtocol validation failed: line 1 must be a number, got '{}'",
+                lines[0]
+            );
+        });
+
+        if line_count == 0 {
+            if lines.len() != 1 {
+                panic!(
+                    "StdIOProtocol validation failed: when line count is 0, must have exactly 1 line, got {}",
+                    lines.len()
+                );
+            }
+            return lines;
+        }
+
         if lines.len() < 2 {
             panic!(
-                "StdIOProtocol validation failed: must have at least 2 lines, got {}",
+                "StdIOProtocol validation failed: must have at least 2 lines when line count > 0, got {}",
                 lines.len()
             );
         }
 
-        let line_count: usize = lines[1].parse().unwrap_or_else(|_| {
-            panic!(
-                "StdIOProtocol validation failed: line 2 must be a number, got '{}'",
-                lines[1]
-            );
-        });
-
-        let data_line_count = lines.len() - 2;
+        let data_line_count = lines.len() - 1;
         if data_line_count != line_count {
             panic!(
-                "StdIOProtocol validation failed: expected {} data lines (from line 2), but got {} (total lines: {})",
+                "StdIOProtocol validation failed: expected {} data lines (from line 1), but got {} (total lines: {})",
                 line_count, data_line_count, lines.len()
             );
         }
@@ -58,14 +74,18 @@ impl<'a> ExecutorInputEventStdio<'a> {
 
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
-            ExecutorInputEvent::Topic { topic, data, .. } => Self::lines_from(topic.as_str(), data.as_ref()),
+            ExecutorInputEvent::Topic { data, .. } => {
+                match data {
+                    Some(data) => Self::lines_from(data.as_ref()),
+                    None => vec!["0".to_string()],
+                }
+            }
         }
     }
 
-    fn lines_from(topic: &str, data: &str) -> Vec<String> {
-        let mut lines = vec![topic.to_string()];
+    fn lines_from(data: &str) -> Vec<String> {
         let data_lines: Vec<&str> = data.lines().collect();
-        lines.push(data_lines.len().to_string());
+        let mut lines = vec![data_lines.len().to_string()];
         lines.extend(data_lines.iter().map(|s| s.to_string()));
         lines
     }
@@ -79,13 +99,13 @@ impl<'a> From<&'a ExecutorInputEvent> for ExecutorInputEventStdio<'a> {
 
 pub async fn spawn_miclow_stdio_protocol(
     config: &MiclowStdIOConfig,
-    pod_id: PodId,
-    replicaset_id: ReplicaSetId,
+    consumer_id: ConsumerId,
+    subscription_id: SubscriptionId,
 ) -> Result<TaskBackendHandle, Error> {
     let command = config.command.clone();
     let args = config.args.clone();
     let working_directory = config.working_directory.clone();
-    let environment_vars = config.environment_vars.clone();
+    let environment = config.environment.clone();
     let stdout_topic = config.stdout_topic.clone();
     let stderr_topic = config.stderr_topic.clone();
     let view_stdout = config.view_stdout;
@@ -109,13 +129,13 @@ pub async fn spawn_miclow_stdio_protocol(
             command_builder.current_dir(working_dir.as_ref());
         }
 
-        if let Some(env_vars) = &environment_vars {
+        if let Some(env_vars) = &environment {
             for (key, value) in env_vars {
                 command_builder.env(key, value);
             }
         }
 
-        command_builder.env("MICLOW_POD_ID", pod_id.to_string());
+        command_builder.env("MICLOW_POD_ID", consumer_id.to_string());
 
         let mut child = match command_builder
             .stdout(Stdio::piped())
@@ -127,7 +147,7 @@ pub async fn spawn_miclow_stdio_protocol(
             Err(e) => {
                 let _ = event_tx_clone.send(ExecutorOutputEvent::new_error(
                     MessageId::new(),
-                    pod_id.clone(),
+                    consumer_id.clone(),
                     format!("Failed to start process '{}': {}", command, e),
                 ));
                 return;
@@ -145,12 +165,12 @@ pub async fn spawn_miclow_stdio_protocol(
             stdout_topic.clone(),
             event_tx_clone.clone(),
             cancel_token.clone(),
-            pod_id.clone(),
-            replicaset_id.clone(),
+            consumer_id.clone(),
+            subscription_id.clone(),
             if view_stdout {
                 Some(
                     ExecutorOutputEvent::new_task_stdout
-                        as fn(MessageId, PodId, String) -> ExecutorOutputEvent,
+                        as fn(MessageId, ConsumerId, String) -> ExecutorOutputEvent,
                 )
             } else {
                 None
@@ -162,12 +182,12 @@ pub async fn spawn_miclow_stdio_protocol(
             stderr_topic.clone(),
             event_tx_clone.clone(),
             cancel_token.clone(),
-            pod_id.clone(),
-            replicaset_id.clone(),
+            consumer_id.clone(),
+            subscription_id.clone(),
             if view_stderr {
                 Some(
                     ExecutorOutputEvent::new_task_stderr
-                        as fn(MessageId, PodId, String) -> ExecutorOutputEvent,
+                        as fn(MessageId, ConsumerId, String) -> ExecutorOutputEvent,
                 )
             } else {
                 None
@@ -176,7 +196,7 @@ pub async fn spawn_miclow_stdio_protocol(
 
         let cancel_input: CancellationToken = cancel_token.clone();
         let event_tx_input: ExecutorOutputEventSender = event_tx_clone.clone();
-        let pod_id_input = pod_id.clone();
+        let consumer_id_input = consumer_id.clone();
         let input_worker = task::spawn(async move {
             loop {
                 tokio::select! {
@@ -194,7 +214,7 @@ pub async fn spawn_miclow_stdio_protocol(
                                     if let Err(e) = stdin_writer.write_all(&bytes).await {
                                     let _ = event_tx_input.send_error(
                                         MessageId::new(),
-                                        pod_id_input.clone(),
+                                        consumer_id_input.clone(),
                                         format!("Failed to write to stdin: {}", e),
                                     );
                                     break;
@@ -203,7 +223,7 @@ pub async fn spawn_miclow_stdio_protocol(
                             if let Err(e) = stdin_writer.flush().await {
                                 let _ = event_tx_input.send_error(
                                     MessageId::new(),
-                                    pod_id_input.clone(),
+                                    consumer_id_input.clone(),
                                     format!("Failed to flush stdin: {}", e),
                                 );
                                 break;
@@ -218,21 +238,21 @@ pub async fn spawn_miclow_stdio_protocol(
 
         let event_tx_status: ExecutorOutputEventSender = event_tx_clone.clone();
         let status_cancel: CancellationToken = cancel_token.clone();
-        let pod_id_status: PodId = pod_id.clone();
+        let consumer_id_status: ConsumerId = consumer_id.clone();
         let status_worker = task::spawn(async move {
             let notify = |res: Result<std::process::ExitStatus, anyhow::Error>| {
                 let message_id = MessageId::new();
-                let pod_id_clone = pod_id_status.clone();
+                let consumer_id_clone = consumer_id_status.clone();
                 match res {
                     Ok(exit_status) => {
                         let code: i32 = exit_status.code().unwrap_or(-1);
-                        let _ = event_tx_status.send_exit(message_id, pod_id_clone, code);
+                        let _ = event_tx_status.send_exit(message_id, consumer_id_clone, code);
                     }
                     Err(e) => {
                         log::error!("Error waiting for process: {}", e);
                         let _ = event_tx_status.send_error(
                             message_id,
-                            pod_id_clone,
+                            consumer_id_clone,
                             format!("Error waiting for process: {}", e),
                         );
                     }
@@ -240,7 +260,7 @@ pub async fn spawn_miclow_stdio_protocol(
             };
             tokio::select! {
                 _ = shutdown_channel.receiver.recv() => {
-                    log::info!("Shutdown signal received for pod {}, attempting graceful termination", pod_id_status);
+                    log::info!("Shutdown signal received for consumer {}, attempting graceful termination", consumer_id_status);
 
                     #[cfg(unix)]
                     let pid_opt = child.id().map(|id| Pid::from_raw(id as i32));
@@ -251,11 +271,11 @@ pub async fn spawn_miclow_stdio_protocol(
                     let graceful_shutdown_attempted = if let Some(pid) = pid_opt {
                         match kill(pid, Signal::SIGTERM) {
                             Ok(_) => {
-                                log::info!("Sent SIGTERM to child process {} (pod {}), waiting for graceful shutdown", pid, pod_id_status);
+                                log::info!("Sent SIGTERM to child process {} (consumer {}), waiting for graceful shutdown", pid, consumer_id_status);
                                 true
                             }
                             Err(e) => {
-                                log::warn!("Failed to send SIGTERM to child process {} (pod {}): {}, will use SIGKILL", pid, pod_id_status, e);
+                                log::warn!("Failed to send SIGTERM to child process {} (consumer {}): {}, will use SIGKILL", pid, consumer_id_status, e);
                                 false
                             }
                         }
@@ -278,7 +298,7 @@ pub async fn spawn_miclow_stdio_protocol(
                                     Ok(Ok(exit_status)) => {
                                         #[cfg(unix)]
                                         if let Some(pid) = pid_opt {
-                                            log::info!("Child process {} (pod {}) exited gracefully after SIGTERM", pid, pod_id_status);
+                                            log::info!("Child process {} (consumer {}) exited gracefully after SIGTERM", pid, consumer_id_status);
                                         }
                                         notify(Ok(exit_status));
                                         status_cancel.cancel();
@@ -290,7 +310,7 @@ pub async fn spawn_miclow_stdio_protocol(
                                         return;
                                     }
                                     Err(e) => {
-                                        log::warn!("Error waiting for child process (pod {}): {}", pod_id_status, e);
+                                        log::warn!("Error waiting for child process (consumer {}): {}", consumer_id_status, e);
                                         notify(Err(anyhow::Error::from(e)));
                                         status_cancel.cancel();
                                         return;
@@ -300,7 +320,7 @@ pub async fn spawn_miclow_stdio_protocol(
                             _ = tokio::time::sleep(graceful_timeout) => {
                                 #[cfg(unix)]
                                 if let Some(pid) = pid_opt {
-                                    log::warn!("Child process {} (pod {}) did not exit within timeout, sending SIGKILL", pid, pod_id_status);
+                                    log::warn!("Child process {} (consumer {}) did not exit within timeout, sending SIGKILL", pid, consumer_id_status);
                                     let _ = kill(pid, Signal::SIGKILL);
                                 }
                                 match wait_worker.await {
@@ -319,7 +339,7 @@ pub async fn spawn_miclow_stdio_protocol(
                             }
                         }
                     } else {
-                        log::info!("Forcing termination of child process for pod {}", pod_id_status);
+                        log::info!("Forcing termination of child process for consumer {}", consumer_id_status);
                         let _ = child.kill().await;
                         notify(child.wait().await.map_err(anyhow::Error::from));
                         status_cancel.cancel();
@@ -327,32 +347,27 @@ pub async fn spawn_miclow_stdio_protocol(
                 }
                 status = child.wait() => {
                     notify(status.map_err(anyhow::Error::from));
-                    // プロセスが自然に終了した場合、stdout/stderrの読み取りが完了するまで
-                    // cancel_tokenをキャンセルしない（EOFで自然に終了するため）
-                    // これにより、バッファに残っているエラーメッセージが確実に読み取られる
                 }
             }
         });
 
         let _ = status_worker.await;
 
-        // プロセス終了後、stdout/stderrのストリームがEOFになるまで待機
-        // タイムアウトを設けて、無限に待たないようにする
         let stream_read_timeout = tokio::time::Duration::from_millis(500);
         tokio::select! {
             _ = stdout_worker => {
-                log::debug!("stdout reader completed for pod {}", pod_id);
+                log::debug!("stdout reader completed for consumer {}", consumer_id);
             }
             _ = tokio::time::sleep(stream_read_timeout) => {
-                log::debug!("stdout reader timeout for pod {}, continuing", pod_id);
+                log::debug!("stdout reader timeout for consumer {}, continuing", consumer_id);
             }
         }
         tokio::select! {
             _ = stderr_worker => {
-                log::debug!("stderr reader completed for pod {}", pod_id);
+                log::debug!("stderr reader completed for consumer {}", consumer_id);
             }
             _ = tokio::time::sleep(stream_read_timeout) => {
-                log::debug!("stderr reader timeout for pod {}, continuing", pod_id);
+                log::debug!("stderr reader timeout for consumer {}, continuing", consumer_id);
             }
         }
 
@@ -362,7 +377,6 @@ pub async fn spawn_miclow_stdio_protocol(
 
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
-        event_sender: event_channel.sender,
         input_sender: input_channel.sender,
         shutdown_sender: shutdown_channel.sender,
     })
@@ -373,9 +387,9 @@ fn spawn_stream_reader<R>(
     topic_name: Arc<str>,
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
-    pod_id: PodId,
-    replicaset_id: ReplicaSetId,
-    emit_func: Option<fn(MessageId, PodId, String) -> ExecutorOutputEvent>,
+    consumer_id: ConsumerId,
+    subscription_id: SubscriptionId,
+    emit_func: Option<fn(MessageId, ConsumerId, String) -> ExecutorOutputEvent>,
 ) -> task::JoinHandle<()>
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
@@ -383,25 +397,25 @@ where
     task::spawn(async move {
         let mut buffer_manager = InputBufferManager::new();
         let mut line = String::new();
-        let pod_id_str = pod_id.to_string();
+        let consumer_id_str = consumer_id.to_string();
         let topic_name_clone = topic_name.clone();
         let event_tx_clone = event_tx.clone();
-        let pod_id_clone = pod_id.clone();
-        let replicaset_id_clone = replicaset_id.clone();
+        let consumer_id_clone = consumer_id.clone();
+        let subscription_id_clone = subscription_id.clone();
 
         let process_stream_outcome =
             move |outcome: Result<StreamOutcome, String>, line_content: &str| {
                 let message_id = MessageId::new();
-                let pod_id_for_outcome = pod_id_clone.clone();
+                let consumer_id_for_outcome = consumer_id_clone.clone();
                 let event_tx_for_outcome = event_tx_clone.clone();
                 let topic_name_for_outcome = topic_name_clone.clone();
-                let replicaset_id_for_outcome = replicaset_id_clone.clone();
+                let subscription_id_for_outcome = subscription_id_clone.clone();
                 match outcome {
                     Ok(StreamOutcome::Emit { topic, data }) => {
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
-                            pod_id_for_outcome.clone(),
-                            replicaset_id_for_outcome.clone(),
+                            consumer_id_for_outcome.clone(),
+                            subscription_id_for_outcome.clone(),
                             topic.as_ref(),
                             data,
                         );
@@ -411,8 +425,8 @@ where
                         let output_clone = output.clone();
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
-                            pod_id_for_outcome.clone(),
-                            replicaset_id_for_outcome.clone(),
+                            consumer_id_for_outcome.clone(),
+                            subscription_id_for_outcome.clone(),
                             topic_name_for_outcome.as_ref(),
                             output,
                         );
@@ -420,7 +434,7 @@ where
                         if let Some(emit) = emit_func {
                             let _ = event_tx_for_outcome.send(emit(
                                 message_id.clone(),
-                                pod_id_for_outcome.clone(),
+                                consumer_id_for_outcome.clone(),
                                 output_clone.to_string(),
                             ));
                         }
@@ -429,14 +443,14 @@ where
                     Err(e) => {
                         let _ = event_tx_for_outcome.send_error(
                             message_id.clone(),
-                            pod_id_for_outcome.clone(),
+                            consumer_id_for_outcome.clone(),
                             e.clone(),
                         );
                         let output: Arc<str> = Arc::from(super::buffer::strip_crlf(line_content));
                         let event = ExecutorOutputEvent::new_message(
                             message_id.clone(),
-                            pod_id_for_outcome.clone(),
-                            replicaset_id_for_outcome.clone(),
+                            consumer_id_for_outcome.clone(),
+                            subscription_id_for_outcome.clone(),
                             topic_name_for_outcome.as_ref(),
                             output.clone(),
                         );
@@ -444,7 +458,7 @@ where
                         if let Some(emit) = emit_func {
                             let _ = event_tx_for_outcome.send(emit(
                                 message_id.clone(),
-                                pod_id_for_outcome.clone(),
+                                consumer_id_for_outcome.clone(),
                                 output.to_string(),
                             ));
                         }
@@ -471,14 +485,14 @@ where
                             break;
                         }
                         Ok(_) => {
-                            process_stream_outcome(buffer_manager.consume_stream_line(&pod_id_str, &line), &line);
+                            process_stream_outcome(buffer_manager.consume_stream_line(&consumer_id_str, &line), &line);
                             line.clear();
                         },
                         Err(e) => {
                             log::error!("Error reading from {}: {}", topic_name.as_ref(), e);
                             let _ = event_tx.send_error(
                                 MessageId::new(),
-                                pod_id.clone(),
+                                consumer_id.clone(),
                                 format!("Error reading from {}: {}", topic_name.as_ref(), e),
                             );
                             break;

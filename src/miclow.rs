@@ -1,21 +1,21 @@
-use crate::background_worker_registry::BackgroundWorkerRegistry;
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
-use crate::deployment::DeploymentManager;
+use crate::coordinator::CoordinatorManager;
 use crate::logging::{
     level_from_env, set_channel_logger, LogAggregatorWorker, LogEvent, UserLogAggregatorWorker,
     UserLogEvent,
 };
+use crate::shutdown_registry::ShutdownRegistry;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub struct MiclowSystem {
     pub config: SystemConfig,
-    deployment_manager: DeploymentManager,
+    coordinator_manager: CoordinatorManager,
     log_shutdown_token: CancellationToken,
     user_shutdown_token: CancellationToken,
-    background_tasks: BackgroundWorkerRegistry,
+    background_tasks: ShutdownRegistry,
 }
 
 impl MiclowSystem {
@@ -23,12 +23,12 @@ impl MiclowSystem {
         let log_shutdown_token: CancellationToken = CancellationToken::new();
         let user_shutdown_token: CancellationToken = CancellationToken::new();
         let topic_manager = crate::topic::TopicSubscriptionRegistry::new();
-        let deployment_manager =
-            DeploymentManager::new(topic_manager.clone(), user_shutdown_token.clone());
-        let background_tasks = BackgroundWorkerRegistry::new(log_shutdown_token.clone());
+        let coordinator_manager =
+            CoordinatorManager::new(topic_manager.clone(), user_shutdown_token.clone());
+        let background_tasks = ShutdownRegistry::with_shutdown_token(log_shutdown_token.clone());
         Self {
             config,
-            deployment_manager,
+            coordinator_manager,
             log_shutdown_token,
             user_shutdown_token,
             background_tasks,
@@ -46,7 +46,7 @@ impl MiclowSystem {
         let userlog_worker = UserLogAggregatorWorker::new(userlog_rx);
         self.background_tasks.register_worker(userlog_worker).await;
 
-        self.deployment_manager
+        self.coordinator_manager
             .start_all(&self.config, userlog_sender.clone());
 
         log::info!("System running. Press Ctrl+C to stop.");
@@ -59,7 +59,6 @@ impl MiclowSystem {
                 log::error!("Ctrl+C signal error: {}", e);
             } else {
                 log::info!("Received Ctrl+C. Requesting graceful shutdown...");
-                // まずログタスクの終了を開始
                 log_shutdown_token.cancel();
             }
         };
@@ -73,15 +72,13 @@ impl MiclowSystem {
         }
 
         log::info!("Received shutdown signal, stopping log workers first...");
-        // ログタスクの終了を待つ（タイムアウト付き）
         self.background_tasks.shutdown_all(std::time::Duration::from_secs(5)).await;
         log::info!("All log workers stopped");
 
         log::info!("Stopping user tasks...");
-        // ログタスク終了後、ユーザータスクを終了
         user_shutdown_token.cancel();
         log::info!("Waiting for running pods to finish...");
-        self.deployment_manager.shutdown().await;
+        self.coordinator_manager.shutdown().await;
         log::info!("All user pods stopped");
 
         log::logger().flush();

@@ -4,19 +4,14 @@ use crate::backend::ProtocolBackend;
 use crate::config::ExpandedTaskConfig;
 use anyhow::{anyhow, Result};
 
-/// バックエンド設定のメタ情報を提供するトレイト
 pub trait BackendConfigMeta {
-    /// プロトコル名を取得
     fn protocol_name() -> &'static str;
 
-    /// デフォルトのview_stdout値を取得
     fn default_view_stdout() -> bool;
 
-    /// デフォルトのview_stderr値を取得
     fn default_view_stderr() -> bool;
 }
 
-/// セクション名からデフォルトのview_stdout値を取得
 pub fn get_default_view_stdout(section_name: &str) -> Result<bool, String> {
     match section_name {
         "Interactive" => Ok(InteractiveConfig::default_view_stdout()),
@@ -28,7 +23,6 @@ pub fn get_default_view_stdout(section_name: &str) -> Result<bool, String> {
     }
 }
 
-/// セクション名からデフォルトのview_stderr値を取得
 pub fn get_default_view_stderr(section_name: &str) -> Result<bool, String> {
     match section_name {
         "Interactive" => Ok(InteractiveConfig::default_view_stderr()),
@@ -40,7 +34,6 @@ pub fn get_default_view_stderr(section_name: &str) -> Result<bool, String> {
     }
 }
 
-/// プロトコル名からProtocolBackendを作成
 pub fn create_protocol_backend(
     protocol: &str,
     expanded: &ExpandedTaskConfig,

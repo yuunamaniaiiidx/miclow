@@ -1,4 +1,4 @@
-use crate::background_worker_registry::{
+use crate::shutdown_registry::worker::{
     BackgroundWorker, BackgroundWorkerContext, WorkerReadiness,
 };
 use async_trait::async_trait;
@@ -15,8 +15,8 @@ pub struct LogEvent {
     pub level: Level,
     pub target: Arc<str>,
     pub msg: Arc<str>,
-    pub pod_id: Option<Arc<str>>,
-    pub task_name: Option<Arc<str>>, // 追加
+    pub consumer_id: Option<Arc<str>>,
+    pub task_name: Option<Arc<str>>,
 }
 
 pub struct ChannelLogger {
@@ -42,15 +42,14 @@ impl Log for ChannelLogger {
             level: record.level(),
             target: Arc::from(record.target()),
             msg: Arc::from(format!("{}", record.args())),
-            pod_id: None,
-            task_name: None, // 追加
+            consumer_id: None,
+            task_name: None,
         });
     }
 
     fn flush(&self) {}
 }
 
-/// Set ChannelLogger as global logger and max level
 pub fn set_channel_logger(
     tx: UnboundedSender<LogEvent>,
     level: LevelFilter,
@@ -59,7 +58,6 @@ pub fn set_channel_logger(
     log::set_boxed_logger(Box::new(ChannelLogger::new(tx)))
 }
 
-/// Determine LevelFilter from RUST_LOG env var (simple parser)
 pub fn level_from_env() -> LevelFilter {
     match std::env::var("RUST_LOG").ok().as_deref() {
         Some("trace") => LevelFilter::Trace,
@@ -81,7 +79,7 @@ pub enum UserLogKind {
 
 #[derive(Debug, Clone)]
 pub struct UserLogEvent {
-    pub pod_id: String,
+    pub consumer_id: String,
     pub task_name: Arc<str>,
     pub kind: UserLogKind,
     pub msg: Arc<str>,
@@ -110,11 +108,8 @@ impl ColorBook {
     }
 }
 
-// --- Color utilities ---
-
 fn task_name_to_rgb_256(name: &str) -> (u8, u8, u8) {
-    let hue = simhash_hue(name) as f32; // 0..360
-                                        // Fix saturation/lightness for readability
+    let hue = simhash_hue(name) as f32;
     let (r, g, b) = hsl_to_rgb(hue, 0.65, 0.55);
     (r, g, b)
 }
@@ -182,7 +177,6 @@ fn hsl_to_rgb(h_deg: f32, s: f32, l: f32) -> (u8, u8, u8) {
 }
 
 fn rgb_to_xterm256_index(r: u8, g: u8, b: u8) -> u8 {
-    // Map 0..255 to 0..5
     let to_6 = |v: u8| -> u8 { ((v as f32 / 255.0) * 5.0).round().clamp(0.0, 5.0) as u8 };
     let r6 = to_6(r);
     let g6 = to_6(g);

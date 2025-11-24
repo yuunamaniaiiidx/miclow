@@ -1,10 +1,10 @@
 use crate::backend::interactive::config::InteractiveConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel};
-use crate::message_id::MessageId;
+use crate::messages::MessageId;
 use crate::messages::ExecutorOutputEvent;
-use crate::pod::PodId;
-use crate::replicaset::ReplicaSetId;
+use crate::consumer::ConsumerId;
+use crate::subscription::SubscriptionId;
 use anyhow::{Error, Result};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::task;
@@ -12,8 +12,8 @@ use tokio_util::sync::CancellationToken;
 
 pub async fn spawn_interactive_protocol(
     config: &InteractiveConfig,
-    pod_id: PodId,
-    replicaset_id: ReplicaSetId,
+    consumer_id: ConsumerId,
+    subscription_id: SubscriptionId,
 ) -> Result<TaskBackendHandle, Error> {
     let system_input_topic = config.system_input_topic.clone();
 
@@ -33,11 +33,11 @@ pub async fn spawn_interactive_protocol(
         loop {
             tokio::select! {
                 _ = cancel_token.cancelled() => {
-                    log::info!("Interactive mode received shutdown signal for pod {}", pod_id);
+                    log::info!("Interactive mode received shutdown signal for consumer {}", consumer_id);
                     break;
                 }
                 _ = shutdown_receiver.recv() => {
-                    log::info!("Interactive mode received shutdown signal via channel for pod {}", pod_id);
+                    log::info!("Interactive mode received shutdown signal via channel for consumer {}", consumer_id);
                     cancel_token.cancel();
                     break;
                 }
@@ -54,8 +54,8 @@ pub async fn spawn_interactive_protocol(
                             let message_id = MessageId::new();
                             let event = ExecutorOutputEvent::new_message(
                                 message_id,
-                                pod_id.clone(),
-                                replicaset_id.clone(),
+                                consumer_id.clone(),
+                                subscription_id.clone(),
                                 system_input_topic.clone(),
                                 trimmed.to_string(),
                             );
@@ -66,14 +66,14 @@ pub async fn spawn_interactive_protocol(
                             }
                         }
                         Ok(None) => {
-                            log::info!("Interactive mode stdin closed for pod {}", pod_id);
+                            log::info!("Interactive mode stdin closed for consumer {}", consumer_id);
                             break;
                         }
                         Err(e) => {
-                            log::error!("Error reading from stdin for pod {}: {}", pod_id, e);
+                            log::error!("Error reading from stdin for consumer {}: {}", consumer_id, e);
                             let _ = event_tx_clone.send_error(
                                 MessageId::new(),
-                                pod_id.clone(),
+                                consumer_id.clone(),
                                 format!("Error reading from stdin: {}", e),
                             );
                             break;
@@ -83,12 +83,11 @@ pub async fn spawn_interactive_protocol(
             }
         }
 
-        log::info!("Interactive mode pod {} completed", pod_id);
+        log::info!("Interactive mode consumer {} completed", consumer_id);
     });
 
     Ok(TaskBackendHandle {
         event_receiver: event_channel.receiver,
-        event_sender: event_channel.sender,
         input_sender: input_channel.sender,
         shutdown_sender: shutdown_channel.sender,
     })

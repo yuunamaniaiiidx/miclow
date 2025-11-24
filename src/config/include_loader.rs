@@ -4,7 +4,6 @@ use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 
-/// includeファイルを読み込んでSystemConfigに統合
 pub(crate) fn load_includes(config: &mut SystemConfig, base_config_path: &str) -> Result<()> {
     let mut loaded_files = HashSet::new();
     let base_dir = Path::new(base_config_path)
@@ -26,8 +25,6 @@ fn load_includes_recursive(
         let full_path = if Path::new(include_path).is_absolute() {
             include_path.clone()
         } else {
-            // Standard approach: resolve relative to the config file's directory
-            // This is the most common pattern used by Docker Compose, Nginx, etc.
             base_dir.join(include_path).to_string_lossy().to_string()
         };
 
@@ -51,12 +48,10 @@ fn load_includes_recursive(
                 loaded_files.insert(full_path.clone());
                 log::info!("Loading include file: {}", full_path);
 
-                // includeファイル用の展開コンテキストを作成
                 let include_expand_context = ExpandContext::from_config_path(&full_path);
 
                 match SystemConfig::from_toml_internal(&content, false, &include_expand_context) {
                     Ok(included_config) => {
-                        // from_toml_internal already calls normalize_defaults()
                         log::info!(
                             "Loaded {} tasks from {}",
                             included_config.tasks.len(),

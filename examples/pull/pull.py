@@ -1,9 +1,3 @@
-import miclow
-import time
-
-while True:
-    print("pull message...")
-
-    print(miclow.pull("apply"))
-    time.sleep(1)
-    miclow.idle()
+print('"system.pull": apply')
+for _ in range(int(input())):
+    print(input())

@@ -1,4 +1,2 @@
-import miclow
-
-miclow.publish("apply", "data")
-input()
+import uuid
+print('"apply":', str(uuid.uuid4()))

@@ -1,6 +1,6 @@
-use crate::message_id::MessageId;
-use crate::pod::PodId;
-use crate::replicaset::ReplicaSetId;
+use crate::messages::message_id::MessageId;
+use crate::consumer::ConsumerId;
+use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use std::sync::Arc;
 
@@ -8,9 +8,9 @@ use std::sync::Arc;
 pub enum ExecutorInputEvent {
     Topic {
         message_id: MessageId,
-        pod_id: PodId,
+        consumer_id: ConsumerId,
         topic: Topic,
-        data: Arc<str>,
-        from_replicaset_id: ReplicaSetId,
+        data: Option<Arc<str>>,
+        from_subscription_id: SubscriptionId,
     },
 }

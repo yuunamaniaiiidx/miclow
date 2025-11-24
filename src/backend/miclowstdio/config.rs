@@ -10,7 +10,7 @@ pub struct MiclowStdIOConfig {
     pub command: Arc<str>,
     pub args: Vec<Arc<str>>,
     pub working_directory: Option<Arc<str>>,
-    pub environment_vars: Option<HashMap<String, String>>,
+    pub environment: Option<HashMap<String, String>>,
     pub stdout_topic: Arc<str>,
     pub stderr_topic: Arc<str>,
     pub view_stdout: bool,
@@ -31,10 +31,48 @@ impl BackendConfigMeta for MiclowStdIOConfig {
     }
 }
 
+// MiclowStdIOプロトコルで許可されているフィールド
+const ALLOWED_MICLOW_STDIO_FIELDS: &[&str] = &[
+    "command",
+    "args",
+    "working_directory",
+    "environment",
+    "stdout_topic",
+    "stderr_topic",
+];
+
+fn validate_protocol_fields(
+    config: &ExpandedTaskConfig,
+    allowed_fields: &[&str],
+    protocol_name: &str,
+) -> Result<(), anyhow::Error> {
+    let mut invalid_fields = Vec::new();
+    
+    for (key, _) in &config.protocol_config {
+        if !allowed_fields.contains(&key.as_str()) {
+            invalid_fields.push(key.clone());
+        }
+    }
+    
+    if !invalid_fields.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Task '{}' (protocol: {}) has invalid field(s): {}. Allowed fields: {}",
+            config.name,
+            protocol_name,
+            invalid_fields.join(", "),
+            allowed_fields.join(", ")
+        ));
+    }
+    
+    Ok(())
+}
+
 pub fn try_miclow_stdio_from_expanded_config(
     config: &ExpandedTaskConfig,
 ) -> Result<MiclowStdIOConfig, anyhow::Error> {
-    // プロトコル固有のフィールドを抽出・バリデーション
+    // 無効なフィールドをチェック
+    validate_protocol_fields(config, ALLOWED_MICLOW_STDIO_FIELDS, "MiclowStdIO")?;
+    
     let command_str: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
             "Command field is required for MiclowStdIO in task '{}'",
@@ -55,7 +93,7 @@ pub fn try_miclow_stdio_from_expanded_config(
 
     let working_directory: Option<Arc<str>> = config.expand("working_directory").map(|s: String| Arc::from(s));
 
-    let environment_vars = config.get_protocol_value("environment_vars").and_then(|v| {
+    let environment = config.get_protocol_value("environment").and_then(|v| {
         if let TomlValue::Table(table) = v {
             let mut env_map = HashMap::new();
             for (key, value) in table {
@@ -71,7 +109,6 @@ pub fn try_miclow_stdio_from_expanded_config(
         }
     });
 
-    // デフォルト値の生成ロジック: stdout_topic/stderr_topicが未設定の場合は"{name}.stdout"/"{name}.stderr"を使用
     let stdout_topic: Arc<str> = config
         .expand("stdout_topic")
         .map(|s: String| Arc::from(s))
@@ -82,11 +119,9 @@ pub fn try_miclow_stdio_from_expanded_config(
         .map(|s: String| Arc::from(s))
         .unwrap_or_else(|| Arc::from(format!("{}.stderr", config.name)));
 
-    // view_stdoutとview_stderrはTaskConfigの共通フィールドとして扱う
     let view_stdout: bool = config.view_stdout;
     let view_stderr: bool = config.view_stderr;
 
-    // バリデーション
     if stdout_topic.contains(' ') {
         return Err(anyhow::anyhow!(
             "Task '{}' stdout_topic '{}' contains spaces (not allowed)",
@@ -116,7 +151,7 @@ pub fn try_miclow_stdio_from_expanded_config(
         command,
         args,
         working_directory,
-        environment_vars,
+        environment,
         stdout_topic,
         stderr_topic,
         view_stdout,
