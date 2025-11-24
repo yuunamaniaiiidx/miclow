@@ -1,9 +1,10 @@
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "call1"
-command = "uv"
-args = ["run", "call1.py"]
+command = "python3"
+args = ["call1.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
@@ -13,9 +14,10 @@ desired_instances = 5
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "call2"
-command = "uv"
-args = ["run", "call2.py"]
+command = "python3"
+args = ["call2.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
@@ -25,9 +27,10 @@ desired_instances = 5
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "result"
-command = "uv"
-args = ["run", "result.py"]
+command = "python3"
+args = ["result.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 

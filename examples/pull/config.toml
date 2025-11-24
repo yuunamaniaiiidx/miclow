@@ -4,6 +4,7 @@ task_name = "apply"
 command = "uv"
 args = ["run", "apply.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
@@ -16,6 +17,7 @@ task_name = "pull"
 command = "uv"
 args = ["run", "pull.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
 view_stdout = true
 view_stderr = true
 
