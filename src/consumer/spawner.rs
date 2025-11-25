@@ -1,13 +1,15 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
     ExecutorInputEventSender, ConsumerEventSender, SubscriptionTopicReceiver,
-    ShutdownSender, UserLogSender,
+    ShutdownSender, UserLogSender, TopicNotificationReceiver,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::messages::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::shutdown_registry::TaskHandle;
 use crate::subscription::SubscriptionId;
+use crate::topic::Topic;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -58,6 +60,7 @@ impl ConsumerSpawner {
         shutdown_token: CancellationToken,
         topic_data_receiver: SubscriptionTopicReceiver,
         task_handle: &TaskHandle,
+        topic_notification_receiver: TopicNotificationReceiver,
     ) -> Result<ConsumerSpawnHandler, String> {
         let consumer_id: ConsumerId = self.consumer_id.clone();
         let handler_consumer_id = consumer_id.clone();
@@ -83,8 +86,10 @@ impl ConsumerSpawner {
             let userlog_sender = userlog_sender.clone();
             let consumer_event_sender = consumer_event_sender.clone();
             let mut topic_data_receiver = topic_data_receiver;
+            let mut topic_notification_receiver = topic_notification_receiver;
 
             async move {
+                let mut waiting_topics: HashSet<Topic> = HashSet::new();
                 loop {
                     tokio::select! {
                         _ = shutdown_token.cancelled() => {
@@ -122,10 +127,23 @@ impl ConsumerSpawner {
                                                 );
                                             }
 
-                                            // システムコマンドの処理（pull, peek, latest, result）
-                                            if let Some(event) = ConsumerEvent::from_system_command(
+                                            let topic_command = topic.as_str();
+                                            if topic_command == "system.pop_await" {
+                                                let awaited_topic = Topic::from(data.as_ref().trim());
+                                                waiting_topics.insert(awaited_topic.clone());
+                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
+                                                    consumer_id: consumer_id.clone(),
+                                                    topic: awaited_topic,
+                                                }) {
+                                                    log::warn!(
+                                                        "Failed to send system.pop_await converted pull for '{}': {}",
+                                                        consumer_id,
+                                                        e
+                                                    );
+                                                }
+                                            } else if let Some(event) = ConsumerEvent::from_system_command(
                                                 consumer_id.clone(),
-                                                topic.as_str(),
+                                                topic_command,
                                                 &data,
                                             ) {
                                                 if let Err(e) = consumer_event_sender.send(event) {
@@ -176,6 +194,21 @@ impl ConsumerSpawner {
                             match topic_data {
                                 Some(topic_data) => {
                                     let SubscriptionTopicMessage { topic, data, from_subscription_id } = topic_data;
+                                    let is_waiting_topic = waiting_topics.contains(&topic);
+
+                                    if is_waiting_topic && data.is_none() {
+                                        log::debug!(
+                                            "Discarding empty data for awaiting topic '{}' on consumer {}",
+                                            topic,
+                                            consumer_id
+                                        );
+                                        continue;
+                                    }
+
+                                    if is_waiting_topic && data.is_some() {
+                                        waiting_topics.remove(&topic);
+                                    }
+
                                     let input_event = ExecutorInputEvent::Topic {
                                         message_id: MessageId::new(),
                                         consumer_id: consumer_id.clone(),
@@ -190,6 +223,39 @@ impl ConsumerSpawner {
                                 },
                                 None => {
                                     log::info!("Topic data receiver closed for consumer {}", consumer_id);
+                                    break;
+                                }
+                            }
+                        },
+                        topic_notification = topic_notification_receiver.recv() => {
+                            match topic_notification {
+                                Some(topic) => {
+                                    if waiting_topics.contains(&topic) {
+                                        log::debug!(
+                                            "Consumer {} received notification for awaited topic '{}', issuing pull",
+                                            consumer_id,
+                                            topic
+                                        );
+                                        if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
+                                            consumer_id: consumer_id.clone(),
+                                            topic: topic.clone(),
+                                        }) {
+                                            log::warn!(
+                                                "Failed to send pull request from topic notification for '{}': {}",
+                                                consumer_id,
+                                                e
+                                            );
+                                        }
+                                    } else {
+                                        log::trace!(
+                                            "Consumer {} ignoring notification for non-awaited topic '{}'",
+                                            consumer_id,
+                                            topic
+                                        );
+                                    }
+                                },
+                                None => {
+                                    log::info!("Topic notification receiver closed for consumer {}", consumer_id);
                                     break;
                                 }
                             }

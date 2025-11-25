@@ -2,6 +2,7 @@ use crate::messages::ExecutorOutputEvent;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use crate::consumer::ConsumerId;
+use crate::channels::TopicNotificationSender;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -17,6 +18,8 @@ pub struct TopicSubscriptionRegistry {
     message_cursors: Arc<RwLock<HashMap<SubscriptionKey, usize>>>,
     // responseは(ConsumerId, Topic)をキーに各consumerごとに独立したキューとして保存
     responses: Arc<RwLock<HashMap<ResponseKey, VecDeque<ExecutorOutputEvent>>>>,
+    // トピック通知用のsenderリスト
+    topic_notification_senders: Arc<RwLock<Vec<TopicNotificationSender>>>,
     max_log_size: Option<usize>,
 }
 
@@ -26,6 +29,7 @@ impl TopicSubscriptionRegistry {
             messages: Arc::new(RwLock::new(HashMap::new())),
             message_cursors: Arc::new(RwLock::new(HashMap::new())),
             responses: Arc::new(RwLock::new(HashMap::new())),
+            topic_notification_senders: Arc::new(RwLock::new(Vec::new())),
             max_log_size: Some(10000),
         }
     }
@@ -64,6 +68,14 @@ impl TopicSubscriptionRegistry {
                 // messagesのwriteロックをここで解放
                 removed_count
             };
+            
+            // トピックが追加された際は常に通知
+            let senders = self.topic_notification_senders.read().await;
+            for sender in senders.iter() {
+                if let Err(e) = sender.send(topic_owned.clone()) {
+                    log::debug!("Failed to send topic notification: {}", e);
+                }
+            }
             // カーソル位置を調整（削除されたメッセージ数分だけ減らす）
             // 該当トピックのカーソルのみを更新
             // messagesのロックを解放してからcursorsのロックを取得
@@ -233,5 +245,11 @@ impl TopicSubscriptionRegistry {
             None => log::debug!("pull_response: key={:?}, no_data", key),
         }
         result
+    }
+
+    /// トピック通知用のsenderを登録する
+    pub async fn register_topic_notification_sender(&self, sender: TopicNotificationSender) {
+        let mut senders = self.topic_notification_senders.write().await;
+        senders.push(sender);
     }
 }

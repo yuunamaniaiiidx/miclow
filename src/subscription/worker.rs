@@ -5,7 +5,7 @@ use crate::topic::Topic;
 
 use crate::channels::{
     ConsumerEventChannel, ConsumerEventSender,
-    SubscriptionTopicChannel,
+    SubscriptionTopicChannel, TopicNotificationChannel,
 };
 use crate::messages::{ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::consumer::{ConsumerId, ConsumerSpawner};
@@ -478,6 +478,13 @@ impl SubscriptionWorker {
         let consumer_id = ConsumerId::new();
         let instance_name = Arc::from(format!("{}-{}", task_name, short_consumer_suffix(&consumer_id)));
         let topic_channel = SubscriptionTopicChannel::new();
+        
+        // 各consumerに個別のトピック通知channelを作成し、registryに登録
+        let TopicNotificationChannel {
+            sender: topic_notification_sender,
+            receiver: topic_notification_receiver,
+        } = TopicNotificationChannel::new();
+        start_context.topic_manager.register_topic_notification_sender(topic_notification_sender).await;
 
         let spawner = ConsumerSpawner::new(
             consumer_id.clone(),
@@ -495,6 +502,7 @@ impl SubscriptionWorker {
                 shutdown_token,
                 topic_channel.receiver,
                 task_handle,
+                topic_notification_receiver,
             )
             .await?;
 
