@@ -1,12 +1,12 @@
+pub mod consumer_event;
 pub mod executor_input_event;
 pub mod executor_output_event;
-pub mod consumer_event;
-pub mod subscription_topic_message;
 pub mod message_id;
+pub mod subscription_topic_message;
 pub mod system_command;
+pub use consumer_event::ConsumerEvent;
 pub use executor_input_event::ExecutorInputEvent;
 pub use executor_output_event::ExecutorOutputEvent;
-pub use consumer_event::ConsumerEvent;
-pub use subscription_topic_message::SubscriptionTopicMessage;
 pub use message_id::MessageId;
+pub use subscription_topic_message::SubscriptionTopicMessage;
 pub use system_command::SystemCommand;

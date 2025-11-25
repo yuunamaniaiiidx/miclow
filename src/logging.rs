@@ -1,7 +1,3 @@
-use crate::shutdown_registry::worker::{
-    BackgroundWorker, BackgroundWorkerContext, WorkerReadiness,
-};
-use async_trait::async_trait;
 use console::{style, Style, Term};
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::collections::hash_map::DefaultHasher;
@@ -9,6 +5,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug)]
 pub struct LogEvent {
@@ -192,25 +189,13 @@ impl LogAggregatorWorker {
     pub fn new(rx: UnboundedReceiver<LogEvent>) -> Self {
         Self { rx }
     }
-}
 
-#[async_trait]
-impl BackgroundWorker for LogAggregatorWorker {
-    fn name(&self) -> &str {
-        "log_aggregator"
-    }
+    pub const TASK_NAME: &'static str = "log_aggregator";
 
-    fn readiness(&self) -> WorkerReadiness {
-        WorkerReadiness::NeedsSignal
-    }
-
-    async fn run(self, ctx: BackgroundWorkerContext) {
+    pub async fn run(self, shutdown: CancellationToken) {
         let mut rx = self.rx;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        let mut ready_handle = ctx.ready;
-        ready_handle.notify();
-        let shutdown = ctx.shutdown;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }
@@ -248,25 +233,12 @@ impl UserLogAggregatorWorker {
     pub fn new(rx: UnboundedReceiver<UserLogEvent>) -> Self {
         Self { rx }
     }
-}
+    pub const TASK_NAME: &'static str = "user_log_aggregator";
 
-#[async_trait]
-impl BackgroundWorker for UserLogAggregatorWorker {
-    fn name(&self) -> &str {
-        "user_log_aggregator"
-    }
-
-    fn readiness(&self) -> WorkerReadiness {
-        WorkerReadiness::NeedsSignal
-    }
-
-    async fn run(self, ctx: BackgroundWorkerContext) {
+    pub async fn run(self, shutdown: CancellationToken) {
         let mut rx = self.rx;
         let term = Term::stdout();
         let mut colors = ColorBook::new();
-        let mut ready_handle = ctx.ready;
-        ready_handle.notify();
-        let shutdown = ctx.shutdown;
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => { break; }

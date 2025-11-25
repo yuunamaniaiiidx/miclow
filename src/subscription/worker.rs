@@ -1,20 +1,19 @@
+use crate::topic::Topic;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::topic::Topic;
 
 use crate::channels::{
-    ConsumerEventChannel, ConsumerEventSender,
-    SubscriptionTopicChannel, TopicNotificationChannel,
+    ConsumerEventChannel, ConsumerEventSender, SubscriptionTopicChannel, TopicNotificationChannel,
 };
-use crate::messages::{ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
 use crate::consumer::{ConsumerId, ConsumerSpawner};
-use crate::shutdown_registry::TaskHandle;
+use crate::messages::{ConsumerEvent, ExecutorOutputEvent, SubscriptionTopicMessage};
+use crate::shutdown_manager::TaskHandle;
+use crate::subscription::consumer_registry::{ConsumerRegistry, ManagedConsumer};
 use crate::subscription::context::ConsumerStartContext;
-use crate::subscription::consumer_registry::{ManagedConsumer, ConsumerRegistry};
 use crate::subscription::SubscriptionId;
-use tokio_util::sync::CancellationToken;
 use futures::future;
+use tokio_util::sync::CancellationToken;
 
 pub struct SubscriptionWorker {
     subscription_id: SubscriptionId,
@@ -76,10 +75,10 @@ impl SubscriptionWorker {
             &task_handle,
             &mut consumer_registry,
             target_instances as usize,
-        ).await;
+        )
+        .await;
 
         loop {
-
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
                     log::info!(
@@ -213,7 +212,7 @@ impl SubscriptionWorker {
                             log::debug!("worker: pop_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
-                            
+
                             let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pop_message(
                                 subscription_id.clone(),
                                 requested_topic.clone(),
@@ -226,14 +225,14 @@ impl SubscriptionWorker {
                             } else {
                                 (None, None)
                             };
-                            
+
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
                                     topic: requested_topic,
                                     data,
                                     from_subscription_id: subscription_id.clone(),
                                 };
-                                
+
                                 if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
                                         "Subscription {} failed to send popped data to consumer {}: {}",
@@ -261,7 +260,7 @@ impl SubscriptionWorker {
                             log::debug!("worker: pop_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
-                            
+
                             let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pop_response(
                                 consumer_id.clone(),
                                 requested_topic.clone(),
@@ -274,14 +273,14 @@ impl SubscriptionWorker {
                             } else {
                                 (None, None)
                             };
-                            
+
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
                                     topic: requested_topic,
                                     data,
                                     from_subscription_id: subscription_id.clone(),
                                 };
-                                
+
                                 if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
                                         "Subscription {} failed to send popped result to consumer {}: {}",
@@ -308,7 +307,7 @@ impl SubscriptionWorker {
                         Some(ConsumerEvent::ConsumerPeekRequesting { consumer_id, topic: requested_topic }) => {
                             log::debug!("worker: peek_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態は変更しない（peekは読み取りのみ）
-                            
+
                             let data = if let Some(topic_event) = topic_manager.peek_message(
                                 subscription_id.clone(),
                                 requested_topic.clone(),
@@ -317,14 +316,14 @@ impl SubscriptionWorker {
                             } else {
                                 None
                             };
-                            
+
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
                                     topic: requested_topic,
                                     data,
                                     from_subscription_id: subscription_id.clone(),
                                 };
-                                
+
                                 if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
                                         "Subscription {} failed to send peeked data to consumer {}: {}",
@@ -345,7 +344,7 @@ impl SubscriptionWorker {
                         Some(ConsumerEvent::ConsumerLatestRequesting { consumer_id, topic: requested_topic }) => {
                             log::debug!("worker: latest_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態は変更しない（latestは読み取りのみ）
-                            
+
                             let data = if let Some(topic_event) = topic_manager.latest_message(
                                 requested_topic.clone(),
                             ).await {
@@ -353,14 +352,14 @@ impl SubscriptionWorker {
                             } else {
                                 None
                             };
-                            
+
                             if let Some(consumer) = consumer_registry.get_consumer_mut(&consumer_id) {
                                 let subscription_message = SubscriptionTopicMessage {
                                     topic: requested_topic,
                                     data,
                                     from_subscription_id: subscription_id.clone(),
                                 };
-                                
+
                                 if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
                                         "Subscription {} failed to send latest data to consumer {}: {}",
@@ -451,7 +450,11 @@ impl SubscriptionWorker {
             match result {
                 Ok(handle) => {
                     let handle_id = consumer_registry.add_consumer(handle);
-                    log::info!("Subscription {} spawned consumer {}", subscription_id, handle_id);
+                    log::info!(
+                        "Subscription {} spawned consumer {}",
+                        subscription_id,
+                        handle_id
+                    );
                 }
                 Err(err) => {
                     log::error!(
@@ -476,15 +479,22 @@ impl SubscriptionWorker {
         task_handle: &TaskHandle,
     ) -> Result<ManagedConsumer, String> {
         let consumer_id = ConsumerId::new();
-        let instance_name = Arc::from(format!("{}-{}", task_name, short_consumer_suffix(&consumer_id)));
+        let instance_name = Arc::from(format!(
+            "{}-{}",
+            task_name,
+            short_consumer_suffix(&consumer_id)
+        ));
         let topic_channel = SubscriptionTopicChannel::new();
-        
+
         // 各consumerに個別のトピック通知channelを作成し、registryに登録
         let TopicNotificationChannel {
             sender: topic_notification_sender,
             receiver: topic_notification_receiver,
         } = TopicNotificationChannel::new();
-        start_context.topic_manager.register_topic_notification_sender(topic_notification_sender).await;
+        start_context
+            .topic_manager
+            .register_topic_notification_sender(topic_notification_sender)
+            .await;
 
         let spawner = ConsumerSpawner::new(
             consumer_id.clone(),
@@ -509,10 +519,11 @@ impl SubscriptionWorker {
         Ok(ManagedConsumer {
             handler,
             topic_sender: topic_channel.sender,
-            state: crate::consumer::ConsumerState::Processing { from_consumer_id: None },
+            state: crate::consumer::ConsumerState::Processing {
+                from_consumer_id: None,
+            },
         })
     }
-
 }
 
 fn short_consumer_suffix(consumer_id: &ConsumerId) -> String {
@@ -520,4 +531,3 @@ fn short_consumer_suffix(consumer_id: &ConsumerId) -> String {
     let len = id_string.len();
     id_string[len.saturating_sub(8)..].to_string()
 }
-

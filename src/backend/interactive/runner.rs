@@ -1,9 +1,9 @@
 use crate::backend::interactive::config::InteractiveConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorOutputEventChannel, ShutdownChannel};
-use crate::messages::MessageId;
-use crate::messages::ExecutorOutputEvent;
 use crate::consumer::ConsumerId;
+use crate::messages::ExecutorOutputEvent;
+use crate::messages::MessageId;
 use crate::subscription::SubscriptionId;
 use anyhow::{Error, Result};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader as TokioBufReader};

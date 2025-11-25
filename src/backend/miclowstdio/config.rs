@@ -47,13 +47,13 @@ fn validate_protocol_fields(
     protocol_name: &str,
 ) -> Result<(), anyhow::Error> {
     let mut invalid_fields = Vec::new();
-    
+
     for (key, _) in &config.protocol_config {
         if !allowed_fields.contains(&key.as_str()) {
             invalid_fields.push(key.clone());
         }
     }
-    
+
     if !invalid_fields.is_empty() {
         return Err(anyhow::anyhow!(
             "Task '{}' (protocol: {}) has invalid field(s): {}. Allowed fields: {}",
@@ -63,7 +63,7 @@ fn validate_protocol_fields(
             allowed_fields.join(", ")
         ));
     }
-    
+
     Ok(())
 }
 
@@ -72,7 +72,7 @@ pub fn try_miclow_stdio_from_expanded_config(
 ) -> Result<MiclowStdIOConfig, anyhow::Error> {
     // 無効なフィールドをチェック
     validate_protocol_fields(config, ALLOWED_MICLOW_STDIO_FIELDS, "MiclowStdIO")?;
-    
+
     let command_str: String = config.expand("command").ok_or_else(|| {
         anyhow::anyhow!(
             "Command field is required for MiclowStdIO in task '{}'",
@@ -91,7 +91,9 @@ pub fn try_miclow_stdio_from_expanded_config(
     let args_vec: Vec<String> = config.expand("args").unwrap_or_default();
     let args: Vec<Arc<str>> = args_vec.into_iter().map(|s| Arc::from(s)).collect();
 
-    let working_directory: Option<Arc<str>> = config.expand("working_directory").map(|s: String| Arc::from(s));
+    let working_directory: Option<Arc<str>> = config
+        .expand("working_directory")
+        .map(|s: String| Arc::from(s));
 
     let environment = config.get_protocol_value("environment").and_then(|v| {
         if let TomlValue::Table(table) = v {

@@ -1,5 +1,5 @@
-use crate::topic::Topic;
 use crate::consumer::ConsumerId;
+use crate::topic::Topic;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConsumerState {
@@ -13,6 +13,8 @@ pub enum ConsumerState {
 
 impl Default for ConsumerState {
     fn default() -> Self {
-        Self::Processing { from_consumer_id: None }
+        Self::Processing {
+            from_consumer_id: None,
+        }
     }
 }

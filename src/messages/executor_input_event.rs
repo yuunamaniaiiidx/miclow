@@ -1,5 +1,5 @@
-use crate::messages::message_id::MessageId;
 use crate::consumer::ConsumerId;
+use crate::messages::message_id::MessageId;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use std::sync::Arc;

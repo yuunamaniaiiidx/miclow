@@ -1,8 +1,8 @@
+use crate::channels::TopicNotificationSender;
+use crate::consumer::ConsumerId;
 use crate::messages::ExecutorOutputEvent;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
-use crate::consumer::ConsumerId;
-use crate::channels::TopicNotificationSender;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -54,7 +54,11 @@ impl TopicSubscriptionRegistry {
                     .entry(topic_owned.clone())
                     .or_insert_with(VecDeque::new);
                 let before_len = queue.len();
-                log::debug!("store_message push: topic_str={:?}, before_len={:?}", topic_str, before_len);
+                log::debug!(
+                    "store_message push: topic_str={:?}, before_len={:?}",
+                    topic_str,
+                    before_len
+                );
                 queue.push_back(event);
                 let mut removed_count = 0;
                 if let Some(max_size) = self.max_log_size {
@@ -64,11 +68,15 @@ impl TopicSubscriptionRegistry {
                     }
                 }
                 let after_len = queue.len();
-                log::debug!("store_message push: topic_str={:?}, after_len={:?}", topic_str, after_len);
+                log::debug!(
+                    "store_message push: topic_str={:?}, after_len={:?}",
+                    topic_str,
+                    after_len
+                );
                 // messagesのwriteロックをここで解放
                 removed_count
             };
-            
+
             // トピックが追加された際は常に通知
             let senders = self.topic_notification_senders.read().await;
             for sender in senders.iter() {
@@ -103,21 +111,27 @@ impl TopicSubscriptionRegistry {
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
         let key = (subscription_id, topic.clone());
-        
+
         // カーソル位置を取得（readロックのみ）
         let cursor = {
             let cursors = self.message_cursors.read().await;
             cursors.get(&key).copied().unwrap_or(0)
         };
-        
+
         // メッセージを読み取ってクローン（readロックのみ、最小限の保持時間）
         let result = {
             let messages = self.messages.read().await;
             let queue = messages.get(&topic)?;
             let queue_len = queue.len();
-            
-            log::debug!("called pop_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
-            
+
+            log::debug!(
+                "called pop_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}",
+                key,
+                key.1.as_str(),
+                cursor,
+                queue_len
+            );
+
             if cursor < queue_len {
                 Some(queue[cursor].clone())
             } else {
@@ -125,15 +139,19 @@ impl TopicSubscriptionRegistry {
                 return None;
             }
         };
-        
+
         // カーソル更新のためにwriteロックを取得（メッセージのロックは既に解放済み）
         if result.is_some() {
             let mut cursors = self.message_cursors.write().await;
             let cursor_entry = cursors.entry(key.clone()).or_insert(0);
             *cursor_entry += 1;
-            log::debug!("pop_message: key={:?}, popped_ok, new_cursor={:?}", key, cursor_entry);
+            log::debug!(
+                "pop_message: key={:?}, popped_ok, new_cursor={:?}",
+                key,
+                cursor_entry
+            );
         }
-        
+
         result
     }
 
@@ -143,20 +161,26 @@ impl TopicSubscriptionRegistry {
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
         let key = (subscription_id, topic.clone());
-        
+
         // カーソル位置を取得（readロックのみ、最小限の保持時間）
         let cursor = {
             let cursors = self.message_cursors.read().await;
             cursors.get(&key).copied().unwrap_or(0)
         };
-        
+
         // メッセージを読み取ってクローン（readロックのみ、最小限の保持時間）
         let messages = self.messages.read().await;
         let queue = messages.get(&topic)?;
         let queue_len = queue.len();
-        
-        log::debug!("called peek_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
-        
+
+        log::debug!(
+            "called peek_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}",
+            key,
+            key.1.as_str(),
+            cursor,
+            queue_len
+        );
+
         if cursor < queue_len {
             let result = queue[cursor].clone();
             log::debug!("peek_message: key={:?}, peeked_ok", key);
@@ -167,16 +191,17 @@ impl TopicSubscriptionRegistry {
         }
     }
 
-    pub async fn latest_message(
-        &self,
-        topic: Topic,
-    ) -> Option<ExecutorOutputEvent> {
+    pub async fn latest_message(&self, topic: Topic) -> Option<ExecutorOutputEvent> {
         // readロックでメッセージを読み取る（最新のメッセージを取得）
         let messages = self.messages.read().await;
         let queue = messages.get(&topic)?;
-        
-        log::debug!("called latest_message: topic_str={:?}, queue_len={:?}", topic.as_str(), queue.len());
-        
+
+        log::debug!(
+            "called latest_message: topic_str={:?}, queue_len={:?}",
+            topic.as_str(),
+            queue.len()
+        );
+
         if let Some(latest) = queue.back() {
             let result = latest.clone();
             log::debug!("latest_message: topic_str={:?}, latest_ok", topic.as_str());
@@ -204,11 +229,14 @@ impl TopicSubscriptionRegistry {
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {
             let mut responses = self.responses.write().await;
             let key = (consumer_id, topic_owned);
-            let queue = responses
-                .entry(key.clone())
-                .or_insert_with(VecDeque::new);
+            let queue = responses.entry(key.clone()).or_insert_with(VecDeque::new);
             let before_len = queue.len();
-            log::debug!("store_response push: key={:?}, topic_str={:?}, before_len={:?}", key, key.1.as_str(), before_len);
+            log::debug!(
+                "store_response push: key={:?}, topic_str={:?}, before_len={:?}",
+                key,
+                key.1.as_str(),
+                before_len
+            );
             queue.push_back(event);
             if let Some(max_size) = self.max_log_size {
                 while queue.len() > max_size {
@@ -216,7 +244,11 @@ impl TopicSubscriptionRegistry {
                 }
             }
             let after_len = queue.len();
-            log::debug!("store_response push: key={:?}, after_len={:?}", key, after_len);
+            log::debug!(
+                "store_response push: key={:?}, after_len={:?}",
+                key,
+                after_len
+            );
         }
         Ok(())
     }
@@ -228,13 +260,22 @@ impl TopicSubscriptionRegistry {
     ) -> Option<ExecutorOutputEvent> {
         let mut responses = self.responses.write().await;
         let key = (consumer_id, topic);
-        log::debug!("pop_response called: key={:?}, topic_str={:?}", key, key.1.as_str());
+        log::debug!(
+            "pop_response called: key={:?}, topic_str={:?}",
+            key,
+            key.1.as_str()
+        );
 
         let queue = responses.get_mut(&key)?;
-        
+
         let before_len = queue.len();
-        log::debug!("called pop_response: key={:?}, topic_str={:?}, before_len={:?}", key, key.1.as_str(), before_len);
-        
+        log::debug!(
+            "called pop_response: key={:?}, topic_str={:?}, before_len={:?}",
+            key,
+            key.1.as_str(),
+            before_len
+        );
+
         let result = queue.pop_front();
         // 空になったキューを削除
         if queue.is_empty() {

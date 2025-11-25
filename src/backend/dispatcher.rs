@@ -8,7 +8,11 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait TaskBackend: Send + Sync {
-    async fn spawn(&self, consumer_id: ConsumerId, subscription_id: SubscriptionId) -> Result<TaskBackendHandle, Error>;
+    async fn spawn(
+        &self,
+        consumer_id: ConsumerId,
+        subscription_id: SubscriptionId,
+    ) -> Result<TaskBackendHandle, Error>;
 }
 
 #[derive(Debug, Clone)]
@@ -19,7 +23,11 @@ pub enum ProtocolBackend {
 
 #[async_trait]
 impl TaskBackend for ProtocolBackend {
-    async fn spawn(&self, consumer_id: ConsumerId, subscription_id: SubscriptionId) -> Result<TaskBackendHandle, Error> {
+    async fn spawn(
+        &self,
+        consumer_id: ConsumerId,
+        subscription_id: SubscriptionId,
+    ) -> Result<TaskBackendHandle, Error> {
         match self {
             ProtocolBackend::MiclowStdIO(config) => {
                 spawn_miclow_stdio_protocol(config, consumer_id, subscription_id).await

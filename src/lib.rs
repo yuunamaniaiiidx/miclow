@@ -1,11 +1,11 @@
 pub mod backend;
 pub mod channels;
 pub mod config;
+pub mod consumer;
 pub mod coordinator;
 pub mod logging;
 pub mod messages;
 pub mod miclow;
-pub mod consumer;
-pub mod shutdown_registry;
+pub mod shutdown_manager;
 pub mod subscription;
 pub mod topic;

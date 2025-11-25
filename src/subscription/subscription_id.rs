@@ -14,4 +14,3 @@ impl std::fmt::Display for SubscriptionId {
         write!(f, "{}", self.0)
     }
 }
-

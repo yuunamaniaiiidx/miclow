@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use crate::channels::UserLogSender;
 use crate::config::SystemConfig;
-use crate::subscription::{ConsumerStartContext, SubscriptionController, SubscriptionId, SubscriptionSpec};
+use crate::subscription::{
+    ConsumerStartContext, SubscriptionController, SubscriptionId, SubscriptionSpec,
+};
 use crate::topic::TopicSubscriptionRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -54,7 +56,8 @@ impl CoordinatorManager {
                 task.name.as_ref(),
                 task.lifecycle.desired_instances
             );
-            self.subscriptions.insert(task.name.clone(), subscription_id);
+            self.subscriptions
+                .insert(task.name.clone(), subscription_id);
         }
     }
 

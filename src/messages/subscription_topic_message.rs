@@ -8,4 +8,3 @@ pub struct SubscriptionTopicMessage {
     pub data: Option<Arc<str>>,
     pub from_subscription_id: SubscriptionId,
 }
-

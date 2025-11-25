@@ -1,5 +1,5 @@
-use crate::messages::message_id::MessageId;
 use crate::consumer::ConsumerId;
+use crate::messages::message_id::MessageId;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use std::sync::Arc;
@@ -70,7 +70,11 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_task_stdout(message_id: MessageId, consumer_id: ConsumerId, data: impl Into<Arc<str>>) -> Self {
+    pub fn new_task_stdout(
+        message_id: MessageId,
+        consumer_id: ConsumerId,
+        data: impl Into<Arc<str>>,
+    ) -> Self {
         Self::Stdout {
             message_id,
             consumer_id,
@@ -78,7 +82,11 @@ impl ExecutorOutputEvent {
         }
     }
 
-    pub fn new_task_stderr(message_id: MessageId, consumer_id: ConsumerId, data: impl Into<Arc<str>>) -> Self {
+    pub fn new_task_stderr(
+        message_id: MessageId,
+        consumer_id: ConsumerId,
+        data: impl Into<Arc<str>>,
+    ) -> Self {
         Self::Stderr {
             message_id,
             consumer_id,
@@ -104,14 +112,19 @@ impl ExecutorOutputEvent {
 
     pub fn from_subscription_id(&self) -> Option<&SubscriptionId> {
         match self {
-            Self::Topic { from_subscription_id, .. } => Some(from_subscription_id),
+            Self::Topic {
+                from_subscription_id,
+                ..
+            } => Some(from_subscription_id),
             _ => None,
         }
     }
 
     pub fn to_subscription_id(&self) -> Option<&SubscriptionId> {
         match self {
-            Self::Topic { to_subscription_id, .. } => to_subscription_id.as_ref(),
+            Self::Topic {
+                to_subscription_id, ..
+            } => to_subscription_id.as_ref(),
             _ => None,
         }
     }

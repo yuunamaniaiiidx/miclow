@@ -332,9 +332,22 @@ args = ["main"]
             2,
             "Should have 2 tasks (1 from main file + 1 from include file)"
         );
-        assert_eq!(config.tasks.get(&Arc::from("main_task")).unwrap().name.as_ref(), "main_task");
         assert_eq!(
-            config.tasks.get(&Arc::from("test_function")).unwrap().name.as_ref(),
+            config
+                .tasks
+                .get(&Arc::from("main_task"))
+                .unwrap()
+                .name
+                .as_ref(),
+            "main_task"
+        );
+        assert_eq!(
+            config
+                .tasks
+                .get(&Arc::from("test_function"))
+                .unwrap()
+                .name
+                .as_ref(),
             "test_function"
         );
     }

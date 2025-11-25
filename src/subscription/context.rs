@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use crate::backend::ProtocolBackend;
 use crate::channels::UserLogSender;
 use crate::topic::TopicSubscriptionRegistry;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ConsumerStartContext {

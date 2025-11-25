@@ -3,9 +3,9 @@ use crate::backend::miclowstdio::config::MiclowStdIOConfig;
 use crate::backend::TaskBackendHandle;
 use crate::channels::{ExecutorInputEventChannel, ExecutorInputEventReceiver, ShutdownChannel};
 use crate::channels::{ExecutorOutputEventChannel, ExecutorOutputEventSender};
+use crate::consumer::ConsumerId;
 use crate::messages::MessageId;
 use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent};
-use crate::consumer::ConsumerId;
 use crate::subscription::SubscriptionId;
 use anyhow::{Error, Result};
 #[cfg(unix)]
@@ -74,12 +74,10 @@ impl<'a> ExecutorInputEventStdio<'a> {
 
     fn to_input_lines_raw(&self) -> Vec<String> {
         match self.event {
-            ExecutorInputEvent::Topic { data, .. } => {
-                match data {
-                    Some(data) => Self::lines_from(data.as_ref()),
-                    None => vec!["0".to_string()],
-                }
-            }
+            ExecutorInputEvent::Topic { data, .. } => match data {
+                Some(data) => Self::lines_from(data.as_ref()),
+                None => vec!["0".to_string()],
+            },
         }
     }
 

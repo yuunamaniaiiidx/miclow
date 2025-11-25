@@ -28,9 +28,7 @@ impl BackendConfigMeta for InteractiveConfig {
 }
 
 // Interactiveプロトコルで許可されているフィールド
-const ALLOWED_INTERACTIVE_FIELDS: &[&str] = &[
-    "stdout_topic",
-];
+const ALLOWED_INTERACTIVE_FIELDS: &[&str] = &["stdout_topic"];
 
 fn validate_protocol_fields(
     config: &ExpandedTaskConfig,
@@ -38,13 +36,13 @@ fn validate_protocol_fields(
     protocol_name: &str,
 ) -> Result<(), anyhow::Error> {
     let mut invalid_fields = Vec::new();
-    
+
     for (key, _) in &config.protocol_config {
         if !allowed_fields.contains(&key.as_str()) {
             invalid_fields.push(key.clone());
         }
     }
-    
+
     if !invalid_fields.is_empty() {
         return Err(anyhow::anyhow!(
             "Task '{}' (protocol: {}) has invalid field(s): {}. Allowed fields: {}",
@@ -54,7 +52,7 @@ fn validate_protocol_fields(
             allowed_fields.join(", ")
         ));
     }
-    
+
     Ok(())
 }
 
@@ -63,7 +61,7 @@ pub fn try_interactive_from_expanded_config(
 ) -> Result<InteractiveConfig, anyhow::Error> {
     // 無効なフィールドをチェック
     validate_protocol_fields(config, ALLOWED_INTERACTIVE_FIELDS, "Interactive")?;
-    
+
     // InteractiveProtocol用のシステム入力トピック: stdout_topicが未設定の場合は"system"を使用
     let system_input_topic: String = config
         .expand("stdout_topic")

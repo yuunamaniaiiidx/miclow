@@ -108,9 +108,7 @@ pub fn expand_variables(value: &str, context: &ExpandContext) -> Result<String> 
         let var_value = context.get_var(var_name);
 
         let replacement = match var_value {
-            Some(value) if !value.is_empty() => {
-                value
-            }
+            Some(value) if !value.is_empty() => value,
             Some(value) => {
                 if treat_empty_as_unset {
                     if let Some(default) = default_value {

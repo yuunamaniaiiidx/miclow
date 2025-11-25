@@ -1,26 +1,25 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ExecutorInputEventSender, ConsumerEventSender, SubscriptionTopicReceiver,
-    ShutdownSender, UserLogSender, TopicNotificationReceiver,
+    ConsumerEventSender, ExecutorInputEventSender, ShutdownSender, SubscriptionTopicReceiver,
+    TopicNotificationReceiver, UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::messages::MessageId;
 use crate::messages::{
-    ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage, SystemCommand,
+    ConsumerEvent, ExecutorInputEvent, ExecutorOutputEvent, SubscriptionTopicMessage, SystemCommand,
 };
-use crate::shutdown_registry::TaskHandle;
+use crate::shutdown_manager::{TaskController, TaskHandle};
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use super::consumer_id::ConsumerId;
 
 pub struct ConsumerSpawnHandler {
     pub consumer_id: ConsumerId,
-    pub worker_handle: Arc<JoinHandle<()>>,
+    pub worker_task: TaskController,
     pub input_sender: ExecutorInputEventSender,
     pub shutdown_sender: ShutdownSender,
 }
@@ -73,16 +72,26 @@ impl ConsumerSpawner {
         let view_stdout = self.view_stdout;
         let view_stderr = self.view_stderr;
 
-        let mut backend_handle = backend.spawn(consumer_id.clone(), subscription_id.clone()).await.map_err(|e| {
-            log::error!("Failed to spawn consumer backend for consumer {}: {}", consumer_id, e);
-            format!("Failed to spawn backend for consumer {}: {}", consumer_id, e)
-        })?;
+        let mut backend_handle = backend
+            .spawn(consumer_id.clone(), subscription_id.clone())
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to spawn consumer backend for consumer {}: {}",
+                    consumer_id,
+                    e
+                );
+                format!(
+                    "Failed to spawn backend for consumer {}: {}",
+                    consumer_id, e
+                )
+            })?;
 
         let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
 
         let consumer_task_name = format!("consumer_{}", consumer_id);
-        let worker_handle = task_handle.run(consumer_task_name, {
+        let worker_task = task_handle.run(consumer_task_name, move |_task_token| {
             let consumer_id = consumer_id.clone();
             let consumer_name = consumer_name.clone();
             let userlog_sender = userlog_sender.clone();
@@ -267,11 +276,12 @@ impl ConsumerSpawner {
 
                 log::info!("Consumer {} completed", consumer_id);
             }
-        }).map_err(|e| format!("Failed to spawn consumer task: {}", e))?;
+        })
+        .map_err(|e| format!("Failed to spawn consumer task: {}", e))?;
 
         Ok(ConsumerSpawnHandler {
             consumer_id: handler_consumer_id,
-            worker_handle,
+            worker_task,
             input_sender: input_sender_for_external,
             shutdown_sender: shutdown_sender_for_external,
         })

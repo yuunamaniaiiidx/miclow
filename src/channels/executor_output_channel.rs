@@ -1,6 +1,6 @@
-use crate::messages::MessageId;
-use crate::messages::ExecutorOutputEvent;
 use crate::consumer::ConsumerId;
+use crate::messages::ExecutorOutputEvent;
+use crate::messages::MessageId;
 use anyhow::Result;
 use tokio::sync::mpsc;
 
@@ -27,7 +27,11 @@ impl ExecutorOutputEventSender {
         consumer_id: ConsumerId,
         error: String,
     ) -> Result<(), mpsc::error::SendError<ExecutorOutputEvent>> {
-        self.send(ExecutorOutputEvent::new_error(message_id, consumer_id, error))
+        self.send(ExecutorOutputEvent::new_error(
+            message_id,
+            consumer_id,
+            error,
+        ))
     }
 
     pub fn send_exit(

@@ -67,4 +67,3 @@ impl std::fmt::Display for Topic {
         write!(f, "{}", self.name)
     }
 }
-

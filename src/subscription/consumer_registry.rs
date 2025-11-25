@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::channels::SubscriptionTopicSender;
 use crate::consumer::{ConsumerId, ConsumerSpawnHandler, ConsumerState};
 use crate::topic::Topic;
+use std::collections::HashMap;
 
 pub struct ManagedConsumer {
     pub handler: ConsumerSpawnHandler,
@@ -87,7 +87,9 @@ impl ConsumerRegistry {
     pub fn set_consumer_processing(&mut self, consumer_id: &ConsumerId) {
         if let Some(consumer) = self.consumers.get_mut(consumer_id) {
             if matches!(consumer.state, ConsumerState::Requesting { .. }) {
-                consumer.state = ConsumerState::Processing { from_consumer_id: None };
+                consumer.state = ConsumerState::Processing {
+                    from_consumer_id: None,
+                };
                 self.idle_count = self.idle_count.saturating_sub(1);
             }
         }
@@ -152,4 +154,3 @@ impl ConsumerRegistry {
         std::mem::take(&mut self.consumers)
     }
 }
-

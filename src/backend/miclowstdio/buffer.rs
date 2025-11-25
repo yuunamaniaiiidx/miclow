@@ -181,8 +181,7 @@ pub fn parse_line(input_raw: &str) -> Result<LineParseResult, String> {
                     return Ok(LineParseResult::MultilineEnd { topic });
                 }
             }
-            Err(_) => {
-            }
+            Err(_) => {}
         }
     }
     if input.starts_with("::") {
@@ -232,9 +231,10 @@ pub fn consume_stream_line(
         }
     } else {
         match parse_line(line)? {
-            LineParseResult::SingleLine { topic, value } => {
-                Ok(StreamOutcome::Emit { topic: Arc::from(topic), data: Arc::from(value) })
-            }
+            LineParseResult::SingleLine { topic, value } => Ok(StreamOutcome::Emit {
+                topic: Arc::from(topic),
+                data: Arc::from(value),
+            }),
             LineParseResult::MultilineStart { topic } => {
                 buffer.start(topic);
                 Ok(StreamOutcome::None)
