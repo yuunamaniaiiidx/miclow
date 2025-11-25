@@ -5,7 +5,9 @@ use crate::channels::{
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::messages::MessageId;
-use crate::messages::{ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage};
+use crate::messages::{
+    ExecutorInputEvent, ExecutorOutputEvent, ConsumerEvent, SubscriptionTopicMessage, SystemCommand,
+};
 use crate::shutdown_registry::TaskHandle;
 use crate::subscription::SubscriptionId;
 use crate::topic::Topic;
@@ -127,31 +129,31 @@ impl ConsumerSpawner {
                                                 );
                                             }
 
-                                            let topic_command = topic.as_str();
-                                            if topic_command == "system.pop_await" {
-                                                let awaited_topic = Topic::from(data.as_ref().trim());
-                                                waiting_topics.insert(awaited_topic.clone());
-                                                if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
-                                                    consumer_id: consumer_id.clone(),
-                                                    topic: awaited_topic,
-                                                }) {
-                                                    log::warn!(
-                                                        "Failed to send system.pop_await converted pull for '{}': {}",
-                                                        consumer_id,
-                                                        e
-                                                    );
+                                            if let Some(system_command) = SystemCommand::parse(topic.as_str(), &data) {
+                                                if let SystemCommand::PopAwait(awaited_topic) = &system_command {
+                                                    waiting_topics.insert(awaited_topic.clone());
+                                                    if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerRequesting {
+                                                        consumer_id: consumer_id.clone(),
+                                                        topic: awaited_topic.clone(),
+                                                    }) {
+                                                        log::warn!(
+                                                            "Failed to send system.pop_await converted pull for '{}': {}",
+                                                            consumer_id,
+                                                            e
+                                                        );
+                                                    }
                                                 }
-                                            } else if let Some(event) = ConsumerEvent::from_system_command(
-                                                consumer_id.clone(),
-                                                topic_command,
-                                                &data,
-                                            ) {
-                                                if let Err(e) = consumer_event_sender.send(event) {
-                                                    log::warn!(
-                                                        "Failed to send system command event for '{}': {}",
-                                                        consumer_id,
-                                                        e
-                                                    );
+                                                if let Some(event) = ConsumerEvent::from_system_command(
+                                                    consumer_id.clone(),
+                                                    &system_command,
+                                                ) {
+                                                    if let Err(e) = consumer_event_sender.send(event) {
+                                                        log::warn!(
+                                                            "Failed to send system command event for '{}': {}",
+                                                            consumer_id,
+                                                            e
+                                                        );
+                                                    }
                                                 }
                                             }
                                         },

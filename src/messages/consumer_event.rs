@@ -1,5 +1,5 @@
-use crate::messages::message_id::MessageId;
 use crate::consumer::ConsumerId;
+use crate::messages::{message_id::MessageId, system_command::SystemCommand};
 use crate::topic::Topic;
 use std::sync::Arc;
 
@@ -33,33 +33,26 @@ pub enum ConsumerEvent {
 }
 
 impl ConsumerEvent {
-    /// システムコマンド文字列からConsumerEventを生成する
-    /// 
-    /// 例:
-    /// - "system.pull:call" -> ConsumerRequesting { topic: "call" }
-    /// - "system.peek:call" -> ConsumerPeekRequesting { topic: "call" }
-    /// - "system.latest:call" -> ConsumerLatestRequesting { topic: "call" }
-    /// - "system.result:call.result" -> ConsumerResultRequesting { topic: "call.result" }
-    pub fn from_system_command(consumer_id: ConsumerId, command: &str, topic_data: &str) -> Option<Self> {
-        let topic = Topic::from(topic_data.trim());
+    /// SystemCommand から ConsumerEvent へ変換
+    pub fn from_system_command(consumer_id: ConsumerId, command: &SystemCommand) -> Option<Self> {
         match command {
-            "system.pull" => Some(ConsumerEvent::ConsumerRequesting {
+            SystemCommand::Pull(topic) => Some(ConsumerEvent::ConsumerRequesting {
                 consumer_id,
-                topic,
+                topic: topic.clone(),
             }),
-            "system.peek" => Some(ConsumerEvent::ConsumerPeekRequesting {
+            SystemCommand::Peek(topic) => Some(ConsumerEvent::ConsumerPeekRequesting {
                 consumer_id,
-                topic,
+                topic: topic.clone(),
             }),
-            "system.latest" => Some(ConsumerEvent::ConsumerLatestRequesting {
+            SystemCommand::Latest(topic) => Some(ConsumerEvent::ConsumerLatestRequesting {
                 consumer_id,
-                topic,
+                topic: topic.clone(),
             }),
-            "system.result" => Some(ConsumerEvent::ConsumerResultRequesting {
+            SystemCommand::Result(topic) => Some(ConsumerEvent::ConsumerResultRequesting {
                 consumer_id,
-                topic,
+                topic: topic.clone(),
             }),
-            _ => None,
+            SystemCommand::PopAwait(_) => None,
         }
     }
 }
