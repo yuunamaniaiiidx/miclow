@@ -1,7 +1,7 @@
 use crate::backend::{ProtocolBackend, TaskBackend};
 use crate::channels::{
-    ConsumerEventSender, ExecutorInputEventSender, ShutdownSender, SubscriptionTopicReceiver,
-    TopicNotificationReceiver, UserLogSender,
+    ConsumerEventSender, ShutdownSender, SubscriptionTopicReceiver, TopicNotificationReceiver,
+    UserLogSender,
 };
 use crate::logging::{UserLogEvent, UserLogKind};
 use crate::messages::MessageId;
@@ -20,7 +20,6 @@ use super::consumer_id::ConsumerId;
 pub struct ConsumerSpawnHandler {
     pub consumer_id: ConsumerId,
     pub worker_task: TaskController,
-    pub input_sender: ExecutorInputEventSender,
     pub shutdown_sender: ShutdownSender,
 }
 
@@ -87,7 +86,6 @@ impl ConsumerSpawner {
                 )
             })?;
 
-        let input_sender_for_external = backend_handle.input_sender.clone();
         let shutdown_sender_for_external = backend_handle.shutdown_sender.clone();
 
         let consumer_task_name = format!("consumer_{}", consumer_id);
@@ -282,7 +280,6 @@ impl ConsumerSpawner {
         Ok(ConsumerSpawnHandler {
             consumer_id: handler_consumer_id,
             worker_task,
-            input_sender: input_sender_for_external,
             shutdown_sender: shutdown_sender_for_external,
         })
     }
