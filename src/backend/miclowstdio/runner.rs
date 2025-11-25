@@ -135,7 +135,7 @@ pub async fn spawn_miclow_stdio_protocol(
             }
         }
 
-        command_builder.env("MICLOW_POD_ID", consumer_id.to_string());
+        command_builder.env("MICLOW_CONSUMER_ID", consumer_id.to_string());
 
         let mut child = match command_builder
             .stdout(Stdio::piped())
