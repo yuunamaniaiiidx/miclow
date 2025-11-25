@@ -36,7 +36,7 @@ impl ConsumerEvent {
     /// SystemCommand から ConsumerEvent へ変換
     pub fn from_system_command(consumer_id: ConsumerId, command: &SystemCommand) -> Option<Self> {
         match command {
-            SystemCommand::Pull(topic) => Some(ConsumerEvent::ConsumerRequesting {
+            SystemCommand::Pop(topic) => Some(ConsumerEvent::ConsumerRequesting {
                 consumer_id,
                 topic: topic.clone(),
             }),

@@ -13,9 +13,9 @@ desired_instances = 1
 
 [[tasks]]
 protocol = "MiclowStdIO"
-task_name = "pull"
+task_name = "pop"
 command = "uv"
-args = ["run", "pull.py"]
+args = ["run", "pop.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
 view_stdout = true

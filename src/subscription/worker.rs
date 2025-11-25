@@ -210,11 +210,11 @@ impl SubscriptionWorker {
                             }
                         }
                         Some(ConsumerEvent::ConsumerRequesting { consumer_id, topic: requested_topic }) => {
-                            log::debug!("worker: pull_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            log::debug!("worker: pop_message event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
                             
-                            let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pull_message(
+                            let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pop_message(
                                 subscription_id.clone(),
                                 requested_topic.clone(),
                             ).await {
@@ -236,7 +236,7 @@ impl SubscriptionWorker {
                                 
                                 if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
-                                        "Subscription {} failed to send pulled data to consumer {}: {}",
+                                        "Subscription {} failed to send popped data to consumer {}: {}",
                                         subscription_id,
                                         consumer_id,
                                         e
@@ -251,18 +251,18 @@ impl SubscriptionWorker {
                                 }
                             } else {
                                 log::warn!(
-                                    "Subscription {} consumer {} not found when sending pull response",
+                                    "Subscription {} consumer {} not found when sending pop response",
                                     subscription_id,
                                     consumer_id
                                 );
                             }
                         }
                         Some(ConsumerEvent::ConsumerResultRequesting { consumer_id, topic: requested_topic }) => {
-                            log::debug!("worker: pull_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
+                            log::debug!("worker: pop_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());
                             
-                            let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pull_response(
+                            let (data, from_consumer_id) = if let Some(topic_event) = topic_manager.pop_response(
                                 consumer_id.clone(),
                                 requested_topic.clone(),
                             ).await {
@@ -284,7 +284,7 @@ impl SubscriptionWorker {
                                 
                                 if let Err(e) = consumer.topic_sender.send(subscription_message) {
                                     log::warn!(
-                                        "Subscription {} failed to send pulled result to consumer {}: {}",
+                                        "Subscription {} failed to send popped result to consumer {}: {}",
                                         subscription_id,
                                         consumer_id,
                                         e

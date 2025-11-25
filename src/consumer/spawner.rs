@@ -137,7 +137,7 @@ impl ConsumerSpawner {
                                                         topic: awaited_topic.clone(),
                                                     }) {
                                                         log::warn!(
-                                                            "Failed to send system.pop_await converted pull for '{}': {}",
+                                                        "Failed to send system.pop_await converted pop for '{}': {}",
                                                             consumer_id,
                                                             e
                                                         );
@@ -234,7 +234,7 @@ impl ConsumerSpawner {
                                 Some(topic) => {
                                     if waiting_topics.contains(&topic) {
                                         log::debug!(
-                                            "Consumer {} received notification for awaited topic '{}', issuing pull",
+                                            "Consumer {} received notification for awaited topic '{}', issuing pop",
                                             consumer_id,
                                             topic
                                         );
@@ -243,7 +243,7 @@ impl ConsumerSpawner {
                                             topic: topic.clone(),
                                         }) {
                                             log::warn!(
-                                                "Failed to send pull request from topic notification for '{}': {}",
+                                                "Failed to send pop request from topic notification for '{}': {}",
                                                 consumer_id,
                                                 e
                                             );

@@ -1,3 +1,3 @@
-print('"system.pull": apply')
+print('"system.pop": apply')
 for _ in range(int(input())):
     print(input())

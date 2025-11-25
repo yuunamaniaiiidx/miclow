@@ -97,7 +97,7 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
-    pub async fn pull_message(
+    pub async fn pop_message(
         &self,
         subscription_id: SubscriptionId,
         topic: Topic,
@@ -116,12 +116,12 @@ impl TopicSubscriptionRegistry {
             let queue = messages.get(&topic)?;
             let queue_len = queue.len();
             
-            log::debug!("called pull_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
+            log::debug!("called pop_message: key={:?}, topic_str={:?}, cursor={:?}, queue_len={:?}", key, key.1.as_str(), cursor, queue_len);
             
             if cursor < queue_len {
                 Some(queue[cursor].clone())
             } else {
-                log::debug!("pull_message: key={:?}, no_data", key);
+                log::debug!("pop_message: key={:?}, no_data", key);
                 return None;
             }
         };
@@ -131,7 +131,7 @@ impl TopicSubscriptionRegistry {
             let mut cursors = self.message_cursors.write().await;
             let cursor_entry = cursors.entry(key.clone()).or_insert(0);
             *cursor_entry += 1;
-            log::debug!("pull_message: key={:?}, pulled_ok, new_cursor={:?}", key, cursor_entry);
+            log::debug!("pop_message: key={:?}, popped_ok, new_cursor={:?}", key, cursor_entry);
         }
         
         result
@@ -221,19 +221,19 @@ impl TopicSubscriptionRegistry {
         Ok(())
     }
 
-    pub async fn pull_response(
+    pub async fn pop_response(
         &self,
         consumer_id: ConsumerId,
         topic: Topic,
     ) -> Option<ExecutorOutputEvent> {
         let mut responses = self.responses.write().await;
         let key = (consumer_id, topic);
-        log::debug!("pull_response called: key={:?}, topic_str={:?}", key, key.1.as_str());
+        log::debug!("pop_response called: key={:?}, topic_str={:?}", key, key.1.as_str());
 
         let queue = responses.get_mut(&key)?;
         
         let before_len = queue.len();
-        log::debug!("called pull_response: key={:?}, topic_str={:?}, before_len={:?}", key, key.1.as_str(), before_len);
+        log::debug!("called pop_response: key={:?}, topic_str={:?}, before_len={:?}", key, key.1.as_str(), before_len);
         
         let result = queue.pop_front();
         // 空になったキューを削除
@@ -241,8 +241,8 @@ impl TopicSubscriptionRegistry {
             responses.remove(&key);
         }
         match &result {
-            Some(_) => log::debug!("pull_response: key={:?}, pulled_ok", key),
-            None => log::debug!("pull_response: key={:?}, no_data", key),
+            Some(_) => log::debug!("pop_response: key={:?}, popped_ok", key),
+            None => log::debug!("pop_response: key={:?}, no_data", key),
         }
         result
     }

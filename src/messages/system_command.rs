@@ -2,7 +2,7 @@ use crate::topic::Topic;
 
 #[derive(Debug, Clone)]
 pub enum SystemCommand {
-    Pull(Topic),
+    Pop(Topic),
     Peek(Topic),
     Latest(Topic),
     Result(Topic),
@@ -17,7 +17,7 @@ impl SystemCommand {
         }
         let topic = Topic::from(trimmed);
         match command_topic {
-            "system.pull" => Some(Self::Pull(topic)),
+            "system.pop" => Some(Self::Pop(topic)),
             "system.peek" => Some(Self::Peek(topic)),
             "system.latest" => Some(Self::Latest(topic)),
             "system.result" => Some(Self::Result(topic)),
@@ -28,7 +28,7 @@ impl SystemCommand {
 
     pub fn topic(&self) -> &Topic {
         match self {
-            Self::Pull(topic)
+            Self::Pop(topic)
             | Self::Peek(topic)
             | Self::Latest(topic)
             | Self::Result(topic)
