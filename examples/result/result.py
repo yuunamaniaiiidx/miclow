@@ -1,6 +1,6 @@
 data = ""
 while data == "":
-    print('"system.pull": call')
+    print('"system.pop": call')
     data = "".join(input() for _ in range(int(input())))
 
 print('"call.result"::')
