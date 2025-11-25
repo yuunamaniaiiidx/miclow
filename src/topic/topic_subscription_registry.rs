@@ -223,7 +223,7 @@ impl TopicSubscriptionRegistry {
                 return Err("Event does not contain a topic".to_string());
             }
         };
-        if topic_owned.as_str() == "system.result" {
+        if topic_owned.as_str() == "system.return" {
             return Ok(());
         }
         if matches!(event, ExecutorOutputEvent::Topic { .. }) {

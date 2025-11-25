@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-const RESULT_TOPIC_SUFFIX: &str = ".result";
+const RESULT_TOPIC_PREFIX: &str = "return.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Topic {
@@ -21,16 +21,16 @@ impl Topic {
     }
 
     pub fn result(&self) -> Topic {
-        Topic::new(format!("{}{}", self.name, RESULT_TOPIC_SUFFIX))
+        Topic::new(format!("{}{}", RESULT_TOPIC_PREFIX, self.name))
     }
 
     pub fn is_result(&self) -> bool {
-        self.name.ends_with(RESULT_TOPIC_SUFFIX)
+        self.name.starts_with(RESULT_TOPIC_PREFIX)
     }
 
     pub fn original(&self) -> Option<Topic> {
         if self.is_result() {
-            let original_name = self.name.strip_suffix(RESULT_TOPIC_SUFFIX)?;
+            let original_name = self.name.strip_prefix(RESULT_TOPIC_PREFIX)?;
             Some(Topic::new(Arc::from(original_name)))
         } else {
             None

@@ -5,7 +5,7 @@ pub enum SystemCommand {
     Pop(Topic),
     Peek(Topic),
     Latest(Topic),
-    Result(Topic),
+    Return(Topic),
     PopAwait(Topic),
 }
 
@@ -20,7 +20,7 @@ impl SystemCommand {
             "system.pop" => Some(Self::Pop(topic)),
             "system.peek" => Some(Self::Peek(topic)),
             "system.latest" => Some(Self::Latest(topic)),
-            "system.result" => Some(Self::Result(topic)),
+            "system.return" => Some(Self::Return(topic)),
             "system.pop_await" => Some(Self::PopAwait(topic)),
             _ => None,
         }
@@ -31,7 +31,7 @@ impl SystemCommand {
             Self::Pop(topic)
             | Self::Peek(topic)
             | Self::Latest(topic)
-            | Self::Result(topic)
+            | Self::Return(topic)
             | Self::PopAwait(topic) => topic,
         }
     }

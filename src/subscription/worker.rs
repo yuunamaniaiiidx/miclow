@@ -256,7 +256,7 @@ impl SubscriptionWorker {
                                 );
                             }
                         }
-                        Some(ConsumerEvent::ConsumerResultRequesting { consumer_id, topic: requested_topic }) => {
+                        Some(ConsumerEvent::ConsumerReturnRequesting { consumer_id, topic: requested_topic }) => {
                             log::debug!("worker: pop_response event branch reached: cid={:?}, topic={:?}", consumer_id, requested_topic);
                             // 状態をRequestingに設定
                             consumer_registry.set_consumer_requesting(&consumer_id, requested_topic.clone());

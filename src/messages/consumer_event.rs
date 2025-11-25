@@ -18,7 +18,7 @@ pub enum ConsumerEvent {
         consumer_id: ConsumerId,
         topic: Topic,
     },
-    ConsumerResultRequesting {
+    ConsumerReturnRequesting {
         consumer_id: ConsumerId,
         topic: Topic,
     },
@@ -48,7 +48,7 @@ impl ConsumerEvent {
                 consumer_id,
                 topic: topic.clone(),
             }),
-            SystemCommand::Result(topic) => Some(ConsumerEvent::ConsumerResultRequesting {
+            SystemCommand::Return(topic) => Some(ConsumerEvent::ConsumerReturnRequesting {
                 consumer_id,
                 topic: topic.clone(),
             }),
