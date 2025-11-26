@@ -1,0 +1,31 @@
+[[tasks]]
+protocol = "MCP"
+task_name = "mcp_server"
+view_stdout = true
+view_stderr = true
+
+[tasks.mcp]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
+tools = ["read_file", "write_file", "list_directory", "get_file_info"]
+
+[tasks.lifecycle]
+desired_instances = 1
+
+[[tasks]]
+protocol = "MiclowStdIO"
+task_name = "call1"
+view_stdout = true
+view_stderr = true
+
+[tasks.command]
+command = "python3"
+args = ["call_mcp.py"]
+working_directory = "${MICLOW_CONFIG_DIR}"
+environment = { PYTHONUNBUFFERED = "1" }
+
+[tasks.lifecycle]
+desired_instances = 5
+
