@@ -1,25 +1,29 @@
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "apply"
+view_stdout = true
+view_stderr = true
+
+[tasks.command]
 command = "python3"
 args = ["apply.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
-view_stdout = true
-view_stderr = true
 
-[[tasks.lifecycle]]
+[tasks.lifecycle]
 desired_instances = 1
 
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "wait"
+view_stdout = true
+view_stderr = true
+
+[tasks.command]
 command = "python3"
 args = ["wait.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
-view_stdout = true
-view_stderr = true
 
-[[tasks.lifecycle]]
+[tasks.lifecycle]
 desired_instances = 1

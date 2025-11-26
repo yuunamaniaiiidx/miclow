@@ -1,38 +1,44 @@
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "call1"
+view_stdout = true
+view_stderr = true
+
+[tasks.command]
 command = "python3"
 args = ["call1.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
-view_stdout = true
-view_stderr = true
 
-[[tasks.lifecycle]]
+[tasks.lifecycle]
 desired_instances = 5
 
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "call2"
+view_stdout = true
+view_stderr = true
+
+[tasks.command]
 command = "python3"
 args = ["call2.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
-view_stdout = true
-view_stderr = true
 
-[[tasks.lifecycle]]
+[tasks.lifecycle]
 desired_instances = 5
 
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "result"
+view_stdout = true
+view_stderr = true
+
+[tasks.command]
 command = "python3"
 args = ["result.py"]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
-view_stdout = true
-view_stderr = true
 
-[[tasks.lifecycle]]
+[tasks.lifecycle]
 desired_instances = 5

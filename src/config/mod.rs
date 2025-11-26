@@ -96,13 +96,35 @@ pub(crate) fn expand_toml_value(value: &TomlValue, context: &ExpandContext) -> R
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct RawTaskCommand {
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    working_directory: Option<String>,
+    environment: Option<HashMap<String, String>>,
+    stdout_topic: Option<String>,
+    stderr_topic: Option<String>,
+    #[serde(flatten)]
+    _unknown: HashMap<String, TomlValue>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RawTaskLifecycle {
+    desired_instances: Option<u32>,
+    mode: Option<String>,
+    #[serde(flatten)]
+    _unknown: HashMap<String, TomlValue>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct RawTaskEntry {
     task_name: String,
     protocol: String,
     view_stdout: Option<bool>,
     view_stderr: Option<bool>,
-    #[serde(default)]
-    lifecycle: Vec<LifecycleEntry>,
+    #[serde(rename = "command")]
+    command: Option<RawTaskCommand>,
+    #[serde(rename = "lifecycle")]
+    lifecycle: Option<RawTaskLifecycle>,
     #[serde(flatten)]
     protocol_config: HashMap<String, TomlValue>,
 }
@@ -127,14 +149,14 @@ impl RawSystemConfig {
         }
 
         for (key, _) in &self._unknown {
-            if key != "include_paths" && key != "tasks" && key != "tasks.lifecycle" {
+            if key != "include_paths" && key != "tasks" {
                 unknown_sections.push(key.clone());
             }
         }
 
         if !unknown_sections.is_empty() {
             return Err(anyhow::anyhow!(
-                "Unknown section(s): {}. Supported sections: [[tasks]], [[tasks.lifecycle]]",
+                "Unknown section(s): {}. Supported sections: [[tasks]]",
                 unknown_sections.join(", ")
             ));
         }
@@ -155,18 +177,42 @@ impl RawSystemConfig {
             }
         };
 
-        let lifecycle = if entry.lifecycle.is_empty() {
-            None
-        } else if entry.lifecycle.len() == 1 {
-            Some(RawLifecycleConfig::from_entry(
-                entry.lifecycle.first().cloned().unwrap(),
-            )?)
+        let lifecycle = if let Some(lifecycle_entry) = entry.lifecycle {
+            Some(RawLifecycleConfig {
+                desired_instances: lifecycle_entry.desired_instances.map(|v| TomlValue::Integer(v as i64)),
+                mode: lifecycle_entry.mode.map(|v| TomlValue::String(v)),
+            })
         } else {
-            return Err(anyhow::anyhow!(
-                "Task '{}' has multiple lifecycle blocks. Only one [[tasks.lifecycle]] entry is supported.",
-                entry.task_name
-            ));
+            None
         };
+
+        // commandセクションのフィールドをprotocol_configにマージ
+        let mut protocol_config = entry.protocol_config;
+        if let Some(cmd) = entry.command {
+            if let Some(command) = cmd.command {
+                protocol_config.insert("command".to_string(), TomlValue::String(command));
+            }
+            if let Some(args) = cmd.args {
+                let args_toml: Vec<TomlValue> = args.into_iter().map(|s| TomlValue::String(s)).collect();
+                protocol_config.insert("args".to_string(), TomlValue::Array(args_toml));
+            }
+            if let Some(working_directory) = cmd.working_directory {
+                protocol_config.insert("working_directory".to_string(), TomlValue::String(working_directory));
+            }
+            if let Some(environment) = cmd.environment {
+                let mut env_table = toml::map::Map::new();
+                for (key, value) in environment {
+                    env_table.insert(key, TomlValue::String(value));
+                }
+                protocol_config.insert("environment".to_string(), TomlValue::Table(env_table));
+            }
+            if let Some(stdout_topic) = cmd.stdout_topic {
+                protocol_config.insert("stdout_topic".to_string(), TomlValue::String(stdout_topic));
+            }
+            if let Some(stderr_topic) = cmd.stderr_topic {
+                protocol_config.insert("stderr_topic".to_string(), TomlValue::String(stderr_topic));
+            }
+        }
 
         let mut task_config = RawTaskConfig {
             name: TomlValue::String(entry.task_name.clone()),
@@ -174,7 +220,7 @@ impl RawSystemConfig {
             view_stdout: entry.view_stdout.map(|v| TomlValue::Boolean(v)),
             view_stderr: entry.view_stderr.map(|v| TomlValue::Boolean(v)),
             lifecycle,
-            protocol_config: entry.protocol_config,
+            protocol_config,
         };
 
         task_config.normalize_defaults(&entry.protocol)?;
@@ -302,6 +348,8 @@ mod tests {
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "test_function"
+
+[tasks.command]
 command = "echo"
 args = ["test"]
 "#,
@@ -318,6 +366,8 @@ include_paths = ["include.toml"]
 [[tasks]]
 protocol = "MiclowStdIO"
 task_name = "main_task"
+
+[tasks.command]
 command = "echo"
 args = ["main"]
 "#
