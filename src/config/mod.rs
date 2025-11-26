@@ -108,6 +108,17 @@ struct RawTaskCommand {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct RawTaskMCP {
+    command: Option<String>,
+    args: Option<Vec<String>>,
+    working_directory: Option<String>,
+    environment: Option<HashMap<String, String>>,
+    tools: Option<Vec<String>>,
+    #[serde(flatten)]
+    _unknown: HashMap<String, TomlValue>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct RawTaskLifecycle {
     desired_instances: Option<u32>,
     mode: Option<String>,
@@ -123,6 +134,8 @@ struct RawTaskEntry {
     view_stderr: Option<bool>,
     #[serde(rename = "command")]
     command: Option<RawTaskCommand>,
+    #[serde(rename = "mcp")]
+    mcp: Option<RawTaskMCP>,
     #[serde(rename = "lifecycle")]
     lifecycle: Option<RawTaskLifecycle>,
     #[serde(flatten)]
@@ -168,9 +181,13 @@ impl RawSystemConfig {
         let protocol_name = match entry.protocol.as_str() {
             "Interactive" => InteractiveConfig::protocol_name().to_string(),
             "MiclowStdIO" => MiclowStdIOConfig::protocol_name().to_string(),
+            "MCP" => {
+                use crate::backend::mcp::config::MCPConfig;
+                MCPConfig::protocol_name().to_string()
+            }
             _ => {
                 return Err(anyhow::anyhow!(
-                    "Unknown protocol '{}' for task '{}'. Supported protocols: Interactive, MiclowStdIO",
+                    "Unknown protocol '{}' for task '{}'. Supported protocols: Interactive, MiclowStdIO, MCP",
                     entry.protocol,
                     entry.task_name
                 ))
@@ -186,7 +203,7 @@ impl RawSystemConfig {
             None
         };
 
-        // commandセクションのフィールドをprotocol_configにマージ
+        // commandセクションまたはmcpセクションのフィールドをprotocol_configにマージ
         let mut protocol_config = entry.protocol_config;
         if let Some(cmd) = entry.command {
             if let Some(command) = cmd.command {
@@ -211,6 +228,29 @@ impl RawSystemConfig {
             }
             if let Some(stderr_topic) = cmd.stderr_topic {
                 protocol_config.insert("stderr_topic".to_string(), TomlValue::String(stderr_topic));
+            }
+        }
+        if let Some(mcp) = entry.mcp {
+            if let Some(command) = mcp.command {
+                protocol_config.insert("command".to_string(), TomlValue::String(command));
+            }
+            if let Some(args) = mcp.args {
+                let args_toml: Vec<TomlValue> = args.into_iter().map(|s| TomlValue::String(s)).collect();
+                protocol_config.insert("args".to_string(), TomlValue::Array(args_toml));
+            }
+            if let Some(working_directory) = mcp.working_directory {
+                protocol_config.insert("working_directory".to_string(), TomlValue::String(working_directory));
+            }
+            if let Some(environment) = mcp.environment {
+                let mut env_table = toml::map::Map::new();
+                for (key, value) in environment {
+                    env_table.insert(key, TomlValue::String(value));
+                }
+                protocol_config.insert("environment".to_string(), TomlValue::Table(env_table));
+            }
+            if let Some(tools) = mcp.tools {
+                let tools_toml: Vec<TomlValue> = tools.into_iter().map(|s| TomlValue::String(s)).collect();
+                protocol_config.insert("tools".to_string(), TomlValue::Array(tools_toml));
             }
         }
 

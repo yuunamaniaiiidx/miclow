@@ -1,5 +1,6 @@
 use crate::backend::handle::TaskBackendHandle;
 use crate::backend::interactive::{spawn_interactive_protocol, InteractiveConfig};
+use crate::backend::mcp::{spawn_mcp_protocol, MCPConfig};
 use crate::backend::miclowstdio::{spawn_miclow_stdio_protocol, MiclowStdIOConfig};
 use crate::consumer::ConsumerId;
 use crate::subscription::SubscriptionId;
@@ -19,6 +20,7 @@ pub trait TaskBackend: Send + Sync {
 pub enum ProtocolBackend {
     MiclowStdIO(MiclowStdIOConfig),
     Interactive(InteractiveConfig),
+    MCP(MCPConfig),
 }
 
 #[async_trait]
@@ -34,6 +36,9 @@ impl TaskBackend for ProtocolBackend {
             }
             ProtocolBackend::Interactive(config) => {
                 spawn_interactive_protocol(config, consumer_id, subscription_id).await
+            }
+            ProtocolBackend::MCP(config) => {
+                spawn_mcp_protocol(config, consumer_id, subscription_id).await
             }
         }
     }
