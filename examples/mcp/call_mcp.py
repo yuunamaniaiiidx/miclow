@@ -6,6 +6,8 @@ This script queries the MCP filesystem server using file operations.
 import json
 import sys
 import uuid
+import time
+
 
 def send_mcp_request(tool_name, arguments):
     """Send a request to MCP server via miclow topic"""
@@ -19,27 +21,28 @@ def send_mcp_request(tool_name, arguments):
             "arguments": arguments
         }
     }
-    
+
     # Send to tool topic (MCP server will pick this up)
     print(f'"{tool_name}":', json.dumps(request))
     sys.stdout.flush()
-    
+
     # Wait for response from return.{tool_name} topic
     data = ""
-    return_topic = f"return.{tool_name}"
+    # system.return_awaitには元のトピック名を指定（return.プレフィックスなし）
     while data == "":
-        print(f'"system.return": {return_topic}')
+        print(f'"system.return_await": {tool_name}')
         sys.stdout.flush()
         line_count = int(input())
         if line_count > 0:
             data = "".join(input() for _ in range(line_count))
-    
+
     return data
+
 
 def main():
     # Send request to read_file tool
     result = send_mcp_request("read_file", {"path": "config.toml"})
-    
+
     # Parse and print result
     try:
         result_json = json.loads(result)
@@ -54,6 +57,7 @@ def main():
     except json.JSONDecodeError:
         print(f"Response: {result}")
 
+
 if __name__ == "__main__":
     main()
-
+    time.sleep(10)

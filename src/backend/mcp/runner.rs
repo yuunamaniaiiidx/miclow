@@ -12,10 +12,12 @@ use anyhow::{Error, Result};
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::process::Command as TokioCommand;
+use tokio::sync::Mutex;
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 
@@ -104,6 +106,11 @@ pub async fn spawn_mcp_protocol(
             }
         }
 
+        // リクエストIDとツール名のマッピングを共有
+        let request_id_map: Arc<Mutex<HashMap<String, Arc<str>>>> = Arc::new(Mutex::new(HashMap::new()));
+        // 処理済みのリクエストIDを記録（重複処理を防ぐ）
+        let processed_ids: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
         // MCPサーバーへの入力処理（ツール名のトピックからメッセージを受け取り、stdinに書き込み）
         let input_worker = spawn_mcp_input_handler(
             stdin_writer,
@@ -112,6 +119,7 @@ pub async fn spawn_mcp_protocol(
             event_tx_clone.clone(),
             cancel_token.clone(),
             consumer_id.clone(),
+            request_id_map.clone(),
         );
 
         // MCPサーバーとのJSON-RPC通信処理（stdoutから読み取り）
@@ -123,6 +131,8 @@ pub async fn spawn_mcp_protocol(
             consumer_id.clone(),
             subscription_id.clone(),
             view_stdout,
+            request_id_map.clone(),
+            processed_ids.clone(),
         );
 
         // stderrの読み取り処理
@@ -346,12 +356,14 @@ where
 
 fn spawn_mcp_communication<R>(
     mut reader: R,
-    tools: Vec<Arc<str>>,
+    _tools: Vec<Arc<str>>,
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     consumer_id: ConsumerId,
     subscription_id: SubscriptionId,
     view_stdout: bool,
+    request_id_map: Arc<Mutex<HashMap<String, Arc<str>>>>,
+    processed_ids: Arc<Mutex<HashSet<String>>>,
 ) -> task::JoinHandle<()>
 where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
@@ -385,50 +397,80 @@ where
                                     // MCPメッセージの処理
                                     // ツール呼び出し結果の処理（MCPサーバーからのレスポンス）
                                     if json_value.get("result").is_some() {
-                                        // JSON-RPCレスポンスからツール名を取得
-                                        // リクエストIDを使ってツール名を追跡する必要があるが、
-                                        // 簡易実装として、すべてのツールに対して結果を送信
-                                        // 実際の実装では、リクエストIDとツール名のマッピングを保持する必要がある
-                                        for tool_name in &tools {
-                                            // ツール呼び出し結果をreturn.{toolname}トピックに送信
-                                            let return_topic = Topic::from(format!("return.{}", tool_name));
-                                            let result_data = serde_json::to_string(&json_value)
-                                                .unwrap_or_else(|_| "{}".to_string());
-                                            
-                                            let message_id = MessageId::new();
-                                            let event = ExecutorOutputEvent::new_message(
-                                                message_id,
-                                                consumer_id.clone(),
-                                                subscription_id.clone(),
-                                                return_topic,
-                                                result_data.clone(),
-                                            );
-                                            
-                                            if let Err(e) = event_tx.send(event) {
-                                                log::warn!("Failed to send tool result for '{}': {}", tool_name, e);
+                                        // リクエストIDからツール名を取得
+                                        if let Some(id) = json_value.get("id") {
+                                            let id_str = if let Some(id_str) = id.as_str() {
+                                                id_str.to_string()
+                                            } else if let Some(id_num) = id.as_u64() {
+                                                id_num.to_string()
                                             } else {
-                                                // 結果送信後、再度system.pop_awaitでツール名を登録
-                                                let tool_topic = Topic::from(tool_name.as_ref());
-                                                let pop_await_message = format!("{}", tool_topic.as_str());
+                                                id.to_string()
+                                            };
+                                            
+                                            // 既に処理済みのリクエストIDかチェック
+                                            let is_processed = {
+                                                let processed = processed_ids.lock().await;
+                                                processed.contains(&id_str)
+                                            };
+                                            
+                                            if is_processed {
+                                                log::debug!("Skipping already processed request ID: {}", id_str);
+                                                line.clear();
+                                                continue;
+                                            }
+                                            
+                                            let tool_name_opt = {
+                                                let mut map = request_id_map.lock().await;
+                                                map.remove(&id_str)
+                                            };
+                                            
+                                            if let Some(tool_name) = tool_name_opt {
+                                                // 処理済みとして記録
+                                                {
+                                                    let mut processed = processed_ids.lock().await;
+                                                    processed.insert(id_str.clone());
+                                                }
+                                                
+                                                // ツール呼び出し結果をreturn.{toolname}トピックに送信
+                                                let return_topic = Topic::from(format!("return.{}", tool_name.as_ref()));
+                                                let result_data = serde_json::to_string(&json_value)
+                                                    .unwrap_or_else(|_| "{}".to_string());
                                                 
                                                 let message_id = MessageId::new();
                                                 let event = ExecutorOutputEvent::new_message(
                                                     message_id,
                                                     consumer_id.clone(),
                                                     subscription_id.clone(),
-                                                    "system.pop_await",
-                                                    pop_await_message,
+                                                    return_topic,
+                                                    result_data,
                                                 );
                                                 
                                                 if let Err(e) = event_tx.send(event) {
-                                                    log::warn!(
-                                                        "Failed to re-register system.pop_await for tool '{}': {}",
-                                                        tool_name,
-                                                        e
+                                                    log::warn!("Failed to send tool result for '{}': {}", tool_name, e);
+                                                } else {
+                                                    // 結果送信後、再度system.pop_awaitでツール名を登録
+                                                    let tool_topic = Topic::from(tool_name.as_ref());
+                                                    let pop_await_message = format!("{}", tool_topic.as_str());
+                                                    
+                                                    let message_id = MessageId::new();
+                                                    let event = ExecutorOutputEvent::new_message(
+                                                        message_id,
+                                                        consumer_id.clone(),
+                                                        subscription_id.clone(),
+                                                        "system.pop_await",
+                                                        pop_await_message,
                                                     );
+                                                    
+                                                    if let Err(e) = event_tx.send(event) {
+                                                        log::warn!(
+                                                            "Failed to re-register system.pop_await for tool '{}': {}",
+                                                            tool_name,
+                                                            e
+                                                        );
+                                                    }
                                                 }
-                                                // 最初のツールにのみ送信（簡易実装）
-                                                break;
+                                            } else {
+                                                log::debug!("No tool mapping found for request ID: {}", id_str);
                                             }
                                         }
                                     }
@@ -459,6 +501,7 @@ fn spawn_mcp_input_handler<W>(
     event_tx: ExecutorOutputEventSender,
     cancel_token: CancellationToken,
     consumer_id: ConsumerId,
+    request_id_map: Arc<Mutex<HashMap<String, Arc<str>>>>,
 ) -> task::JoinHandle<()>
 where
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -477,6 +520,21 @@ where
                             if tools.iter().any(|t| t.as_ref() == tool_name) {
                                 // データをJSON-RPCリクエストとして解釈してMCPサーバーに送信
                                 if let Some(data_str) = data {
+                                    // リクエストIDとツール名のマッピングを保存
+                                    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(data_str.as_ref()) {
+                                        if let Some(id) = json_value.get("id") {
+                                            let id_str = if let Some(id_str) = id.as_str() {
+                                                id_str.to_string()
+                                            } else if let Some(id_num) = id.as_u64() {
+                                                id_num.to_string()
+                                            } else {
+                                                id.to_string()
+                                            };
+                                            let mut map = request_id_map.lock().await;
+                                            map.insert(id_str, Arc::from(tool_name));
+                                        }
+                                    }
+                                    
                                     let json_line = format!("{}\n", data_str.as_ref());
                                     if let Err(e) = writer.write_all(json_line.as_bytes()).await {
                                         let _ = event_tx.send_error(

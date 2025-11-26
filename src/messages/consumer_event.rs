@@ -53,6 +53,7 @@ impl ConsumerEvent {
                 topic: topic.clone(),
             }),
             SystemCommand::PopAwait(_) => None,
+            SystemCommand::ReturnAwait(_) => None,
         }
     }
 }

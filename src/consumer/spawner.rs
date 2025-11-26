@@ -99,6 +99,7 @@ impl ConsumerSpawner {
 
             async move {
                 let mut waiting_topics: HashSet<Topic> = HashSet::new();
+                let mut return_awaiting_topics: HashSet<Topic> = HashSet::new();
                 loop {
                     tokio::select! {
                         _ = shutdown_token.cancelled() => {
@@ -145,6 +146,20 @@ impl ConsumerSpawner {
                                                     }) {
                                                         log::warn!(
                                                         "Failed to send system.pop_await converted pop for '{}': {}",
+                                                            consumer_id,
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                                if let SystemCommand::ReturnAwait(awaited_topic) = &system_command {
+                                                    let return_topic = awaited_topic.result();
+                                                    return_awaiting_topics.insert(return_topic.clone());
+                                                    if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerReturnRequesting {
+                                                        consumer_id: consumer_id.clone(),
+                                                        topic: return_topic.clone(),
+                                                    }) {
+                                                        log::warn!(
+                                                        "Failed to send system.return_await converted return for '{}': {}",
                                                             consumer_id,
                                                             e
                                                         );
@@ -204,6 +219,7 @@ impl ConsumerSpawner {
                                 Some(topic_data) => {
                                     let SubscriptionTopicMessage { topic, data, from_subscription_id } = topic_data;
                                     let is_waiting_topic = waiting_topics.contains(&topic);
+                                    let is_return_awaiting_topic = return_awaiting_topics.contains(&topic);
 
                                     if is_waiting_topic && data.is_none() {
                                         log::debug!(
@@ -214,8 +230,34 @@ impl ConsumerSpawner {
                                         continue;
                                     }
 
+                                    if is_return_awaiting_topic && data.is_none() {
+                                        log::debug!(
+                                            "Discarding empty data for return_awaiting topic '{}' on consumer {}",
+                                            topic,
+                                            consumer_id
+                                        );
+                                        continue;
+                                    }
+
                                     if is_waiting_topic && data.is_some() {
                                         waiting_topics.remove(&topic);
+                                    }
+
+                                    if is_return_awaiting_topic && data.is_some() {
+                                        return_awaiting_topics.remove(&topic);
+                                        // return_awaitの場合は、元のトピックに対してsystem.returnを送信
+                                        if let Some(original_topic) = topic.original() {
+                                            if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerReturnRequesting {
+                                                consumer_id: consumer_id.clone(),
+                                                topic: original_topic.clone(),
+                                            }) {
+                                                log::warn!(
+                                                    "Failed to send system.return for return_await topic '{}': {}",
+                                                    topic,
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
 
                                     let input_event = ExecutorInputEvent::Topic {
@@ -254,6 +296,24 @@ impl ConsumerSpawner {
                                                 consumer_id,
                                                 e
                                             );
+                                        }
+                                    } else if return_awaiting_topics.contains(&topic) {
+                                        log::debug!(
+                                            "Consumer {} received notification for return_awaited topic '{}', issuing return",
+                                            consumer_id,
+                                            topic
+                                        );
+                                        if let Some(original_topic) = topic.original() {
+                                            if let Err(e) = consumer_event_sender.send(ConsumerEvent::ConsumerReturnRequesting {
+                                                consumer_id: consumer_id.clone(),
+                                                topic: original_topic.clone(),
+                                            }) {
+                                                log::warn!(
+                                                    "Failed to send return request from topic notification for '{}': {}",
+                                                    consumer_id,
+                                                    e
+                                                );
+                                            }
                                         }
                                     } else {
                                         log::trace!(

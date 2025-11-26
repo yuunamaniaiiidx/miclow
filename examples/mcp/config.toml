@@ -27,5 +27,5 @@ working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
 
 [tasks.lifecycle]
-desired_instances = 5
+desired_instances = 1
 
