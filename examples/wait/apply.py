@@ -1,5 +1,5 @@
 import time
 import uuid
-time.sleep(5)
+time.sleep(2)
 print('"apply":', uuid.uuid4())
 

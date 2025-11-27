@@ -285,6 +285,30 @@ impl TopicSubscriptionRegistry {
         result
     }
 
+    /// 指定されたConsumerIdに関連するすべてのresponsesを削除する
+    /// ConsumerがExitした時に呼び出される
+    pub async fn cleanup_consumer_responses(&self, consumer_id: &ConsumerId) {
+        let mut responses = self.responses.write().await;
+        let keys_to_remove: Vec<ResponseKey> = responses
+            .keys()
+            .filter(|key| &key.0 == consumer_id)
+            .cloned()
+            .collect();
+        
+        let removed_count = keys_to_remove.len();
+        for key in keys_to_remove {
+            responses.remove(&key);
+        }
+        
+        if removed_count > 0 {
+            log::debug!(
+                "cleanup_consumer_responses: removed {} response entries for consumer {}",
+                removed_count,
+                consumer_id
+            );
+        }
+    }
+
     /// トピック通知用のsenderを登録する
     pub async fn register_topic_notification_sender(&self, sender: TopicNotificationSender) {
         let mut senders = self.topic_notification_senders.write().await;

@@ -96,6 +96,8 @@ impl SubscriptionWorker {
                                     subscription_id,
                                     consumer_id
                                 );
+                                // ConsumerがExitした時に、そのConsumerIdに関連するresponsesをクリーンアップ
+                                topic_manager.cleanup_consumer_responses(&consumer_id).await;
                                 // 即座に不足チェックして並列で再起動
                                 Self::ensure_consumers(
                                     &subscription_id,
