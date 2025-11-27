@@ -12,7 +12,7 @@ use anyhow::{anyhow, Error, Result};
 use nix::sys::signal::{kill, Signal};
 #[cfg(unix)]
 use nix::unistd::Pid;
-use serde_json::{self, json, Value as JsonValue};
+use serde_json::{self, Value as JsonValue};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -548,7 +548,7 @@ where
     W: AsyncWrite + Unpin + Send,
 {
     let templated = apply_payload_template(tool_cfg.json_template.as_ref(), payload);
-    let mut request_value = serde_json::from_str::<JsonValue>(&templated).map_err(|e| {
+    let request_value = serde_json::from_str::<JsonValue>(&templated).map_err(|e| {
         anyhow!(
             "Failed to parse JSON template for tool '{}': {}",
             tool_cfg.name,
@@ -556,8 +556,7 @@ where
         )
     })?;
 
-    ensure_request_defaults(&mut request_value, tool_cfg.name.as_ref())?;
-    let request_id = extract_or_insert_request_id(&mut request_value)?;
+    let request_id = extract_request_id(&request_value)?;
 
     {
         let mut map = request_id_map.lock().await;
@@ -623,40 +622,14 @@ fn apply_payload_template(template: &str, payload: &str) -> String {
     final_result
 }
 
-fn ensure_request_defaults(value: &mut JsonValue, tool_name: &str) -> Result<()> {
-    let obj = value
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("MCP request must be a JSON object"))?;
 
-    obj.entry("jsonrpc".to_string())
-        .or_insert(JsonValue::String("2.0".to_string()));
-
-    let params = obj
-        .entry("params".to_string())
-        .or_insert_with(|| json!({ "name": tool_name }));
-
-    if let Some(params_obj) = params.as_object_mut() {
-        params_obj
-            .entry("name".to_string())
-            .or_insert(JsonValue::String(tool_name.to_string()));
-    } else {
-        obj.insert("params".to_string(), json!({ "name": tool_name }));
-    }
-
-    Ok(())
-}
-
-fn extract_or_insert_request_id(value: &mut JsonValue) -> Result<String> {
-    if let Some(id_value) = value.get("id") {
-        return Ok(json_value_to_string(id_value));
-    }
-
-    let id = Uuid::new_v4().to_string();
-    let obj = value
-        .as_object_mut()
-        .ok_or_else(|| anyhow!("MCP request must be a JSON object"))?;
-    obj.insert("id".to_string(), JsonValue::String(id.clone()));
-    Ok(id)
+fn extract_request_id(value: &JsonValue) -> Result<String> {
+    value
+        .get("id")
+        .ok_or_else(|| anyhow!(
+            "MCP request must have an 'id' field to receive responses. Use '{{uuid}}' in the template to generate a UUID."
+        ))
+        .map(json_value_to_string)
 }
 
 fn json_value_to_string(value: &JsonValue) -> String {
