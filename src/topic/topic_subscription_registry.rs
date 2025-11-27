@@ -18,18 +18,19 @@ pub struct TopicSubscriptionRegistry {
     message_cursors: Arc<RwLock<HashMap<SubscriptionKey, usize>>>,
     // responseは(ConsumerId, Topic)をキーに各consumerごとに独立したキューとして保存
     responses: Arc<RwLock<HashMap<ResponseKey, VecDeque<ExecutorOutputEvent>>>>,
-    // トピック通知用のsenderリスト
-    topic_notification_senders: Arc<RwLock<Vec<TopicNotificationSender>>>,
+    // トピック通知用のブロードキャストsender
+    topic_notification_sender: TopicNotificationSender,
     max_log_size: Option<usize>,
 }
 
 impl TopicSubscriptionRegistry {
     pub fn new() -> Self {
+        let (sender, _) = tokio::sync::broadcast::channel(1024);
         Self {
             messages: Arc::new(RwLock::new(HashMap::new())),
             message_cursors: Arc::new(RwLock::new(HashMap::new())),
             responses: Arc::new(RwLock::new(HashMap::new())),
-            topic_notification_senders: Arc::new(RwLock::new(Vec::new())),
+            topic_notification_sender: TopicNotificationSender::new(sender),
             max_log_size: Some(10000),
         }
     }
@@ -77,12 +78,9 @@ impl TopicSubscriptionRegistry {
                 removed_count
             };
 
-            // トピックが追加された際は常に通知
-            let senders = self.topic_notification_senders.read().await;
-            for sender in senders.iter() {
-                if let Err(e) = sender.send(topic_owned.clone()) {
-                    log::debug!("Failed to send topic notification: {}", e);
-                }
+            // トピックが追加された際は常に通知（ブロードキャスト）
+            if let Err(e) = self.topic_notification_sender.send(topic_owned.clone()) {
+                log::debug!("Failed to send topic notification: {}", e);
             }
             // カーソル位置を調整（削除されたメッセージ数分だけ減らす）
             // 該当トピックのカーソルのみを更新
@@ -309,9 +307,8 @@ impl TopicSubscriptionRegistry {
         }
     }
 
-    /// トピック通知用のsenderを登録する
-    pub async fn register_topic_notification_sender(&self, sender: TopicNotificationSender) {
-        let mut senders = self.topic_notification_senders.write().await;
-        senders.push(sender);
+    /// トピック通知用のreceiverを取得する（ブロードキャストチャネルからsubscribe）
+    pub fn subscribe_topic_notifications(&self) -> crate::channels::TopicNotificationReceiver {
+        self.topic_notification_sender.subscribe()
     }
 }

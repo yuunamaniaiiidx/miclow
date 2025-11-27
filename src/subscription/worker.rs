@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::channels::{
-    ConsumerEventChannel, ConsumerEventSender, SubscriptionTopicChannel, TopicNotificationChannel,
+    ConsumerEventChannel, ConsumerEventSender, SubscriptionTopicChannel,
 };
 use crate::consumer::{ConsumerId, ConsumerSpawner};
 use crate::messages::{ConsumerEvent, ExecutorOutputEvent, SubscriptionTopicMessage};
@@ -491,15 +491,10 @@ impl SubscriptionWorker {
         ));
         let topic_channel = SubscriptionTopicChannel::new();
 
-        // 各consumerに個別のトピック通知channelを作成し、registryに登録
-        let TopicNotificationChannel {
-            sender: topic_notification_sender,
-            receiver: topic_notification_receiver,
-        } = TopicNotificationChannel::new();
-        start_context
+        // ブロードキャストチャネルからトピック通知のreceiverをsubscribe
+        let topic_notification_receiver = start_context
             .topic_manager
-            .register_topic_notification_sender(topic_notification_sender)
-            .await;
+            .subscribe_topic_notifications();
 
         let spawner = ConsumerSpawner::new(
             consumer_id.clone(),
