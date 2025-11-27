@@ -3,37 +3,45 @@ use std::sync::Arc;
 const RESULT_TOPIC_PREFIX: &str = "return.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Topic {
-    name: Arc<str>,
+pub enum Topic {
+    Normal(Arc<str>),
+    Result(Arc<str>),
 }
 
 impl Topic {
     pub fn new(name: impl Into<Arc<str>>) -> Self {
-        Self { name: name.into() }
+        let name = name.into();
+        if name.starts_with(RESULT_TOPIC_PREFIX) {
+            let original_name = name.strip_prefix(RESULT_TOPIC_PREFIX)
+                .unwrap_or(&name);
+            Self::Result(Arc::from(original_name))
+        } else {
+            Self::Normal(name)
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Topic::Normal(name) => name,
+            Topic::Result(name) => name,
+        }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.name
+        self.name()
     }
 
-    pub fn into_string(self) -> String {
-        self.name.to_string()
+    pub fn to_return(&self) -> Topic {
+        match self {
+            Topic::Normal(name) => Topic::Result(name.clone()),
+            Topic::Result(_) => self.clone(),
+        }
     }
 
-    pub fn result(&self) -> Topic {
-        Topic::new(format!("{}{}", RESULT_TOPIC_PREFIX, self.name))
-    }
-
-    pub fn is_result(&self) -> bool {
-        self.name.starts_with(RESULT_TOPIC_PREFIX)
-    }
-
-    pub fn original(&self) -> Option<Topic> {
-        if self.is_result() {
-            let original_name = self.name.strip_prefix(RESULT_TOPIC_PREFIX)?;
-            Some(Topic::new(Arc::from(original_name)))
-        } else {
-            None
+    pub fn to_normal(&self) -> Topic {
+        match self {
+            Topic::Normal(_) => self.clone(),
+            Topic::Result(name) => Topic::Normal(name.clone()),
         }
     }
 }
@@ -52,18 +60,21 @@ impl From<&str> for Topic {
 
 impl From<Topic> for String {
     fn from(topic: Topic) -> Self {
-        topic.into_string()
+        topic.to_string()
     }
 }
 
 impl AsRef<str> for Topic {
     fn as_ref(&self) -> &str {
-        self.as_str()
+        self.name()
     }
 }
 
 impl std::fmt::Display for Topic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
+        match self {
+            Topic::Normal(name) => write!(f, "{}", name),
+            Topic::Result(name) => write!(f, "{}{}", RESULT_TOPIC_PREFIX, name),
+        }
     }
 }

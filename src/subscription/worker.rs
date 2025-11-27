@@ -129,8 +129,11 @@ impl SubscriptionWorker {
                                 data
                             );
 
-                            let to_subscription_id = if topic.is_result() {
-                                if let Some(original_topic) = topic.original() {
+                            let to_subscription_id = if matches!(topic, crate::topic::Topic::Result(_)) {
+                                if let Some(original_topic) = match &topic {
+                                    crate::topic::Topic::Result(_) => Some(topic.to_normal()),
+                                    _ => None,
+                                } {
                                     request_topic_to_from_subscription.get(&original_topic).cloned()
                                 } else {
                                     None
@@ -168,7 +171,7 @@ impl SubscriptionWorker {
                                 }
                             }
 
-                            if topic.is_result() {
+                            if matches!(topic, crate::topic::Topic::Result(_)) {
                                 if let Some(response_consumer_id) = if let Some(consumer) = consumer_registry.get_consumer(&consumer_id) {
                                     match &consumer.state {
                                         crate::consumer::ConsumerState::Processing { from_consumer_id } => {

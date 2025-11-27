@@ -108,12 +108,20 @@ struct RawTaskCommand {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+struct RawMcpToolEntry {
+    name: String,
+    json: Option<String>,
+    #[serde(flatten)]
+    _unknown: HashMap<String, TomlValue>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 struct RawTaskMCP {
     command: Option<String>,
     args: Option<Vec<String>>,
     working_directory: Option<String>,
     environment: Option<HashMap<String, String>>,
-    tools: Option<Vec<String>>,
+    tools: Option<Vec<RawMcpToolEntry>>,
     #[serde(flatten)]
     _unknown: HashMap<String, TomlValue>,
 }
@@ -196,7 +204,9 @@ impl RawSystemConfig {
 
         let lifecycle = if let Some(lifecycle_entry) = entry.lifecycle {
             Some(RawLifecycleConfig {
-                desired_instances: lifecycle_entry.desired_instances.map(|v| TomlValue::Integer(v as i64)),
+                desired_instances: lifecycle_entry
+                    .desired_instances
+                    .map(|v| TomlValue::Integer(v as i64)),
                 mode: lifecycle_entry.mode.map(|v| TomlValue::String(v)),
             })
         } else {
@@ -210,11 +220,15 @@ impl RawSystemConfig {
                 protocol_config.insert("command".to_string(), TomlValue::String(command));
             }
             if let Some(args) = cmd.args {
-                let args_toml: Vec<TomlValue> = args.into_iter().map(|s| TomlValue::String(s)).collect();
+                let args_toml: Vec<TomlValue> =
+                    args.into_iter().map(|s| TomlValue::String(s)).collect();
                 protocol_config.insert("args".to_string(), TomlValue::Array(args_toml));
             }
             if let Some(working_directory) = cmd.working_directory {
-                protocol_config.insert("working_directory".to_string(), TomlValue::String(working_directory));
+                protocol_config.insert(
+                    "working_directory".to_string(),
+                    TomlValue::String(working_directory),
+                );
             }
             if let Some(environment) = cmd.environment {
                 let mut env_table = toml::map::Map::new();
@@ -235,11 +249,15 @@ impl RawSystemConfig {
                 protocol_config.insert("command".to_string(), TomlValue::String(command));
             }
             if let Some(args) = mcp.args {
-                let args_toml: Vec<TomlValue> = args.into_iter().map(|s| TomlValue::String(s)).collect();
+                let args_toml: Vec<TomlValue> =
+                    args.into_iter().map(|s| TomlValue::String(s)).collect();
                 protocol_config.insert("args".to_string(), TomlValue::Array(args_toml));
             }
             if let Some(working_directory) = mcp.working_directory {
-                protocol_config.insert("working_directory".to_string(), TomlValue::String(working_directory));
+                protocol_config.insert(
+                    "working_directory".to_string(),
+                    TomlValue::String(working_directory),
+                );
             }
             if let Some(environment) = mcp.environment {
                 let mut env_table = toml::map::Map::new();
@@ -249,7 +267,15 @@ impl RawSystemConfig {
                 protocol_config.insert("environment".to_string(), TomlValue::Table(env_table));
             }
             if let Some(tools) = mcp.tools {
-                let tools_toml: Vec<TomlValue> = tools.into_iter().map(|s| TomlValue::String(s)).collect();
+                let mut tools_toml: Vec<TomlValue> = Vec::new();
+                for tool in tools {
+                    let mut table = toml::map::Map::new();
+                    table.insert("name".to_string(), TomlValue::String(tool.name));
+                    if let Some(json_template) = tool.json {
+                        table.insert("json".to_string(), TomlValue::String(json_template));
+                    }
+                    tools_toml.push(TomlValue::Table(table));
+                }
                 protocol_config.insert("tools".to_string(), TomlValue::Array(tools_toml));
             }
         }

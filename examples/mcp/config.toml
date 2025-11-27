@@ -9,7 +9,20 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
-tools = ["read_file", "write_file", "list_directory", "get_file_info"]
+
+[[tasks.mcp.tools]]
+name = "read_file"
+json = """
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "tools/call",
+  "params": {
+    "name": "read_file",
+    "arguments": {"path": "?"}
+  }
+}
+"""
 
 [tasks.lifecycle]
 desired_instances = 1

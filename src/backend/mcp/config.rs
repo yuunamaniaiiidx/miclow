@@ -6,12 +6,18 @@ use std::sync::Arc;
 use toml::Value as TomlValue;
 
 #[derive(Debug, Clone)]
+pub struct McpToolConfig {
+    pub name: Arc<str>,
+    pub json_template: Arc<str>,
+}
+
+#[derive(Debug, Clone)]
 pub struct MCPConfig {
     pub command: Arc<str>,
     pub args: Vec<Arc<str>>,
     pub working_directory: Option<Arc<str>>,
     pub environment: Option<HashMap<String, String>>,
-    pub tools: Vec<Arc<str>>,
+    pub tools: Vec<McpToolConfig>,
     pub view_stdout: bool,
     pub view_stderr: bool,
 }
@@ -109,21 +115,55 @@ pub fn try_mcp_from_expanded_config(
         }
     });
 
-    let tools_vec: Vec<String> = config.expand("tools").ok_or_else(|| {
-        anyhow::anyhow!(
-            "Tools field is required for MCP in task '{}'",
-            config.name
-        )
+    let tools_value = config.get_protocol_value("tools").ok_or_else(|| {
+        anyhow::anyhow!("Tools field is required for MCP in task '{}'", config.name)
     })?;
 
-    if tools_vec.is_empty() {
+    let tools_array = tools_value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("'tools' must be an array for task '{}'", config.name))?;
+
+    if tools_array.is_empty() {
         return Err(anyhow::anyhow!(
-            "Tools field must contain at least one tool name for MCP in task '{}'",
+            "Tools field must contain at least one tool definition for MCP in task '{}'",
             config.name
         ));
     }
 
-    let tools: Vec<Arc<str>> = tools_vec.into_iter().map(|s| Arc::from(s)).collect();
+    let mut tools = Vec::new();
+    for tool in tools_array {
+        let table = tool.as_table().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Each entry in 'tools' must be a table for task '{}'",
+                config.name
+            )
+        })?;
+        let name_value = table.get("name").ok_or_else(|| {
+            anyhow::anyhow!(
+                "Each MCP tool must have a 'name' field in task '{}'",
+                config.name
+            )
+        })?;
+        let name_str = name_value.as_str().ok_or_else(|| {
+            anyhow::anyhow!("Tool 'name' must be a string in task '{}'", config.name)
+        })?;
+
+        let json_template_value = table.get("json").ok_or_else(|| {
+            anyhow::anyhow!(
+                "Each MCP tool must have a 'json' template field in task '{}'",
+                config.name
+            )
+        })?;
+
+        let json_template_str = json_template_value.as_str().ok_or_else(|| {
+            anyhow::anyhow!("Tool 'json' field must be a string in task '{}'", config.name)
+        })?;
+
+        tools.push(McpToolConfig {
+            name: Arc::from(name_str),
+            json_template: Arc::from(json_template_str),
+        });
+    }
 
     let view_stdout: bool = config.view_stdout;
     let view_stderr: bool = config.view_stderr;
@@ -148,4 +188,3 @@ pub fn try_mcp_from_expanded_config(
         view_stderr,
     })
 }
-

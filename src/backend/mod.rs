@@ -14,7 +14,7 @@ pub use handle::TaskBackendHandle;
 #[allow(unused_imports)]
 pub use interactive::config::{try_interactive_from_expanded_config, InteractiveConfig};
 #[allow(unused_imports)]
-pub use mcp::config::{try_mcp_from_expanded_config, MCPConfig};
+pub use mcp::config::{try_mcp_from_expanded_config, MCPConfig, McpToolConfig};
 #[allow(unused_imports)]
 pub use miclowstdio::config::{try_miclow_stdio_from_expanded_config, MiclowStdIOConfig};
 pub use spawn_result::SpawnBackendResult;
