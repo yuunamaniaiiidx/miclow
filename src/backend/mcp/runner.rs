@@ -586,31 +586,41 @@ where
 }
 
 fn apply_payload_template(template: &str, payload: &str) -> String {
-    if template.contains("{{payload}}") {
-        return template.replace("{{payload}}", payload);
+    let mut result = template.to_string();
+    
+    // {{uuid}}をUUIDに置換
+    if result.contains("{{uuid}}") {
+        let uuid = Uuid::new_v4().to_string();
+        result = result.replace("{{uuid}}", &uuid);
+    }
+    
+    // {{payload}}をペイロードに置換
+    if result.contains("{{payload}}") {
+        result = result.replace("{{payload}}", payload);
+        return result;
     }
 
-    if !template.contains('?') {
-        return template.to_string();
+    if !result.contains('?') {
+        return result;
     }
 
     // 各行を順番に?へ割り当てる
     let mut replacements = payload.lines();
-    let mut result = String::with_capacity(template.len() + payload.len());
+    let mut final_result = String::with_capacity(result.len() + payload.len());
     let mut last_index = 0;
 
-    for (idx, ch) in template.char_indices() {
+    for (idx, ch) in result.char_indices() {
         if ch == '?' {
-            result.push_str(&template[last_index..idx]);
+            final_result.push_str(&result[last_index..idx]);
             if let Some(line) = replacements.next() {
-                result.push_str(line);
+                final_result.push_str(line);
             }
             last_index = idx + ch.len_utf8();
         }
     }
 
-    result.push_str(&template[last_index..]);
-    result
+    final_result.push_str(&result[last_index..]);
+    final_result
 }
 
 fn ensure_request_defaults(value: &mut JsonValue, tool_name: &str) -> Result<()> {

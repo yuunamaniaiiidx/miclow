@@ -15,7 +15,7 @@ name = "read_file"
 json = """
 {
   "jsonrpc": "2.0",
-  "id": "1",
+  "id": "{{uuid}}",
   "method": "tools/call",
   "params": {
     "name": "read_file",
@@ -40,5 +40,5 @@ working_directory = "${MICLOW_CONFIG_DIR}"
 environment = { PYTHONUNBUFFERED = "1" }
 
 [tasks.lifecycle]
-desired_instances = 1
+desired_instances = 3
 
